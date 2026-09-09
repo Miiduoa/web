@@ -1,7 +1,7 @@
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 for(let i=0;i<80&&(!window.PUPLAN_APP||!window.PUPLAN_CLOUD);i++)await sleep(50);
 const app=window.PUPLAN_APP, cloud=window.PUPLAN_CLOUD;
-if(!app||!cloud)throw new Error('PU/PLAN social UI bootstrap failed');
+if(!app||!cloud)throw new Error('Nolu social UI bootstrap failed');
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const DAYS=app.DAYS, PERIODS=app.PERIODS, esc=app.esc;
 let friendTool='profile', pendingAvatar=undefined;
@@ -41,7 +41,7 @@ function humanCourse(c,index,total){
 }
 function renderHumanSchedule(){
   const box=$('#humanWeek');if(!box)return;const data=app.courses();const scheduled=data.filter(c=>c.day>=1&&c.day<=5),wd=today();
-  if(!scheduled.length){box.innerHTML=`<div class="human-onboarding"><div class="kicker">START YOUR WEEK</div><h2>先把課表放進來。</h2><p>最快的方法是直接丟一張學校課表截圖，PU/PLAN 會先辨識、讓你確認，再存進自己的帳號。</p><div><button class="btn lime" data-empty-import>⇧ 圖片匯入</button><button class="btn" data-empty-add>＋ 手動新增</button></div></div>`;box.querySelector('[data-empty-import]')?.addEventListener('click',()=>document.querySelector('#importDialog')?.showModal());box.querySelector('[data-empty-add]')?.addEventListener('click',()=>document.querySelector('#add')?.click());return}
+  if(!scheduled.length){box.innerHTML=`<div class="human-onboarding"><div class="kicker">START YOUR WEEK</div><h2>先把課表放進來。</h2><p>最快的方法是直接丟一張學校課表截圖，Nolu 會先辨識、讓你確認，再存進自己的帳號。</p><div><button class="btn lime" data-empty-import>⇧ 圖片匯入</button><button class="btn" data-empty-add>＋ 手動新增</button></div></div>`;box.querySelector('[data-empty-import]')?.addEventListener('click',()=>document.querySelector('#importDialog')?.showModal());box.querySelector('[data-empty-add]')?.addEventListener('click',()=>document.querySelector('#add')?.click());return}
   box.innerHTML=DAYS.map((d,i)=>{const day=i+1,cs=data.filter(c=>c.day===day).sort((a,b)=>a.start-b.start);let body='';cs.forEach((c,j)=>{if(j)body+=gapCard(cs[j-1],c);body+=humanCourse(c,j,cs.length)});if(!cs.length)body='<div class="human-free"><b>FREE DAY</b><span>整天沒有排課。拿去睡、讀書、約人都行。</span></div>';const focus=+(localStorage.getItem('puplan_human_day')||Math.min(Math.max(wd,1),5));return `<section class="human-day ${day===wd?'today':''} ${day===focus?'focus':''}" data-human-day="${day}"><header><div><span>${day===wd?'TODAY / ':''}${d[1]}</span><b>${cs.length} 門課</b></div><em>${cs.reduce((n,c)=>n+c.end-c.start+1,0)} 節</em></header><div class="human-day-body">${body}</div></section>`}).join('');
   box.querySelectorAll('[data-course]').forEach(el=>el.onclick=()=>document.querySelector(`#grid [data-course="${CSS.escape(el.dataset.course)}"]`)?.click());
 }
