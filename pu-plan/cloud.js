@@ -21,6 +21,26 @@ async function api(action,payload={},auth=true){
   return data;
 }
 function isSignedIn(){return !!token&&!!profile}
+function purgeAccountCache(){
+  localStorage.removeItem('puplan_courses');
+  localStorage.removeItem('puplan_friends');
+  localStorage.removeItem('puplan_schedule_meta');
+  localStorage.removeItem('puplan_course_owner');
+  app?.setRemoteCourses?.([]);
+  app?.setFriends?.([]);
+}
+function isolateAccountCache(userId){
+  const owner=localStorage.getItem('puplan_course_owner');
+  if(owner&&owner!==userId){
+    localStorage.removeItem('puplan_courses');
+    localStorage.removeItem('puplan_friends');
+    localStorage.removeItem('puplan_schedule_meta');
+    app?.setRemoteCourses?.([]);
+    app?.setRemoteMeta?.({});
+    app?.setFriends?.([]);
+  }
+  localStorage.setItem('puplan_course_owner',userId);
+}
 function updateAccountUI(){
   const name=profile?.display_name||'訪客';
   if($('#accountName'))$('#accountName').textContent=name;
@@ -44,10 +64,10 @@ function applySocial(social){socialData=social||{relationships:[],profiles:[],fr
 function relationFor(id){return (socialData.relationships||[]).find(r=>r.requester_id===id||r.addressee_id===id)}
 function profileFor(id){return (socialData.profiles||[]).find(p=>p.id===id)||{display_name:'使用者',username:'',avatar_data:'',bio:''}}
 
-async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');saveProfileLocal(data.profile);if(Array.isArray(data.courses))app?.setRemoteCourses?.(data.courses);applySocial(data.social);hideGate();return true}catch(e){console.warn(e);clearSession(false);return false}}
-async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');saveProfileLocal(data.profile);if(Array.isArray(data.courses))app?.setRemoteCourses?.(data.courses);applySocial(data.social);hideGate();return data}
-async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);applySocial(data.social);hideGate();return data}
-async function logout(){clearSession(true);localStorage.setItem('puplan_guest','1');localStorage.removeItem('puplan_courses');localStorage.removeItem('puplan_friends');app?.setRemoteCourses?.([]);app?.setFriends?.([]);hideGate()}
+async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);applySocial(data.social);hideGate();return true}catch(e){console.warn(e);clearSession(false);return false}}
+async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);applySocial(data.social);hideGate();return data}
+async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);applySocial(data.social);hideGate();return data}
+async function logout(){clearSession(true);purgeAccountCache();localStorage.setItem('puplan_guest','1');hideGate()}
 async function updateProfile(display_name,username,opts={}){
   username=normalizeUsername(username);if(!display_name?.trim())return app?.toast?.('請輸入顯示名稱');if(!/^[a-z0-9_.]{2,24}$/.test(username))return app?.toast?.('@帳號需 2–24 字，只能英文、數字、底線、句點');
   const payload={display_name:display_name.trim(),username,bio:String(opts.bio??profile?.bio??'').slice(0,120),discoverable:opts.discoverable!==false};if(Object.prototype.hasOwnProperty.call(opts,'avatar_data'))payload.avatar_data=opts.avatar_data||'';
@@ -78,7 +98,7 @@ async function respondMeetup(meetup_id,decision){try{const data=await api('respo
 async function cancelMeetup(meetup_id){try{const data=await api('cancel_meetup',{meetup_id});applySocial(data.social);app?.toast?.('邀約已取消');return true}catch(e){app?.toast?.(e.message);return false}}
 
 $$('[data-auth-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.authTab));
-$('#guestMode')?.addEventListener('click',()=>{localStorage.setItem('puplan_guest','1');clearSession(false);hideGate();app?.toast?.('目前使用訪客模式')});
+$('#guestMode')?.addEventListener('click',()=>{clearSession(false);purgeAccountCache();localStorage.setItem('puplan_guest','1');hideGate();app?.toast?.('目前使用訪客模式')});
 $('#registerForm')?.addEventListener('submit',async e=>{e.preventDefault();const display_name=$('#regName').value.trim(),username=normalizeUsername($('#regUsername').value),email=$('#regEmail').value.trim(),password=$('#regPassword').value;if(!/^[a-z0-9_.]{2,24}$/.test(username))return setAuthStatus('@帳號需 2–24 字，只能英文、數字、底線、句點',true);if(password.length<8)return setAuthStatus('密碼至少 8 個字元',true);setAuthStatus('建立帳號中…');try{await signup(display_name,username,email,password);setAuthStatus('註冊完成');app?.toast?.('Welcome to PU/PLAN ✦')}catch(err){setAuthStatus(err.message,true)}});
 $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault();setAuthStatus('登入中…');try{await login($('#loginEmail').value.trim(),$('#loginPassword').value);setAuthStatus('');app?.toast?.('登入成功')}catch(err){setAuthStatus(err.message,true)}});
 $('#cloudFriendSearch')?.addEventListener('input',e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchPeople(e.target.value),260)});
