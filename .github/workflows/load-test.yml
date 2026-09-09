@@ -21,7 +21,7 @@ jobs:
     env:
       SITE: https://miiduoa.github.io/web/
       API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
-      SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+      SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v13
     steps:
       - name: Run staged traffic simulation
         id: load
