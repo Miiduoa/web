@@ -1,6 +1,8 @@
-const CACHE='nolu-shell-20260909-2300';
+const CACHE='nolu-shell-20260909-2310';
 const CORE=[
   './','./index.html','./main.js','./app.js','./nolu-icon.svg','./manifest.webmanifest',
+  './core/state.js',
+  './features/schedule.js','./features/friends.js','./features/share.js','./features/analysis.js','./features/navigation.js','./features/settings.js',
   './styles/base.css','./styles/auth.css','./styles/layout.css','./styles/schedule.css','./styles/assistant.css','./styles/dialogs.css','./styles/mobile.css',
   './views/auth.js','./views/shell.js','./views/schedule.js','./views/friends.js','./views/assistant.js','./views/settings.js','./views/dialogs.js',
   './friends.css','./community.css','./discover.css','./admin.css','./pwa.css',
