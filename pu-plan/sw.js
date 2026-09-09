@@ -1,4 +1,4 @@
-const CACHE='nolu-clean-1';
+const CACHE='nolu-clean-2';
 const CORE=['./','./style.css','./friends.css','./community.css','./discover.css','./admin.css','./pwa.css','./app.js','./cloud.js','./social-ui.js','./import.js','./boot.js','./security.js','./auth.js','./semesters.js','./community.js','./discover.js','./planner.js','./admin.js','./privacy.js','./pwa.js','./nolu-icon.svg','./manifest.webmanifest'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).catch(()=>{}));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});
