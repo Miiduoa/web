@@ -30,3 +30,4 @@ await import(asset('./admin-v14.js'));
 await import(asset('./language-v14.js'));
 await import(asset('./privacy-v19.js'));
 await import(asset('./ui-v19.js'));
+await import(asset('./hang-polish-v20.js'));
