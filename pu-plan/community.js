@@ -50,7 +50,7 @@ function installSection(){
 function installNotificationSetting(){
   const grid=$('#settings .settings');if(!grid||$('#chatNotificationCard'))return;
   const card=document.createElement('article');card.id='chatNotificationCard';card.className='setting-card';
-  card.innerHTML=`<h3>聊天通知</h3><p>有新私訊或群聊時顯示未讀數；允許通知後，也能顯示系統提醒。</p><label class="reminder-toggle"><input type="checkbox" id="chatNotifyToggle"><span><b>開啟聊天通知</b><small>iPhone 建議先把 Nolu 加到主畫面。</small></span></label>`;
+  card.innerHTML=`<h3>聊天通知</h3><p>有新私訊或群聊時顯示未讀數；允許通知後，也能顯示系統提醒。</p><label class="reminder-toggle"><input type="checkbox" id="chatNotifyToggle"><span><b>開啟聊天通知</b><small>iPhone 建議先把 nolu 加到主畫面。</small></span></label>`;
   grid.append(card);
   const t=$('#chatNotifyToggle');t.checked=localStorage.getItem('puplan_chat_notifications')==='1';
   t.onchange=async()=>{
@@ -244,7 +244,13 @@ async function openNewChat(){
   d.innerHTML=`<div class="modal-head"><h2>開始對話</h2><button class="x" type="button">×</button></div><label class="label">群聊名稱（多人時可填）<input class="field" id="groupTitle" maxlength="80" placeholder="例如：期末專案組"></label><div class="friend-picker">${friends.map(f=>`<label class="friend-pick"><input type="checkbox" value="${esc(f.id)}">${f.avatar?`<div class="avatar"><img src="${esc(f.avatar)}" alt=""></div>`:`<div class="avatar">${esc((f.name||'?').slice(0,1))}</div>`}<span>${esc(f.name)}<small>@${esc(f.username||'')}</small></span></label>`).join('')}</div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="createConversation">建立對話</button></div>`;
   d.querySelector('.x').onclick=()=>d.close();$('#createConversation').onclick=async()=>{const ids=[...d.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);if(!ids.length)return app?.toast?.('請選至少一位好友');try{const data=await request('create_chat',{user_ids:ids,title:$('#groupTitle').value.trim()});d.close();await loadInbox();await openConversation(data.conversation.id)}catch(e){app?.toast?.(e.message)}};d.showModal();
 }
-function startPolling(){clearInterval(pollTimer);pollTimer=setInterval(()=>{if(document.hidden)return;if($('#community')?.classList.contains('on'))currentTab==='feed'?loadFeed(true):loadInbox(true,true)},12000)}
+function startPolling(){
+  clearInterval(pollTimer);
+  pollTimer=setInterval(()=>{
+    if(document.hidden)return;
+    if($('#community')?.classList.contains('on')&&currentTab==='chat')loadInbox(true,true);
+  },12000);
+}
 function startGlobalPolling(){clearInterval(globalPoll);globalPoll=setInterval(()=>{if(signedIn())loadInbox(true,true)},12000);setTimeout(()=>signedIn()&&loadInbox(true,false),1500)}
 async function openHashChat(){const m=location.hash.match(/chat=([^&]+)/);if(!m||!signedIn())return;const id=decodeURIComponent(m[1]);history.replaceState(null,'',location.pathname);showCommunity();switchTab('chat');await loadInbox(true);await openConversation(id)}
 
