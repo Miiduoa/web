@@ -50,6 +50,7 @@ jobs:
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
             await page.waitForSelector('#authGate');
             await page.waitForSelector('.auth-brand');
+            await page.waitForFunction(()=>!!window.PUPLAN_CLOUD,{timeout:5000});
             const metrics=await noHorizontalOverflow(page,label,'login');
             const brand=await page.locator('.auth-brand').boundingBox();
             const title=await page.locator('.auth-copy h1').boundingBox();
@@ -62,7 +63,7 @@ jobs:
             assert((await page.locator('.auth-brand').count())===1,`${label}: duplicate brand block`);
             assert((await page.locator('.auth-copy h1').count())===1,`${label}: duplicate login headline`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
-            await page.waitForTimeout(80);
+            await page.waitForFunction(()=>{const x=document.querySelector('#loginForm');return x&&!x.classList.contains('hidden')},{timeout:2000});
             assert(await page.locator('#loginForm').isVisible(),`${label}: login form did not open`);
             for(const field of await page.locator('#loginForm input').all()){
               const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`);
