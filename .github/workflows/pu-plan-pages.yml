@@ -85,6 +85,7 @@ jobs:
 
           assert '<div id="app"></div>' in index, 'index must only mount the app shell'
           assert 'src="./main.js"' in index or 'src="main.js"' in index, 'main.js entrypoint missing'
+          assert index.count('<script')==1, 'production must have exactly one script entrypoint'
           for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css','styles/mobile.css']:
               assert css in index, f'index missing {css}'
 
@@ -95,13 +96,15 @@ jobs:
                   candidate=(js.parent/spec).resolve()
                   assert candidate.is_file(), f'{js.relative_to(root)} imports missing {spec}'
 
-          # Replaced bootstrap/override generations must stay deleted, not hidden behind newer files.
+          # Old generation files stay deleted instead of being hidden by a newer override.
           obsolete_files=[
               'style.css','boot.js','security.js','planner.js',
               'boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js'
           ]
           returned=[p for p in obsolete_files if (root/p).exists()]
           assert not returned, f'obsolete production files returned: {returned}'
+          versioned=[str(p.relative_to(root)) for p in root.rglob('*') if p.is_file() and re.search(r'(?:^|[-_])v\d+(?:\.|[-_])',p.name,re.I)]
+          assert not versioned, f'versioned override files are not allowed: {versioned}'
           for item in obsolete_files:
               assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
 
