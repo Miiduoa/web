@@ -7,6 +7,7 @@ link('stylesheet',asset('./product-v9.css'),'puplanProduct');
 link('manifest',asset('./manifest-v9.webmanifest'),'puplanManifestV9');
 link('apple-touch-icon',asset('./icon.svg'),'puplanIconV9');
 for(const [name,content] of [['apple-mobile-web-app-capable','yes'],['apple-mobile-web-app-status-bar-style','default'],['apple-mobile-web-app-title','PU/PLAN']]){if(!document.querySelector(`meta[name="${name}"]`)){const m=document.createElement('meta');m.name=name;m.content=content;document.head.appendChild(m)}}
+await import(asset('./next-round.js'));
 await import(asset('./polish-v9.js'));
 await import(asset('./community.js'));
 await import(asset('./pwa-v9.js'));
