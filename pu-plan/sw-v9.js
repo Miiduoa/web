@@ -1,4 +1,4 @@
-const CACHE='hang-v20-product';
+const CACHE='hang-v21-social';
 const CORE=['./','./style.css','./social-v6.css','./ui-v9.css','./product-v9.css','./community-v12.css','./admin-v14.css','./mobile-v10.css','./mobile-v12.css','./layout-v13.css','./discovery-v16.css','./brand-v18.css','./ui-v19.css','./pwa-v8.css','./app.js','./cloud.js','./social-ui.js','./import-v10.js','./boot-v9.js','./security-v17.js','./auth-v13.js','./next-round.js','./polish-v9.js','./social-router-v12.js','./community-v12.js','./social-experience-v18.js','./discovery-v16.js','./planner-v14.js','./admin-v14.js','./language-v14.js','./privacy-v19.js','./ui-v19.js','./hang-polish-v20.js','./brand-v18.js','./pwa-v9.js','./hang-icon.svg','./manifest-v9.webmanifest'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).catch(()=>{}));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});
