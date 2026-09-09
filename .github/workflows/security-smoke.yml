@@ -1,0 +1,139 @@
+name: Security smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/security-smoke.yml'
+      - 'pu-plan/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pu-plan-security-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for production
+        run: |
+          set -euo pipefail
+          for i in {1..20}; do
+            if curl -fsS --max-time 10 https://miiduoa.github.io/web/ -o /tmp/site.html; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Production site did not become reachable in time'
+          exit 1
+
+      - name: Check browser security policy
+        run: |
+          set -euo pipefail
+          grep -q "Content-Security-Policy" /tmp/site.html
+          grep -q "object-src 'none'" /tmp/site.html
+          grep -q "frame-src 'none'" /tmp/site.html
+          grep -q "base-uri 'self'" /tmp/site.html
+          grep -q "form-action 'self'" /tmp/site.html
+
+      - name: Check unauthenticated API access
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+        run: |
+          set -euo pipefail
+          check_401() {
+            local url="$1" body="$2" label="$3"
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' --data "$body")
+            if [ "$code" != '401' ]; then
+              echo "$label expected 401, got $code"
+              cat /tmp/resp
+              exit 1
+            fi
+            if grep -Eqi 'service_role|SUPABASE_SERVICE_ROLE_KEY|password_hash|password_salt|stack|traceback' /tmp/resp; then
+              echo "$label leaked sensitive server details"
+              cat /tmp/resp
+              exit 1
+            fi
+          }
+          check_401 "$API" '{"action":"bootstrap"}' 'main API without token'
+          check_401 "$SOCIAL" '{"action":"feed"}' 'social API without token'
+          check_401 "$ADMIN" '{"action":"overview"}' 'admin API without token'
+
+      - name: Reject forged sessions
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+        run: |
+          set -euo pipefail
+          FAKE='eyJ2IjozLCJ1aWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAiLCJpYXQiOjE3ODg5NDAwMDAsImV4cCI6MTg4ODk0MDAwMH0.invalidsignature'
+          for url in "$API" "$SOCIAL" "$ADMIN"; do
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -H "Authorization: Bearer $FAKE" --data '{"action":"bootstrap"}')
+            if [ "$code" != '401' ]; then
+              echo "Forged session unexpectedly accepted by $url (HTTP $code)"
+              cat /tmp/resp
+              exit 1
+            fi
+          done
+
+      - name: Check cross-origin controls
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+        run: |
+          set -euo pipefail
+          for url in "$SOCIAL" "$ADMIN"; do
+            code=$(curl -sS --max-time 15 -D /tmp/headers -o /tmp/resp -w '%{http_code}' -X OPTIONS "$url" \
+              -H 'Origin: https://evil.example' \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: authorization,content-type')
+            if [ "$code" != '403' ]; then
+              echo "Untrusted origin not rejected by $url (HTTP $code)"
+              cat /tmp/headers
+              exit 1
+            fi
+          done
+          code=$(curl -sS --max-time 15 -D /tmp/main-headers -o /tmp/resp -w '%{http_code}' -X OPTIONS "$API" \
+            -H 'Origin: https://evil.example' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type')
+          if grep -qi '^access-control-allow-origin: \*$' /tmp/main-headers; then
+            echo '::warning::Main account API currently allows wildcard CORS. Bearer auth still protects private actions, but origin allowlisting is recommended.'
+          fi
+
+      - name: Check direct database access is blocked
+        env:
+          REST: https://hrrmkrayvrgnwcroyttp.supabase.co/rest/v1/puplan_app_users?select=id&limit=1
+          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+        run: |
+          set -euo pipefail
+          code=$(curl -sS --max-time 15 -o /tmp/rest -w '%{http_code}' "$REST" -H "apikey: $PUBLISHABLE_KEY")
+          if [ "$code" -lt 400 ]; then
+            echo "Direct anonymous access to puplan_app_users was not blocked (HTTP $code)"
+            cat /tmp/rest
+            exit 1
+          fi
+
+      - name: Check unsupported methods
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+        run: |
+          set -euo pipefail
+          for url in "$API" "$SOCIAL" "$ADMIN"; do
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' "$url")
+            if [ "$code" != '405' ]; then
+              echo "$url expected GET to be rejected with 405, got $code"
+              cat /tmp/resp
+              exit 1
+            fi
+          done
