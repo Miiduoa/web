@@ -1,4 +1,4 @@
-name: Nolu mobile layout check
+name: nolu mobile layout check
 
 on:
   push:
@@ -58,7 +58,9 @@ jobs:
             assert(!intersects(brand,title),`${label}: brand overlaps headline`);
             assert(!intersects(brand,copy),`${label}: brand overlaps copy`);
             assert(!intersects(title,copy),`${label}: headline overlaps copy`);
-            assert((await page.locator('.auth-brand strong').textContent())?.trim()==='Nolu',`${label}: wrong brand`);
+            assert((await page.locator('.auth-brand strong').textContent())?.trim()==='nolu',`${label}: wrong brand`);
+            assert((await page.locator('.auth-brand').count())===1,`${label}: duplicate brand block`);
+            assert((await page.locator('.auth-copy h1').count())===1,`${label}: duplicate login headline`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
             await page.waitForTimeout(80);
             assert(await page.locator('#loginForm').isVisible(),`${label}: login form did not open`);
@@ -83,7 +85,7 @@ jobs:
           }
           (async()=>{
             const browser=await chromium.launch({headless:true});
-            for(const [w,h,label] of [[390,844,'390x844'],[430,932,'430x932']]){
+            for(const [w,h,label] of [[375,812,'375x812'],[390,844,'390x844'],[430,932,'430x932']]){
               const page=await browser.newPage({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true});
               await inspect(page,label);
               await page.close();
