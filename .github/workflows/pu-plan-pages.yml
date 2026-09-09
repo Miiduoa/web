@@ -31,34 +31,75 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --check pu-plan/app.js
-          node --check pu-plan/cloud.js
-          node --check pu-plan/social-ui.js
-          node --check pu-plan/import.js
-          node --check pu-plan/boot.js
-          node --check pu-plan/security.js
-          node --check pu-plan/auth.js
-          node --check pu-plan/pwa.js
-          node --check pu-plan/community.js
-          node --check pu-plan/discover.js
-          node --check pu-plan/planner.js
-          node --check pu-plan/admin.js
-          node --check pu-plan/privacy.js
-          node --check pu-plan/semesters.js
-          node --check pu-plan/sw.js
+          while IFS= read -r file; do node --check "$file"; done <<'FILES'
+          pu-plan/main.js
+          pu-plan/app.js
+          pu-plan/core/state.js
+          pu-plan/features/schedule.js
+          pu-plan/features/friends.js
+          pu-plan/features/share.js
+          pu-plan/features/analysis.js
+          pu-plan/features/navigation.js
+          pu-plan/features/settings.js
+          pu-plan/views/auth.js
+          pu-plan/views/shell.js
+          pu-plan/views/schedule.js
+          pu-plan/views/friends.js
+          pu-plan/views/assistant.js
+          pu-plan/views/settings.js
+          pu-plan/views/dialogs.js
+          pu-plan/cloud.js
+          pu-plan/social-ui.js
+          pu-plan/import.js
+          pu-plan/boot.js
+          pu-plan/security.js
+          pu-plan/auth.js
+          pu-plan/pwa.js
+          pu-plan/community.js
+          pu-plan/discover.js
+          pu-plan/planner.js
+          pu-plan/admin.js
+          pu-plan/privacy.js
+          pu-plan/semesters.js
+          pu-plan/sw.js
+          FILES
           python3 - <<'PY'
           from pathlib import Path
           import json
-          index=Path('pu-plan/index.html').read_text(encoding='utf-8')
-          manifest=json.loads(Path('pu-plan/manifest.webmanifest').read_text(encoding='utf-8'))
-          required=['style.css','friends.css','community.css','discover.css','admin.css','pwa.css','import.js','boot.js','nolu-icon.svg']
-          for item in required:
-              assert item in index or item in Path('pu-plan/sw.js').read_text(encoding='utf-8'), f'missing {item}'
+
+          root=Path('pu-plan')
+          index=(root/'index.html').read_text(encoding='utf-8')
+          sw=(root/'sw.js').read_text(encoding='utf-8')
+          manifest=json.loads((root/'manifest.webmanifest').read_text(encoding='utf-8'))
+
+          required_files=[
+              'main.js','app.js','nolu-icon.svg','manifest.webmanifest',
+              'core/state.js',
+              'features/schedule.js','features/friends.js','features/share.js',
+              'features/analysis.js','features/navigation.js','features/settings.js',
+              'views/auth.js','views/shell.js','views/schedule.js','views/friends.js',
+              'views/assistant.js','views/settings.js','views/dialogs.js',
+              'styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css',
+              'styles/assistant.css','styles/dialogs.css','styles/mobile.css',
+              'friends.css','community.css','discover.css','admin.css','pwa.css',
+              'cloud.js','social-ui.js','import.js','boot.js'
+          ]
+          missing=[p for p in required_files if not (root/p).is_file()]
+          assert not missing, f'missing modular production files: {missing}'
+
+          assert '<div id="app"></div>' in index, 'index must only mount the app shell'
+          assert 'src="main.js"' in index, 'main.js entrypoint missing'
+          for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css','styles/mobile.css']:
+              assert css in index, f'index missing {css}'
+
+          assert not (root/'style.css').exists(), 'obsolete monolithic style.css must stay deleted'
           forbidden=['boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js']
           for item in forbidden:
-              assert item not in index, f'obsolete asset referenced: {item}'
+              assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
+
           assert manifest.get('name')=='Nolu'
           assert manifest.get('start_url')=='./' and manifest.get('scope')=='./'
+          assert 'styles/auth.css' in sw and 'views/auth.js' in sw and 'style.css' not in sw
           PY
 
       - name: Configure Pages
