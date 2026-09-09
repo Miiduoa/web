@@ -169,12 +169,26 @@ async function sendReply(id){
   try{await request('reply_post',{post_id:id,body});await loadFeed(true)}catch(e){app?.toast?.(e.message)}
 }
 function startReplyEditor(button){
-  const item=button.closest('.reply-item'),copy=item?.querySelector('.reply-copy'),text=copy?.querySelector('p');if(!copy||!text||copy.querySelector('.reply-inline-editor'))return;
-  const actions=copy.querySelector('.reply-owner-actions'),original=text.textContent||'';text.hidden=true;if(actions)actions.hidden=true;
+  const id=String(button.dataset.editReply||'');
+  const item=button.closest('.reply-item'),copy=item?.querySelector('.reply-copy'),text=copy?.querySelector('p');
+  if(!id||!copy||!text||copy.querySelector('.reply-inline-editor'))return;
+  const actions=copy.querySelector('.reply-owner-actions'),original=text.textContent||'';
+  text.hidden=true;if(actions)actions.hidden=true;
   const editor=document.createElement('div');editor.className='reply-inline-editor';editor.innerHTML='<textarea maxlength="600" aria-label="編輯留言"></textarea><div class="reply-inline-actions"><button type="button" data-cancel>取消</button><button type="button" class="save" data-save>儲存</button></div>';copy.append(editor);
   const ta=editor.querySelector('textarea');ta.value=original;ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);
-  const close=()=>{editor.remove();text.hidden=false;if(actions)actions.hidden=false};editor.querySelector('[data-cancel]').onclick=close;
-  editor.querySelector('[data-save]').onclick=async()=>{const body=ta.value.trim();if(!body)return app?.toast?.('留言不能空白');const save=editor.querySelector('[data-save]');save.disabled=true;save.textContent='儲存中…';try{const d=await request('edit_reply',{reply_id:button.dataset.editReply,body});text.textContent=d.reply?.body||body;const meta=copy.querySelector('small');if(meta&&!meta.textContent.includes('已編輯'))meta.textContent+=' · 已編輯';close();app?.toast?.('留言已更新')}catch(e){save.disabled=false;save.textContent='儲存';app?.toast?.(e.message)}};
+  const close=()=>{editor.remove();text.hidden=false;if(actions)actions.hidden=false};
+  editor.querySelector('[data-cancel]').onclick=close;
+  editor.querySelector('[data-save]').onclick=async()=>{
+    const body=ta.value.trim();if(!body)return app?.toast?.('留言不能空白');
+    const save=editor.querySelector('[data-save]');save.disabled=true;save.textContent='儲存中…';
+    try{
+      const d=await request('edit_reply',{reply_id:id,body});
+      const saved=d.reply?.body||body,updated=d.reply?.updated_at||new Date().toISOString();
+      for(const post of feedData){const reply=(post.replies||[]).find(r=>String(r.id)===id);if(reply){reply.body=saved;reply.updated_at=updated}}
+      text.textContent=saved;const meta=copy.querySelector('small');if(meta&&!meta.textContent.includes('已編輯'))meta.textContent+=' · 已編輯';
+      close();app?.toast?.('留言已更新');
+    }catch(e){save.disabled=false;save.textContent='儲存';app?.toast?.(e.message)}
+  };
   ta.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close()}if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();editor.querySelector('[data-save]').click()}};
 }
 async function deleteReply(id){if(!confirm('刪除這則留言？'))return;try{await request('delete_reply',{reply_id:id});await loadFeed(true);app?.toast?.('留言已刪除')}catch(e){app?.toast?.(e.message)}}
@@ -190,7 +204,7 @@ function totalUnread(list=inboxData){return list.reduce((n,c)=>n+Number(c.unread
 function updateBadges(n){
   for(const id of ['#chatUnreadBadge','#navChatBadge','#bottomChatBadge']){const b=$(id);if(!b)continue;b.textContent=n>99?'99+':String(n);b.classList.toggle('hidden',!n)}
   if('setAppBadge'in navigator){n?navigator.setAppBadge(n).catch(()=>{}):navigator.clearAppBadge?.().catch(()=>{})}
-  document.title=n?`(${n}) Nolu`:'Nolu — 課表、朋友、現在';
+  document.title=n?`(${n}) nolu`:'nolu — 有空就碰面';
 }
 async function maybeNotify(next,previous){
   if(localStorage.getItem('puplan_chat_notifications')!=='1'||!('Notification'in window)||Notification.permission!=='granted')return;

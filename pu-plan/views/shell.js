@@ -6,7 +6,7 @@ import {settingsView} from './settings.js';
 export function shellView(){return `
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><div class="mark"><img src="nolu-icon.svg" alt="Nolu"></div><div><strong>Nolu</strong><span>課表・朋友・現在</span></div></div>
+    <div class="brand"><div class="mark"><img src="nolu-icon.svg" alt="Nolu"></div><div><strong>nolu</strong><span>課表・朋友・現在</span></div></div>
     <nav class="nav"><button class="on" data-view="schedule">課表</button><button data-view="friends">找人</button><button data-view="ai">安排</button><button data-view="settings">我的</button></nav>
     <div class="semester"><b id="semesterLabel">我的學期</b><span id="semesterMeta">自己的課表<br>登入後自動同步</span></div>
   </aside>

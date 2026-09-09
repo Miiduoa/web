@@ -1,1 +1,1 @@
-{"name":"Nolu","short_name":"Nolu","description":"課表、朋友、動態與聊天，都在這裡。","start_url":"./","scope":"./","display":"standalone","background_color":"#f6f1e8","theme_color":"#151515","lang":"zh-Hant","icons":[{"src":"nolu-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{"name":"nolu","short_name":"nolu","description":"課表、朋友、動態與聊天，都在這裡。","start_url":"./","scope":"./","display":"standalone","background_color":"#f6f3ed","theme_color":"#151515","lang":"zh-Hant","icons":[{"src":"nolu-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
