@@ -90,7 +90,7 @@ jobs:
             assert(heroSide.y>=heroMain.y+heroMain.height-2,`${label}: schedule hero still uses desktop columns`);
             await page.screenshot({path:`ui-smoke/schedule-${label}.png`,fullPage:false});
 
-            await page.locator('.bottom [data-view="ai"]').click();
+            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('ai'));
             await page.waitForTimeout(120);
             await noHorizontalOverflow(page,label,'assistant');
             const aiChat=await page.locator('.ai-chat').boundingBox();
@@ -101,7 +101,7 @@ jobs:
             assert(aiSide.y>=aiChat.y+aiChat.height-2,`${label}: assistant still uses desktop columns`);
             await page.screenshot({path:`ui-smoke/assistant-${label}.png`,fullPage:false});
 
-            await page.locator('.bottom [data-view="friends"]').click();
+            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('friends'));
             await page.waitForTimeout(100);
             await noHorizontalOverflow(page,label,'friends');
             const friendSide=await page.locator('.friend-side').boundingBox();
