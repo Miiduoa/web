@@ -34,6 +34,13 @@ jobs:
           while IFS= read -r file; do node --experimental-default-type=module --check "$file"; done <<'FILES'
           pu-plan/main.js
           pu-plan/app.js
+          pu-plan/core/state.js
+          pu-plan/features/schedule.js
+          pu-plan/features/friends.js
+          pu-plan/features/share.js
+          pu-plan/features/analysis.js
+          pu-plan/features/navigation.js
+          pu-plan/features/settings.js
           pu-plan/views/auth.js
           pu-plan/views/shell.js
           pu-plan/views/schedule.js
@@ -58,7 +65,7 @@ jobs:
           FILES
           python3 - <<'PY'
           from pathlib import Path
-          import json
+          import json,re
 
           root=Path('pu-plan')
           index=(root/'index.html').read_text(encoding='utf-8')
@@ -67,13 +74,12 @@ jobs:
 
           required_files=[
               'main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js',
-              'views/auth.js','views/shell.js','views/schedule.js','views/friends.js',
-              'views/assistant.js','views/settings.js','views/dialogs.js',
-              'styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css',
-              'styles/assistant.css','styles/dialogs.css','styles/mobile.css',
+              'core/state.js',
+              'features/schedule.js','features/friends.js','features/share.js','features/analysis.js','features/navigation.js','features/settings.js',
+              'views/auth.js','views/shell.js','views/schedule.js','views/friends.js','views/assistant.js','views/settings.js','views/dialogs.js',
+              'styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css','styles/mobile.css',
               'friends.css','community.css','discover.css','admin.css','pwa.css',
-              'cloud.js','social-ui.js','import.js','boot.js','security.js','auth.js',
-              'semesters.js','community.js','discover.js','planner.js','admin.js','privacy.js','pwa.js'
+              'cloud.js','social-ui.js','import.js','boot.js','security.js','auth.js','semesters.js','community.js','discover.js','planner.js','admin.js','privacy.js','pwa.js'
           ]
           missing=[p for p in required_files if not (root/p).is_file()]
           assert not missing, f'missing production files: {missing}'
@@ -83,14 +89,15 @@ jobs:
           for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css','styles/mobile.css']:
               assert css in index, f'index missing {css}'
 
-          # Do not re-introduce the old override architecture.
-          forbidden_paths=[
-              'style.css','core/state.js','features/analysis.js','features/friends.js',
-              'features/navigation.js','features/schedule.js','features/settings.js','features/share.js'
-          ]
-          for item in forbidden_paths:
-              assert not (root/item).exists(), f'obsolete frontend layer returned: {item}'
+          # Make broken local ESM imports fail the deployment before users see them.
+          for js in root.rglob('*.js'):
+              text=js.read_text(encoding='utf-8')
+              for spec in re.findall(r'''(?:from\s*|import\s*\()\s*['"](\.{1,2}/[^'"]+)['"]''',text):
+                  candidate=(js.parent/spec).resolve()
+                  assert candidate.is_file(), f'{js.relative_to(root)} imports missing {spec}'
 
+          # Old monolithic/override generations must not return.
+          assert not (root/'style.css').exists(), 'obsolete monolithic style.css returned'
           forbidden_refs=['boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js','style.css']
           for item in forbidden_refs:
               assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
@@ -98,6 +105,8 @@ jobs:
           assert manifest.get('name')=='nolu'
           assert manifest.get('short_name')=='nolu'
           assert manifest.get('start_url')=='./' and manifest.get('scope')=='./'
+          for module in ['core/state.js','features/schedule.js','features/friends.js','features/share.js','features/analysis.js','features/navigation.js','features/settings.js']:
+              assert module in sw, f'PWA cache missing required module: {module}'
           assert 'styles/auth.css' in sw and 'views/auth.js' in sw and 'style.css' not in sw
           assert 'PU/PLAN' not in index and 'PU PLAN' not in index
           PY
