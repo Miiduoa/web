@@ -35,6 +35,7 @@ jobs:
           node --check pu-plan/boot-v9.js
           node --check pu-plan/pwa-v9.js
           node --check pu-plan/community-v12.js
+          node --check pu-plan/social-router-v12.js
           node --check pu-plan/assistant-v12.js
           node --check pu-plan/admin-v12.js
           node --check pu-plan/polish-v9.js
