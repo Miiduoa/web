@@ -34,7 +34,9 @@ jobs:
           node --check pu-plan/ai.js
           node --check pu-plan/boot-v9.js
           node --check pu-plan/pwa-v9.js
-          node --check pu-plan/community-v11.js
+          node --check pu-plan/community-v12.js
+          node --check pu-plan/assistant-v12.js
+          node --check pu-plan/admin-v12.js
           node --check pu-plan/polish-v9.js
           node --check pu-plan/sw-v9.js
           node --check pu-plan/next-round.js
@@ -43,7 +45,8 @@ jobs:
           p = Path('pu-plan/index.html')
           s = p.read_text(encoding='utf-8')
           security = '<meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' https://cdn.jsdelivr.net \'wasm-unsafe-eval\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data: blob: https://hrrmkrayvrgnwcroyttp.supabase.co; media-src \'self\' blob: https://hrrmkrayvrgnwcroyttp.supabase.co; connect-src \'self\' https://hrrmkrayvrgnwcroyttp.supabase.co https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://raw.githubusercontent.com https://tessdata.projectnaptha.com; worker-src \'self\' blob: https://cdn.jsdelivr.net; font-src \'self\' data:; object-src \'none\'; base-uri \'self\'; form-action \'self\'; frame-src \'none\'; upgrade-insecure-requests">'
-          s = s.replace('<meta name="theme-color" content="#111111" />', '<meta name="theme-color" content="#111111" />' + security)
+          if 'Content-Security-Policy' not in s:
+              s = s.replace('<meta name="theme-color" content="#111111" />', '<meta name="theme-color" content="#111111" />' + security)
           s = s.replace('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">\n<link rel="stylesheet" href="social-v6.css">\n<link rel="stylesheet" href="ui-v9.css">\n<link rel="stylesheet" href="product-v9.css">\n<link rel="manifest" href="manifest-v9.webmanifest">\n<link rel="apple-touch-icon" href="icon.svg">')
           s = s.replace('<script type="module" src="import.js"></script>', '<script type="module" src="import-v10.js"></script>')
           if '<script type="module" src="boot-v9.js"></script>' not in s:
