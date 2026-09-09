@@ -45,6 +45,7 @@ jobs:
           node --check pu-plan/brand-v18.js
           node --check pu-plan/privacy-v19.js
           node --check pu-plan/ui-v19.js
+          node --check pu-plan/hang-polish-v20.js
           node --check pu-plan/polish-v9.js
           node --check pu-plan/sw-v9.js
           node --check pu-plan/next-round.js
