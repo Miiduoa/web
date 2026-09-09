@@ -26,66 +26,49 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Verify and prepare site
+
+      - name: Verify production files
+        shell: bash
         run: |
+          set -euo pipefail
           node --check pu-plan/app.js
           node --check pu-plan/cloud.js
-          node --check pu-plan/import-v10.js
-          node --check pu-plan/boot-v9.js
-          node --check pu-plan/security-v17.js
-          node --check pu-plan/auth-v13.js
-          node --check pu-plan/pwa-v9.js
-          node --check pu-plan/community-v12.js
-          node --check pu-plan/social-router-v12.js
-          node --check pu-plan/social-experience-v18.js
-          node --check pu-plan/discovery-v16.js
-          node --check pu-plan/planner-v14.js
-          node --check pu-plan/admin-v14.js
-          node --check pu-plan/language-v14.js
-          node --check pu-plan/brand-v18.js
-          node --check pu-plan/privacy-v19.js
-          node --check pu-plan/ui-v19.js
-          node --check pu-plan/hang-polish-v20.js
-          node --check pu-plan/polish-v9.js
-          node --check pu-plan/sw-v9.js
-          node --check pu-plan/next-round.js
+          node --check pu-plan/social-ui.js
+          node --check pu-plan/import.js
+          node --check pu-plan/boot.js
+          node --check pu-plan/security.js
+          node --check pu-plan/auth.js
+          node --check pu-plan/pwa.js
+          node --check pu-plan/community.js
+          node --check pu-plan/discover.js
+          node --check pu-plan/planner.js
+          node --check pu-plan/admin.js
+          node --check pu-plan/privacy.js
+          node --check pu-plan/semesters.js
+          node --check pu-plan/sw.js
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('pu-plan/index.html')
-          s = p.read_text(encoding='utf-8')
-          security = '<meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' https://cdn.jsdelivr.net \'wasm-unsafe-eval\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data: blob: https://hrrmkrayvrgnwcroyttp.supabase.co; media-src \'self\' blob: https://hrrmkrayvrgnwcroyttp.supabase.co; connect-src \'self\' https://hrrmkrayvrgnwcroyttp.supabase.co https://cdn.jsdelivr.net https://raw.githubusercontent.com https://tessdata.projectnaptha.com; worker-src \'self\' blob: https://cdn.jsdelivr.net; font-src \'self\' data:; object-src \'none\'; base-uri \'self\'; form-action \'self\'; frame-src \'none\'; upgrade-insecure-requests">'
-          if 'Content-Security-Policy' not in s:
-              s = s.replace('</head>', security + '\n</head>')
-          additions = '''
-          <link rel="stylesheet" href="social-v6.css">
-          <link rel="stylesheet" href="ui-v9.css">
-          <link rel="stylesheet" href="product-v9.css">
-          <link rel="stylesheet" href="brand-v18.css">
-          <link rel="stylesheet" href="ui-v19.css">
-          <link rel="manifest" href="manifest-v9.webmanifest">
-          <link rel="apple-touch-icon" href="nolu-icon.svg">'''
-          if 'ui-v19.css' not in s:
-              s = s.replace('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">' + additions)
-          s = s.replace('<link rel="apple-touch-icon" href="icon.svg">', '<link rel="apple-touch-icon" href="nolu-icon.svg">')
-          s = s.replace('<link rel="apple-touch-icon" href="hang-icon.svg">', '<link rel="apple-touch-icon" href="nolu-icon.svg">')
-          s = s.replace('<script type="module" src="import.js"></script>', '<script type="module" src="import-v10.js"></script>')
-          s = s.replace('<script type="module" src="ai.js"></script>', '')
-          s = s.replace('<script type="module" src="hang.js"></script>', '')
-          if '<script type="module" src="boot-v9.js"></script>' not in s:
-              s = s.replace('</body>', '<script type="module" src="boot-v9.js"></script>\n</body>')
-          p.write_text(s, encoding='utf-8')
+          import json
+          index=Path('pu-plan/index.html').read_text(encoding='utf-8')
+          manifest=json.loads(Path('pu-plan/manifest.webmanifest').read_text(encoding='utf-8'))
+          required=['style.css','friends.css','community.css','discover.css','admin.css','pwa.css','import.js','boot.js','nolu-icon.svg']
+          for item in required:
+              assert item in index or item in Path('pu-plan/sw.js').read_text(encoding='utf-8'), f'missing {item}'
+          forbidden=['boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js']
+          for item in forbidden:
+              assert item not in index, f'obsolete asset referenced: {item}'
+          assert manifest.get('name')=='Nolu'
+          assert manifest.get('start_url')=='./' and manifest.get('scope')=='./'
           PY
-          grep -q 'Content-Security-Policy' pu-plan/index.html
-          grep -q 'nolu-icon.svg' pu-plan/index.html
-          grep -q 'ui-v19.css' pu-plan/index.html
-          grep -q 'Nolu' pu-plan/index.html
-          ! grep -q 'src="ai.js"' pu-plan/index.html
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Upload site
         uses: actions/upload-pages-artifact@v4
         with:
           path: './pu-plan'
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
