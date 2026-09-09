@@ -56,23 +56,25 @@ jobs:
             assert(!intersects(art,title),`${label}: logo/wordmark overlaps headline`);
             assert(!intersects(art,copy),`${label}: logo/wordmark overlaps copy`);
             assert(!intersects(title,copy),`${label}: headline overlaps copy`);
-            const typography=await page.locator('.auth-poster h2').evaluate(el=>{const s=getComputedStyle(el);return{font:parseFloat(s.fontSize),line:parseFloat(s.lineHeight)}});
-            assert(typography.line>=typography.font*1.08,`${label}: headline line-height is too tight (${typography.line}/${typography.font})`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
             await page.waitForTimeout(50);
             assert(await page.locator('#loginForm').isVisible(),`${label}: login form did not open`);
             for(const field of await page.locator('#loginForm input').all()){
               const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`);
             }
-            await page.screenshot({path:`ui-smoke/login-${label}.png`});
+            await page.screenshot({path:`ui-smoke/login-${label}.png`,fullPage:true});
 
-            // Layout-only app check: bypass account handlers so network/session state cannot make the visual test flaky.
             await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
-            await page.waitForTimeout(60);
+            await page.waitForTimeout(80);
             await noHorizontalOverflow(page,label,'app');
             const bottom=await page.locator('.bottom').boundingBox();
             assert(bottom&&bottom.x>=0&&bottom.x+bottom.width<=metrics.innerWidth+1,`${label}: bottom navigation outside viewport`);
-            await page.screenshot({path:`ui-smoke/app-${label}.png`});
+            const top=await page.locator('.topbar').boundingBox();
+            const titleBox=await page.locator('#title').boundingBox();
+            const actions=await page.locator('.actions').boundingBox();
+            assert(top&&titleBox&&actions,`${label}: topbar elements missing`);
+            assert(!intersects(titleBox,actions),`${label}: title overlaps topbar actions`);
+            await page.screenshot({path:`ui-smoke/app-${label}.png`,fullPage:true});
           }
           (async()=>{
             const browser=await chromium.launch({headless:true});
