@@ -32,6 +32,7 @@ jobs:
           node --check pu-plan/cloud.js
           node --check pu-plan/import-v10.js
           node --check pu-plan/boot-v9.js
+          node --check pu-plan/security-v17.js
           node --check pu-plan/auth-v13.js
           node --check pu-plan/pwa-v9.js
           node --check pu-plan/community-v12.js
