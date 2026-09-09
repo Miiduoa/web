@@ -3,74 +3,72 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<meta name="theme-color" content="#111111" />
-<title>PU/PLAN — 我的課表</title>
+<meta name="theme-color" content="#171717" />
+<title>hang. — 課表、朋友、現在</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="auth-gate" id="authGate">
   <div class="auth-poster">
-    <div class="auth-art"><span>PU/</span><b>PLAN</b></div>
-    <div class="kicker">STUDENT SOCIAL TIMETABLE</div>
-    <h2>你的課表，<br>不要只是課表。</h2>
-    <p>註冊後可以用名字 / @帳號搜尋好友、互看課表、找共同空堂。名字之後隨時能改。</p>
+    <div class="auth-art" data-hang="1"><img src="hang-icon.svg" alt=""><span class="hang-wordmark">hang.</span></div>
+    <h2>課表對上了，<br>就約。</h2>
+    <p>看課表、找朋友、發動態、聊天，都放在同一個地方。</p>
   </div>
   <div class="auth-card">
     <div class="auth-tabs"><button class="on" data-auth-tab="register">註冊</button><button data-auth-tab="login">登入</button></div>
     <form id="registerForm" class="auth-form">
-      <div><div class="kicker">CREATE YOUR ID</div><h3>先取一個大家找得到你的名字。</h3></div>
+      <div><h3>先留一個大家認得出的名字</h3></div>
       <label>顯示名稱<input class="field" id="regName" maxlength="24" placeholder="例如：小明" required></label>
-      <label>@帳號<input class="field" id="regUsername" maxlength="24" pattern="[A-Za-z0-9_.]+" placeholder="例如：jinwei" required><small>只能用英文、數字、底線、句點；之後可以更改。</small></label>
+      <label>@帳號<input class="field" id="regUsername" maxlength="24" pattern="[A-Za-z0-9_.]+" placeholder="例如：jinwei" required><small>英文、數字、底線、句點都可以，之後還能改。</small></label>
       <label>Email<input class="field" id="regEmail" type="email" autocomplete="email" required></label>
       <label>密碼<input class="field" id="regPassword" type="password" minlength="8" autocomplete="new-password" required></label>
-      <button class="btn primary auth-submit">建立帳號 →</button>
+      <button class="btn primary auth-submit">建立帳號</button>
     </form>
     <form id="loginForm" class="auth-form hidden">
-      <div><div class="kicker">WELCOME BACK</div><h3>登入後直接同步你的課表。</h3></div>
+      <div><h3>回來了就繼續</h3></div>
       <label>Email<input class="field" id="loginEmail" type="email" autocomplete="email" required></label>
       <label>密碼<input class="field" id="loginPassword" type="password" autocomplete="current-password" required></label>
-      <button class="btn primary auth-submit">登入 →</button>
+      <button class="btn primary auth-submit">登入</button>
     </form>
-    <button class="guest" id="guestMode">先用訪客模式（好友搜尋會停用）</button>
+    <button class="guest" id="guestMode">先逛逛，不登入</button>
     <div class="auth-status" id="authStatus"></div>
   </div>
 </div>
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><div class="mark">P/</div><div><strong>PU/PLAN</strong><span>NO BORING TIMETABLE</span></div></div>
+    <div class="brand"><div class="mark" data-hang="1"><img src="hang-icon.svg" alt="hang."></div><div><strong>hang.</strong><span>課表・朋友・現在</span></div></div>
     <nav class="nav">
-      <button class="on" data-view="schedule">01　我的課表</button>
-      <button data-view="friends">02　好友課表</button>
-      <button data-view="ai">03　AI 助理 <span style="font-size:8px">FREE</span></button>
-      <button data-view="settings">04　分享設定</button>
+      <button class="on" data-view="schedule">課表</button>
+      <button data-view="friends">找人</button>
+      <button data-view="ai">安排</button>
+      <button data-view="settings">我的</button>
     </nav>
-    <div class="semester"><b id="semesterLabel">MY SEMESTER</b><span id="semesterMeta">自己的課表<br>登入後自動同步</span></div>
+    <div class="semester"><b id="semesterLabel">我的學期</b><span id="semesterMeta">自己的課表<br>登入後自動同步</span></div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <div><div class="kicker" id="kicker">MY WEEK / PU PLAN</div><h1 id="title">我的課表</h1></div>
-      <div class="actions"><button class="account-chip" id="accountChip" title="帳號設定"><span class="avatar mini-avatar" id="accountAvatar">?</span><span id="accountName">訪客</span></button><button class="btn" id="shareTop">分享</button><button class="btn import-top" id="importSchedule">⇧ 匯入課表</button><button class="btn primary" id="add">＋ 新增課程</button></div>
+      <div><div class="kicker" id="kicker"></div><h1 id="title">我的課表</h1></div>
+      <div class="actions"><button class="account-chip" id="accountChip" title="帳號設定"><span class="avatar mini-avatar" id="accountAvatar">?</span><span id="accountName">訪客</span></button><button class="btn" id="shareTop">分享</button><button class="btn import-top" id="importSchedule">匯入</button><button class="btn primary" id="add">新增</button></div>
     </header>
 
     <section class="view on" id="schedule">
       <div class="hero">
         <article class="hero-main">
-          <span class="badge">WEEK MODE: ON</span>
           <h2 id="greet">今天要上什麼？</h2>
           <p id="summary"></p>
-          <div class="quote">Tip：點課程卡片就能直接編輯，不用進設定頁。</div>
+          <div class="quote">點一下課程就能直接修改。</div>
         </article>
         <aside class="hero-side">
-          <div class="stat"><b id="today">0</b><span>今日課程</span></div>
-          <div class="stat"><b id="hours">0</b><span>每週節數</span></div>
-          <div class="stat"><b id="count">0</b><span>課程數</span></div>
+          <div class="stat"><b id="today">0</b><span>今天</span></div>
+          <div class="stat"><b id="hours">0</b><span>本週節數</span></div>
+          <div class="stat"><b id="count">0</b><span>課程</span></div>
         </aside>
       </div>
       <div class="floating-courses" id="floatingCourses"></div>
       <div class="schedule-toolbar">
         <div class="schedule-controls"><div class="view-switch"><button class="on" data-schedule-mode="week">整週</button><button data-schedule-mode="day">單日</button></div></div>
-        <div class="presentation-switch"><button class="on" data-presentation="human">日常視圖</button><button data-presentation="classic">經典格狀</button></div>
+        <div class="presentation-switch"><button class="on" data-presentation="human">好讀</button><button data-presentation="classic">格狀</button></div>
       </div>
       <div class="now-strip" id="nowStrip"></div>
       <div class="human-week" id="humanWeek"></div>
@@ -83,67 +81,67 @@
 
     <section class="view" id="friends">
       <div class="section-head">
-        <div><div class="kicker">FRIENDS / CHECK THEIR WEEK</div><h2>好友課表</h2><p>登入後可以直接搜尋名字或 @帳號。好友接受邀請後，雙方才能查看彼此課表。</p></div>
-        <button class="btn lime" id="addFriend">＋ 加好友</button>
+        <div><h2>找人</h2><p>搜名字或 @帳號，點一下就能看個人頁。成為好友後才能互看私人內容和課表。</p></div>
+        <button class="btn lime" id="addFriend">找人</button>
       </div>
       <div class="social-highlights" id="socialHighlights"></div>
       <div class="friend-layout">
         <div class="panel friend-side">
-          <div class="kicker">FIND PEOPLE</div><input class="search" id="cloudFriendSearch" placeholder="搜尋名字或 @username"><div class="search-results" id="cloudSearchResults"></div>
-          <div class="friend-divider"></div><div class="kicker">REQUESTS</div><div id="requestList" class="request-list"><small>登入後顯示好友邀請</small></div>
-          <div class="friend-divider"></div><div class="kicker">MEETUPS / 約一下</div><div id="meetupList" class="meetup-list"><small>共同空堂可以直接約吃飯或讀書。</small></div>
-          <div class="friend-divider"></div><div class="kicker">MY FRIENDS</div><input class="search small-search" id="search" placeholder="篩選已加好友"><div id="friendList"></div>
+          <input class="search" id="cloudFriendSearch" placeholder="搜尋名字或 @帳號"><div class="search-results" id="cloudSearchResults"></div>
+          <div class="friend-divider"></div><div id="requestList" class="request-list"><small>登入後會顯示好友邀請</small></div>
+          <div class="friend-divider"></div><div id="meetupList" class="meetup-list"><small>有共同空堂時，可以直接約吃飯或讀書。</small></div>
+          <div class="friend-divider"></div><input class="search small-search" id="search" placeholder="找我的好友"><div id="friendList"></div>
         </div>
         <div class="friend-main">
           <div class="friend-tools" id="friendTools">
             <button class="on" data-friend-tool="profile">個人頁</button>
-            <button data-friend-tool="same-building">今天同棟</button>
-            <button data-friend-tool="overlay">課表疊圖</button>
+            <button data-friend-tool="same-building">今天附近</button>
+            <button data-friend-tool="overlay">一起看課表</button>
             <button data-friend-tool="meetups">邀約</button>
           </div>
-          <div class="panel" id="friendView"><div class="empty">還沒有選擇好友<br><br>先加入一個朋友吧。</div></div>
+          <div class="panel" id="friendView"><div class="empty">先找一個人看看。</div></div>
         </div>
       </div>
     </section>
 
     <section class="view" id="ai">
       <div class="section-head">
-        <div><div class="kicker">LOCAL AI / ZERO API FEE</div><h2>課表 AI 助理</h2><p>直接讀你這台裝置上的課表來回答。Local AI 模式不需要 API Key，聊天內容不會送到我們的伺服器。</p></div>
-        <span class="badge" style="background:var(--blue)">BETA / ON-DEVICE</span>
+        <div><h2>幫我安排</h2><p>問今天去哪上課、找空堂，或把讀書和作業排進這週。</p></div>
       </div>
-      <div class="ai-layout" style="margin-top:14px">
+      <div class="ai-layout">
         <article class="ai-card ai-chat">
-          <div class="ai-head"><span class="ai-dot"></span><b>PU/PLAN AI</b><small id="aiModeLabel">QUICK MODE</small></div>
-          <div class="ai-messages" id="aiMessages"><div class="bubble ai"><span class="mini">PU/PLAN AI</span>可以直接問我：哪天最累、哪裡有空堂、怎麼排讀書時間、跟好友什麼時候都有空。
-
-「快速分析」不用下載模型；要自然語言聊天，再按右邊的「啟動免費 Local AI」。</div></div>
-          <div class="ai-compose"><textarea class="field" id="aiInput" rows="2" placeholder="例：幫我排一個這週不會太累的讀書計畫"></textarea><button class="btn ai-send" id="aiSend">送出 ↗</button></div>
+          <div class="ai-head"><span class="ai-dot"></span><b>安排</b><small id="aiModeLabel">一般模式</small></div>
+          <div class="ai-messages" id="aiMessages"><div class="bubble ai">可以直接問「星期三有什麼課？」、「下一堂在哪？」或「幫我找兩小時讀書」。</div></div>
+          <div class="ai-compose"><textarea class="field" id="aiInput" rows="2" placeholder="想問課表或怎麼安排？"></textarea><button class="btn ai-send" id="aiSend">送出</button></div>
         </article>
         <aside class="ai-side">
-          <div class="panel"><div class="kicker">FREE / RUNS ON YOUR DEVICE</div><h3 style="margin:5px 0 9px">免費 Local AI</h3><div class="ai-status"><span class="status-light" id="aiLight"></span><span id="aiStatus">尚未啟動</span></div><button class="btn ai-launch" id="aiLaunch" style="margin-top:9px">啟動免費 Local AI</button><span class="model-pill">Qwen2.5 · 0.5B · WebGPU</span><p class="ai-note">第一次使用會下載約 1 GB 左右的模型檔並快取在瀏覽器，之後不按次數計費。實際速度取決於手機 / 電腦與瀏覽器 WebGPU 支援。</p></div>
-          <div class="panel"><div class="kicker">ONE TAP / NO MODEL NEEDED</div><h3 style="margin:5px 0 0">快速分析</h3><div class="quick-grid"><button class="quick" data-smart="stress">哪天最累？</button><button class="quick" data-smart="free">找長空堂</button><button class="quick" data-smart="study">排讀書時段</button><button class="quick" data-smart="friend">跟好友找共同空堂</button></div><div class="smart-result" id="smartResult"><b>READY.</b><br>不用啟動模型也能先做課表計算。</div></div>
-          <div class="panel"><div class="kicker">PRIVACY</div><p class="ai-note" style="margin:0"><b style="color:var(--ink)">Local AI：</b>模型在瀏覽器裡跑，不需要付 API 費。<br><b style="color:var(--ink)">課表資料：</b>訪客只存在這台裝置；登入後會同步雲端。只有你接受的好友才能讀取你的課表，Email 不會公開。</p></div>
+          <div class="panel"><h3>進階安排</h3><div class="ai-status"><span class="status-light" id="aiLight"></span><span id="aiStatus">可直接使用</span></div><button class="btn ai-launch" id="aiLaunch">進階安排</button><span class="model-pill">不需要下載模型</span><p class="ai-note">適合一次給多個條件，例如日期、科目、要排多久，以及不要太晚等限制。</p></div>
+          <div class="panel"><h3>快速問</h3><div class="quick-grid"><button class="quick" data-smart="stress">哪天最累？</button><button class="quick" data-smart="free">找長空堂</button><button class="quick" data-smart="study">排讀書時段</button><button class="quick" data-smart="friend">跟好友找共同空堂</button></div><div class="smart-result" id="smartResult">選一個就會直接幫你算。</div></div>
+          <div class="panel"><p class="ai-note" style="margin:0">課表分析會讀取你目前的課表；只有你接受的好友才能查看你的課表，Email 不會公開。</p></div>
         </aside>
       </div>
     </section>
 
     <section class="view" id="settings">
       <div class="settings">
-        <article class="setting-card"><div class="kicker">SHARE / YOUR WEEK</div><h2>分享你的課表</h2><p>登入好友會自動同步最新課表；分享連結 / 好友碼保留給沒有帳號的人使用。</p><div class="code" id="code"></div><div class="row"><button class="btn lime" id="copyLink">複製分享連結</button><button class="btn" id="copyCode">複製好友碼</button></div></article>
-        <article class="setting-card profile-settings"><div class="kicker">PROFILE / SEARCHABLE</div><h3>你的個人頁</h3><p>好友搜尋會看到頭像、顯示名稱、@帳號與自介；Email 永遠不公開。名字、帳號和照片之後都能改。</p><div class="profile-editor-head"><div class="avatar avatar-xl" id="profileAvatarPreview">?</div><div><label class="btn avatar-upload">更換頭像<input id="avatarInput" type="file" accept="image/*" hidden></label><button class="btn" id="removeAvatar" type="button">移除</button><small>會在手機端自動壓成小圖再上傳。</small></div></div><label class="label">顯示名稱<input class="field" id="name" maxlength="24" placeholder="例如：小明"></label><label class="label" style="margin-top:9px">@帳號<input class="field" id="username" maxlength="24" placeholder="例如：jinwei"></label><label class="label" style="margin-top:9px">一句自介<textarea class="field" id="bio" maxlength="120" rows="3" placeholder="例如：資管系｜常駐主顧館｜想揪讀書可以找我"></textarea></label><label class="discover-toggle"><input type="checkbox" id="discoverable" checked><span>允許其他人用名字 / @帳號找到我</span></label><button class="btn primary" style="width:100%;margin-top:9px" id="saveName">儲存個人資料</button><button class="btn" style="width:100%;margin-top:9px" id="logout">登出</button><div class="cloud-state" id="cloudState">訪客模式</div></article>
+        <article class="setting-card"><h2>分享課表</h2><p>好友登入後會自動看到你最新的課表；也可以複製分享連結給還沒有帳號的人。</p><div class="code" id="code"></div><div class="row"><button class="btn lime" id="copyLink">複製連結</button><button class="btn" id="copyCode">複製好友碼</button></div></article>
+        <article class="setting-card profile-settings"><h3>我的個人頁</h3><p>別人會看到你的頭像、名稱、@帳號和自介，Email 不會公開。</p><div class="profile-editor-head"><div class="avatar avatar-xl" id="profileAvatarPreview">?</div><div><label class="btn avatar-upload">換頭像<input id="avatarInput" type="file" accept="image/*" hidden></label><button class="btn" id="removeAvatar" type="button">移除</button><small>照片會先在手機上縮小再上傳。</small></div></div><label class="label">顯示名稱<input class="field" id="name" maxlength="24" placeholder="例如：小明"></label><label class="label" style="margin-top:9px">@帳號<input class="field" id="username" maxlength="24" placeholder="例如：jinwei"></label><label class="label" style="margin-top:9px">自介<textarea class="field" id="bio" maxlength="120" rows="3" placeholder="寫一點讓朋友認得出你的東西"></textarea></label><label class="discover-toggle"><input type="checkbox" id="discoverable" checked><span>讓別人可以搜尋到我</span></label><button class="btn primary" style="width:100%;margin-top:9px" id="saveName">儲存</button><button class="btn" style="width:100%;margin-top:9px" id="logout">登出</button><div class="cloud-state" id="cloudState">訪客模式</div></article>
       </div>
     </section>
   </main>
 </div>
-<nav class="bottom"><button data-view="schedule">01<br>課表</button><button data-view="friends">02<br>好友</button><button class="plus" id="mobileAdd">＋</button><button data-view="ai">03<br>AI</button><button data-view="settings">04<br>分享</button></nav>
+<nav class="bottom"><button data-view="schedule">課表</button><button data-view="friends">找人</button><button class="plus" id="mobileAdd">＋</button><button data-view="ai">安排</button><button data-view="settings">我的</button></nav>
+
 <dialog id="courseDialog"><form id="courseForm"><div class="modal-head"><h2 id="courseTitle">新增課程</h2><button type="button" class="x" data-close="courseDialog">×</button></div><input type="hidden" id="courseId"><div class="form-grid"><label class="full">課程名稱<input class="field" id="courseName" required></label><label>星期<select class="field" id="day"></select></label><label>顏色<select class="field" id="color"><option value="violet">紫</option><option value="blue">藍</option><option value="mint">綠</option><option value="orange">橘</option><option value="pink">粉</option><option value="lime">萊姆</option><option value="gray">灰</option></select></label><label>開始節次<select class="field" id="start"></select></label><label>結束節次<select class="field" id="end"></select></label><label>老師<input class="field" id="teacher"></label><label>教室<input class="field" id="room"></label></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn danger" id="deleteCourse" hidden>刪除</button><button type="button" class="btn" data-close="courseDialog">取消</button><button class="btn primary">儲存</button></div></form></dialog>
-<dialog id="importDialog" class="import-dialog"><div class="import-shell"><div class="modal-head"><div><div class="kicker">IMAGE → TIMETABLE</div><h2>圖片匯入課表</h2></div><button type="button" class="x" data-close="importDialog">×</button></div><div class="import-grid"><section class="import-left"><label class="import-drop" id="importDrop"><input id="scheduleImageInput" type="file" accept="image/*" hidden><span class="import-icon">▧</span><b>丟一張課表進來</b><small>點一下選圖片，也可以拖曳或直接貼上截圖。選好後會自動開始辨識，不用再多按一次。</small><em>靜宜大學課表已特別最佳化 · 圖片不會上傳到 PU/PLAN</em></label><div class="import-preview-wrap hidden" id="importPreviewWrap"><img id="importPreview" alt="課表預覽"><button class="btn" type="button" id="changeImportImage">換一張</button></div><div class="ocr-progress hidden" id="ocrProgress"><div class="ocr-progress-top"><b id="ocrStatus">準備辨識</b><span id="ocrPercent">0%</span></div><div class="ocr-bar"><i id="ocrBar"></i></div><small id="ocrHint">第一次會下載繁中 OCR 模型，之後瀏覽器會快取。</small></div><button class="btn lime import-scan hidden" id="startOcr" type="button">重新辨識</button></section><section class="import-right"><div class="import-empty" id="importEmpty"><b>把課表截圖丟進來就好。</b><span>選圖、拖曳或貼上後會自動辨識；完成前不會動到你現在的課表。</span></div><div class="import-results hidden" id="importResults"><div class="import-result-head"><div><div class="kicker">CHECK BEFORE IMPORT</div><h3>辨識結果</h3></div><span class="confidence-pill" id="importConfidence">—</span></div><div class="import-summary" id="importSummary"></div><div class="import-metadata" id="importMetadata"></div><div class="import-warning" id="importWarning"></div><section class="import-week-card"><div class="import-week-head"><div><div class="kicker">AFTER IMPORT</div><h4>匯入後整週預覽</h4></div><span id="importPreviewCount">—</span></div><div class="import-week-preview" id="importWeekPreview"></div></section><div class="recognized-list-head"><b>逐門確認</b><div><button type="button" id="selectAllDrafts">全選</button><button type="button" id="clearDrafts">全不選</button></div></div><div class="recognized-list" id="recognizedList"></div><div class="import-options"><label><input type="radio" name="importMode" value="replace" checked> 取代目前課表</label><label><input type="radio" name="importMode" value="merge"> 與目前課表合併</label></div><div class="row import-actions"><button class="btn" id="cancelImport" type="button">取消</button><button class="btn primary" id="confirmImport" type="button">確認匯入</button></div></div></section></div></div></dialog>
-<dialog id="friendDialog"><form id="friendForm"><div class="modal-head"><h2>用好友碼加入</h2><button type="button" class="x" data-close="friendDialog">×</button></div><label class="label">好友分享連結 / 備用好友碼<textarea class="field" id="friendCode" rows="5" placeholder="貼上朋友傳來的連結，或 PU1- 開頭的好友碼"></textarea></label><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close="friendDialog">取消</button><button class="btn lime">加入好友</button></div></form></dialog>
+
+<dialog id="importDialog" class="import-dialog"><div class="import-shell"><div class="modal-head"><div><h2>匯入課表</h2></div><button type="button" class="x" data-close="importDialog">×</button></div><div class="import-grid"><section class="import-left"><label class="import-drop" id="importDrop"><input id="scheduleImageInput" type="file" accept="image/*" hidden><span class="import-icon">▧</span><b>把課表截圖放進來</b><small>點一下選圖片，也可以拖曳或直接貼上截圖。選好後會自動開始辨識。</small><em>圖片只在這台裝置上處理，不會上傳。</em></label><div class="import-preview-wrap hidden" id="importPreviewWrap"><img id="importPreview" alt="課表預覽"><button class="btn" type="button" id="changeImportImage">換一張</button></div><div class="ocr-progress hidden" id="ocrProgress"><div class="ocr-progress-top"><b id="ocrStatus">準備辨識</b><span id="ocrPercent">0%</span></div><div class="ocr-bar"><i id="ocrBar"></i></div><small id="ocrHint">第一次辨識可能會比較久，之後會更快。</small></div><button class="btn lime import-scan hidden" id="startOcr" type="button">重新辨識</button></section><section class="import-right"><div class="import-empty" id="importEmpty"><b>放一張課表截圖就好。</b><span>辨識完成前不會動到你現在的課表。</span></div><div class="import-results hidden" id="importResults"><div class="import-result-head"><div><h3>辨識結果</h3></div><span class="confidence-pill" id="importConfidence">—</span></div><div class="import-summary" id="importSummary"></div><div class="import-metadata" id="importMetadata"></div><div class="import-warning" id="importWarning"></div><section class="import-week-card"><div class="import-week-head"><div><h4>整週預覽</h4></div><span id="importPreviewCount">—</span></div><div class="import-week-preview" id="importWeekPreview"></div></section><div class="recognized-list-head"><b>逐門確認</b><div><button type="button" id="selectAllDrafts">全選</button><button type="button" id="clearDrafts">全不選</button></div></div><div class="recognized-list" id="recognizedList"></div><div class="import-options"><label><input type="radio" name="importMode" value="replace" checked> 取代目前課表</label><label><input type="radio" name="importMode" value="merge"> 和目前課表合併</label></div><div class="row import-actions"><button class="btn" id="cancelImport" type="button">取消</button><button class="btn primary" id="confirmImport" type="button">匯入</button></div></div></section></div></div></dialog>
+
+<dialog id="friendDialog"><form id="friendForm"><div class="modal-head"><h2>用好友碼加入</h2><button type="button" class="x" data-close="friendDialog">×</button></div><label class="label">分享連結或好友碼<textarea class="field" id="friendCode" rows="5" placeholder="貼上朋友傳來的連結或好友碼"></textarea></label><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close="friendDialog">取消</button><button class="btn lime">加入好友</button></div></form></dialog>
 <div class="toast" id="toast"></div>
 <script src="app.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js"></script>
 <script type="module" src="cloud.js"></script>
 <script type="module" src="social-ui.js"></script>
-<script type="module" src="import.js"></script>
+<script type="module" src="import-v10.js"></script>
 <script type="module" src="ai.js"></script>
 </body></html>
