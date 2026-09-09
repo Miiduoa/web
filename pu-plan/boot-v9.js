@@ -10,11 +10,11 @@ link('stylesheet',asset('./mobile-v10.css'),'puplanMobile');
 link('stylesheet',asset('./mobile-v12.css'),'puplanMobileV12');
 link('stylesheet',asset('./layout-v13.css'),'puplanLayoutV13');
 link('stylesheet',asset('./discovery-v16.css'),'campusDiscoveryV16');
-link('stylesheet',asset('./brand-v18.css'),'hangBrandV18');
-link('stylesheet',asset('./ui-v19.css'),'hangUiV19');
+link('stylesheet',asset('./brand-v18.css'),'noluBrandV18');
+link('stylesheet',asset('./ui-v19.css'),'noluUiV19');
 link('manifest',asset('./manifest-v9.webmanifest'),'puplanManifestV9');
-link('apple-touch-icon',asset('./hang-icon.svg'),'hangIconV18');
-for(const [name,content] of [['apple-mobile-web-app-capable','yes'],['apple-mobile-web-app-status-bar-style','default'],['apple-mobile-web-app-title','hang.']]){let m=document.querySelector(`meta[name="${name}"]`);if(!m){m=document.createElement('meta');m.name=name;document.head.appendChild(m)}m.content=content}
+link('apple-touch-icon',asset('./nolu-icon.svg'),'noluIconV18');
+for(const [name,content] of [['apple-mobile-web-app-capable','yes'],['apple-mobile-web-app-status-bar-style','default'],['apple-mobile-web-app-title','Nolu']]){let m=document.querySelector(`meta[name="${name}"]`);if(!m){m=document.createElement('meta');m.name=name;document.head.appendChild(m)}m.content=content}
 await import(asset('./brand-v18.js'));
 await import(asset('./security-v17.js'));
 await import(asset('./auth-v13.js'));
