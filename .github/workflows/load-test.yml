@@ -102,20 +102,20 @@ jobs:
               const r=need(await call(SOCIAL,'create_chat',{user_ids:[target.id]},a.token),'direct_chat');
               const id=r.data.conversation?.id;if(!id)throw new Error('direct conversation id missing');conversationIds.push(id);report.seed.conversations++;
             }
-            const groups=[[b,c],[b,d],[c,d],[b,c,d]];
+            const groups=[[b,c,d],[b,c],[b,d],[c,d]];
             let gi=1;
             while(conversationIds.length<18){
               const members=groups[(gi-1)%groups.length];
               const r=need(await call(SOCIAL,'create_chat',{user_ids:members.map(x=>x.id),title:`壓測群組 ${gi}`},a.token),'group_chat');
               const id=r.data.conversation?.id;if(!id)throw new Error('group conversation id missing');conversationIds.push(id);report.seed.conversations++;gi++;
             }
-            report.primary_conversation=conversationIds[0];
+            const sharedConversationId=conversationIds[3];
+            report.primary_conversation=sharedConversationId;
 
             let msgNo=1;
             for(const id of conversationIds){
               for(let j=0;j<4;j++){
-                const sender=j%2===0?a:users[1+(j%3)];
-                need(await call(SOCIAL,'send_message',{conversation_id:id,body:`真實負載測試訊息 ${msgNo++}`},sender.token),'seed_message');report.seed.messages++;
+                need(await call(SOCIAL,'send_message',{conversation_id:id,body:`真實負載測試訊息 ${msgNo++}`},a.token),'seed_message');report.seed.messages++;
               }
             }
 
@@ -138,7 +138,7 @@ jobs:
             await staged('feed_read',[50,100,200,300,500],i=>call(SOCIAL,'feed',{},feedUser(i).token));
             await staged('heavy_inbox_18_chats',[25,50,100,200,300],()=>call(SOCIAL,'inbox',{},a.token));
             await staged('conversation_read',[50,100,200,300,500],i=>call(SOCIAL,'conversation',{conversation_id:conversationIds[i%conversationIds.length]},a.token));
-            for(const cc of [25,50,100,200,300]){const s=await journeyStage(cc,users,conversationIds[0]);if(degraded(s)){report.setup.push({step:'journey_stop',at:cc});break}}
+            for(const cc of [25,50,100,200,300]){const s=await journeyStage(cc,users,sharedConversationId);if(degraded(s)){report.setup.push({step:'journey_stop',at:cc});break}}
 
             await endpointStage('chat_send_write',30,i=>call(SOCIAL,'send_message',{conversation_id:conversationIds[i%conversationIds.length],body:`即時聊天寫入 ${i+1}`},a.token));
             await endpointStage('post_create_write',8,i=>call(SOCIAL,'create_post',{body:`即時貼文寫入 ${i+1}`,visibility:'private'},a.token));
