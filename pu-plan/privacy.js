@@ -1,4 +1,4 @@
-const PRIVACY_API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v17';
+const PRIVACY_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const privacyToken=()=>localStorage.getItem('puplan_session')||'';
 let privacyState='public',privacyBusy=false;
 
