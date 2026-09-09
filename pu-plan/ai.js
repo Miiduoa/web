@@ -10,3 +10,4 @@ async function ask(){let text=input.value.trim();if(!text)return;input.value='';
 function quickAnswer(text){let t=text.toLowerCase();if(/累|忙|滿|壓力/.test(t))return window.PUPLAN_AI.smartAnalysis('stress');if(/好友|共同|一起|朋友/.test(t))return window.PUPLAN_AI.smartAnalysis('friend');if(/讀書|複習|作業|計畫/.test(t))return window.PUPLAN_AI.smartAnalysis('study');if(/空堂|空檔|有空|時間/.test(t))return window.PUPLAN_AI.smartAnalysis('free');return '快速模式目前最擅長：課表壓力、長空堂、讀書時段、好友共同空堂。要自由聊天請先啟動 Local AI。'}
 launch?.addEventListener('click',initAI);send?.addEventListener('click',ask);input?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask()}});
 if(!navigator.gpu)setStatus('快速分析可用；Local AI 需 WebGPU','');
+import('https://cdn.jsdelivr.net/gh/Miiduoa/web@0630bd172541b30dcdce2a819662a4b65c8364ae/pu-plan/next-round.js').catch(e=>console.warn('next-round',e));
