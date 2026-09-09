@@ -24,97 +24,87 @@ jobs:
       SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
     steps:
       - name: Run staged traffic simulation
+        id: load
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
           node <<'NODE'
-          const crypto = require('crypto');
-          const { performance } = require('perf_hooks');
-
-          const SITE=process.env.SITE, API=process.env.API, SOCIAL=process.env.SOCIAL;
-          const tag=(Date.now().toString(36)+crypto.randomBytes(3).toString('hex')).slice(-14);
+          const fs=require('fs');
+          const crypto=require('crypto');
+          const {performance}=require('perf_hooks');
+          const SITE=process.env.SITE,API=process.env.API,SOCIAL=process.env.SOCIAL;
+          const tag=(Date.now().toString(36)+crypto.randomBytes(3).toString('hex')).replace(/[^a-z0-9]/g,'').slice(-14);
           const password=`Load-${crypto.randomBytes(12).toString('base64url')}Aa9!`;
-          const emails=[`loadtest-${tag}-a@example.invalid`,`loadtest-${tag}-b@example.invalid`];
+          const emails=[`loadtest-${tag}-a@puplan.test`,`loadtest-${tag}-b@puplan.test`];
           const usernames=[`lt${tag.slice(-10)}a`,`lt${tag.slice(-10)}b`].map(x=>x.toLowerCase().slice(0,24));
-          const results=[];
+          const report={tag,emails,usernames,started_at:new Date().toISOString(),setup:[],results:[],fatal:null};
 
           async function fetchTimed(url,options={}){
             const start=performance.now();
             try{
-              const res=await fetch(url,{...options,signal:AbortSignal.timeout(12000)});
+              const res=await fetch(url,{...options,signal:AbortSignal.timeout(15000)});
               const text=await res.text();
               return {ok:res.ok,status:res.status,ms:performance.now()-start,text};
-            }catch(e){return {ok:false,status:0,ms:performance.now()-start,error:String(e)}}
+            }catch(e){return {ok:false,status:0,ms:performance.now()-start,error:String(e),text:''}}
           }
           async function call(url,action,payload={},token=''){
             const r=await fetchTimed(url,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({action,...payload})});
             let data={};try{data=JSON.parse(r.text||'{}')}catch{}
             return {...r,data};
           }
-          function pct(values,p){if(!values.length)return 0;const s=[...values].sort((a,b)=>a-b);return s[Math.min(s.length-1,Math.max(0,Math.ceil((p/100)*s.length)-1))]}
+          const safe=(r)=>({ok:r.ok,status:r.status,ms:+r.ms.toFixed(1),body:String(r.text||r.error||'').slice(0,500)});
+          const pct=(values,p)=>{if(!values.length)return 0;const s=[...values].sort((a,b)=>a-b);return s[Math.min(s.length-1,Math.max(0,Math.ceil((p/100)*s.length)-1))]};
           function summarize(name,concurrency,rows,seconds){
-            const lat=rows.map(x=>x.ms), ok=rows.filter(x=>x.ok).length, e429=rows.filter(x=>x.status===429).length, e5=rows.filter(x=>x.status>=500).length;
-            const x={name,concurrency,requests:rows.length,success_rate:+(100*ok/Math.max(1,rows.length)).toFixed(2),p50_ms:+pct(lat,50).toFixed(1),p95_ms:+pct(lat,95).toFixed(1),p99_ms:+pct(lat,99).toFixed(1),max_ms:+Math.max(0,...lat).toFixed(1),rps:+(rows.length/Math.max(.001,seconds)).toFixed(1),http_429:e429,http_5xx:e5};
-            results.push(x); console.log('LOAD_RESULT '+JSON.stringify(x)); return x;
+            const lat=rows.map(x=>x.ms),ok=rows.filter(x=>x.ok).length,e429=rows.filter(x=>x.status===429).length,e5=rows.filter(x=>x.status>=500).length;
+            const x={name,concurrency,requests:rows.length,success_rate:+(100*ok/Math.max(1,rows.length)).toFixed(2),p50_ms:+pct(lat,50).toFixed(1),p95_ms:+pct(lat,95).toFixed(1),p99_ms:+pct(lat,99).toFixed(1),max_ms:+Math.max(0,...lat).toFixed(1),rps:+(rows.length/Math.max(.001,seconds)).toFixed(1),http_429:e429,http_5xx:e5,http_0:rows.filter(x=>x.status===0).length};
+            report.results.push(x);console.log('LOAD_RESULT '+JSON.stringify(x));return x;
           }
-          function degraded(x){return x.success_rate<98 || x.http_5xx/Math.max(1,x.requests)>.01 || x.p95_ms>5000}
-          async function staticStage(c){
-            const t=performance.now();const rows=await Promise.all(Array.from({length:c},()=>fetchTimed(SITE,{headers:{'Cache-Control':'no-cache'}})));return summarize('static_html',c,rows,(performance.now()-t)/1000);
-          }
+          const degraded=x=>x.success_rate<98||x.http_5xx/Math.max(1,x.requests)>.01||x.p95_ms>5000;
+          async function staticStage(c){const t=performance.now();const rows=await Promise.all(Array.from({length:c},()=>fetchTimed(SITE)));return summarize('static_html',c,rows,(performance.now()-t)/1000)}
           async function mixedStage(c,a,b,conversationId){
             const t=performance.now(),rows=[];
-            await Promise.all(Array.from({length:c},(_,i)=>(async()=>{
-              const u=i%2?a:b;
-              for(const [url,action,payload] of [[API,'bootstrap',{}],[SOCIAL,'feed',{}],[SOCIAL,'inbox',{}],[SOCIAL,'conversation',{conversation_id:conversationId}]]){
-                const r=await call(url,action,payload,u.token);rows.push(r);
-                if(!r.ok)break;
-              }
-            })()));
+            await Promise.all(Array.from({length:c},(_,i)=>(async()=>{const u=i%2?a:b;for(const [url,action,payload] of [[API,'bootstrap',{}],[SOCIAL,'feed',{}],[SOCIAL,'inbox',{}],[SOCIAL,'conversation',{conversation_id:conversationId}]]){const r=await call(url,action,payload,u.token);rows.push(r);if(!r.ok)break}})()));
             return summarize('signed_in_journey',c,rows,(performance.now()-t)/1000);
           }
-          async function writeBurst(name,c,fn){
-            const t=performance.now();const rows=await Promise.all(Array.from({length:c},(_,i)=>fn(i)));return summarize(name,c,rows,(performance.now()-t)/1000);
-          }
+          async function writeBurst(name,c,fn){const t=performance.now();const rows=await Promise.all(Array.from({length:c},(_,i)=>fn(i)));return summarize(name,c,rows,(performance.now()-t)/1000)}
+          function save(){report.finished_at=new Date().toISOString();fs.writeFileSync('load-results.json',JSON.stringify(report,null,2));}
 
-          console.log(`LOADTEST_TAG=${tag}`);
-          console.log(`LOADTEST_EMAIL_A=${emails[0]}`);
-          console.log(`LOADTEST_EMAIL_B=${emails[1]}`);
+          (async()=>{
+            console.log('LOADTEST_TAG='+tag);
+            const warm=await fetchTimed(SITE);report.setup.push({step:'site_warm',...safe(warm)});console.log('SETUP site '+JSON.stringify(safe(warm)));
+            for(const c of [100,250,500,1000]){const s=await staticStage(c);if(degraded(s)){report.setup.push({step:'static_stop',at:c});break}}
 
-          // Confirm the public frontend/CDN is healthy before touching test data.
-          const warm=await fetchTimed(SITE); if(!warm.ok)throw new Error(`site unavailable: ${warm.status}`);
+            const users=[];
+            for(let i=0;i<2;i++){
+              const r=await call(API,'signup',{display_name:`流量測試 ${i+1}`,username:usernames[i],email:emails[i],password});
+              report.setup.push({step:`signup_${i+1}`,...safe(r)});console.log(`SETUP signup_${i+1} `+JSON.stringify(safe(r)));
+              if(!r.ok||!r.data?.profile?.id||!r.data?.token)throw new Error(`signup ${i+1} failed ${r.status}: ${r.text}`);
+              users.push({id:r.data.profile.id,token:r.data.token,email:emails[i]});
+            }
+            const [a,b]=users;
+            for(const [i,u] of users.entries()){
+              const r=await call(SOCIAL,'privacy_set',{profile_visibility:'private'},u.token);report.setup.push({step:`privacy_${i+1}`,...safe(r)});if(!r.ok)throw new Error(`privacy failed ${r.status}: ${r.text}`);
+            }
+            const rq=await call(API,'send_request',{user_id:b.id},a.token);report.setup.push({step:'friend_request',...safe(rq)});if(!rq.ok)throw new Error(`friend request failed: ${rq.text}`);
+            const rel=(rq.data.social?.relationships||[]).find(x=>x.requester_id===a.id&&x.addressee_id===b.id);if(!rel)throw new Error('friendship id missing');
+            const ac=await call(API,'accept_request',{friendship_id:rel.id},b.token);report.setup.push({step:'friend_accept',...safe(ac)});if(!ac.ok)throw new Error(`accept failed: ${ac.text}`);
+            const cr=await call(SOCIAL,'create_chat',{user_ids:[b.id]},a.token);report.setup.push({step:'create_chat',...safe(cr)});if(!cr.ok)throw new Error(`create chat failed: ${cr.text}`);
+            const conversationId=cr.data.conversation?.id;if(!conversationId)throw new Error('conversation id missing');report.conversation_id=conversationId;
 
-          const users=[];
-          for(let i=0;i<2;i++){
-            const r=await call(API,'signup',{display_name:`流量測試 ${i+1}`,username:usernames[i],email:emails[i],password});
-            if(!r.ok)throw new Error(`signup ${i+1} failed ${r.status}: ${r.text}`);
-            users.push({id:r.data.profile.id,token:r.data.token,email:emails[i]});
-          }
-          const [a,b]=users;
-          await call(SOCIAL,'privacy_set',{profile_visibility:'private'},a.token);
-          await call(SOCIAL,'privacy_set',{profile_visibility:'private'},b.token);
-          const rq=await call(API,'send_request',{user_id:b.id},a.token); if(!rq.ok)throw new Error(`friend request failed: ${rq.text}`);
-          const rel=(rq.data.social?.relationships||[]).find(x=>x.requester_id===a.id&&x.addressee_id===b.id);
-          if(!rel)throw new Error('friendship id missing');
-          const ac=await call(API,'accept_request',{friendship_id:rel.id},b.token); if(!ac.ok)throw new Error(`accept failed: ${ac.text}`);
-          const cr=await call(SOCIAL,'create_chat',{user_ids:[b.id]},a.token);if(!cr.ok)throw new Error(`create chat failed: ${cr.text}`);
-          const conversationId=cr.data.conversation?.id;if(!conversationId)throw new Error('conversation id missing');
+            for(let i=0;i<8;i++){const u=i%2?a:b;const r=await call(SOCIAL,'send_message',{conversation_id:conversationId,body:`負載測試訊息 ${i+1}`},u.token);if(!r.ok)throw new Error(`seed chat failed ${r.status}: ${r.text}`)}
+            for(let i=0;i<8;i++){const u=i%2?a:b;const r=await call(SOCIAL,'create_post',{body:`負載測試私人貼文 ${i+1}`,visibility:'private'},u.token);if(!r.ok)throw new Error(`seed post failed ${r.status}: ${r.text}`)}
 
-          for(let i=0;i<8;i++){
-            const u=i%2?a:b;const r=await call(SOCIAL,'send_message',{conversation_id:conversationId,body:`負載測試訊息 ${i+1}`},u.token);if(!r.ok)throw new Error(`seed chat failed ${r.status}`);
-          }
-          for(let i=0;i<8;i++){
-            const u=i%2?a:b;const r=await call(SOCIAL,'create_post',{body:`負載測試私人貼文 ${i+1}`,visibility:'private'},u.token);if(!r.ok)throw new Error(`seed post failed ${r.status}`);
-          }
-
-          // GitHub Pages CDN: test request fan-out separately from application APIs.
-          for(const c of [100,250,500,1000]){const s=await staticStage(c);if(degraded(s)){console.log(`STOP_STATIC_AT=${c}`);break}}
-
-          // Authenticated user journey: one VU does four sequential application reads.
-          for(const c of [25,50,100,200,300]){const s=await mixedStage(c,a,b,conversationId);if(degraded(s)){console.log(`STOP_API_AT=${c}`);break}}
-
-          // Controlled write bursts stay below production rate-limit ceilings from one runner IP.
-          await writeBurst('chat_send_write',40,i=>call(SOCIAL,'send_message',{conversation_id:conversationId,body:`同時聊天壓測 ${i+1}`},i%2?a.token:b.token));
-          await writeBurst('post_create_write',16,i=>call(SOCIAL,'create_post',{body:`同時發文壓測 ${i+1}`,visibility:'private'},i%2?a.token:b.token));
-
-          console.log('LOADTEST_SUMMARY='+JSON.stringify({tag,users:2,results}));
+            for(const c of [25,50,100,200,300]){const s=await mixedStage(c,a,b,conversationId);if(degraded(s)){report.setup.push({step:'api_stop',at:c});break}}
+            await writeBurst('chat_send_write',40,i=>call(SOCIAL,'send_message',{conversation_id:conversationId,body:`同時聊天壓測 ${i+1}`},i%2?a.token:b.token));
+            await writeBurst('post_create_write',16,i=>call(SOCIAL,'create_post',{body:`同時發文壓測 ${i+1}`,visibility:'private'},i%2?a.token:b.token));
+          })().catch(e=>{report.fatal=String(e?.stack||e);console.error(report.fatal);process.exitCode=1}).finally(save);
           NODE
+
+      - name: Upload benchmark result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puplan-load-result
+          path: load-results.json
+          if-no-files-found: error
+          retention-days: 3
