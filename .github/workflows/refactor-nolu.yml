@@ -25,201 +25,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Rebuild site structure
+      - name: Refactor source
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re, shutil
-
-          root=Path('pu-plan')
-          old=(root/'index.html').read_text(encoding='utf-8')
-          if '<div class="shell">' not in old:
-              raise SystemExit('app shell not found')
-
-          # 1) Stable JS names: keep only current implementations.
-          copies={
-            'import-v10.js':'import.js',
-            'next-round.js':'account.js',
-            'social-router-v12.js':'social-router.js',
-            'community-v12.js':'community.js',
-            'social-experience-v18.js':'replies.js',
-            'discovery-v16.js':'discovery.js',
-            'pwa-v9.js':'pwa.js',
-            'planner-v14.js':'planner.js',
-            'admin-v14.js':'admin.js',
-            'privacy-v19.js':'privacy.js',
-            'security-v17.js':'security.js',
-          }
-          for src,dst in copies.items():
-              p=root/src
-              if not p.exists():
-                  raise SystemExit(f'missing required source: {src}')
-              shutil.copyfile(p,root/dst)
-
-          # Clean a few old visible labels in stable files instead of loading mutation-based polish scripts.
-          p=root/'admin.js'; s=p.read_text(encoding='utf-8')
-          s=s.replace('每次管理操作都會留下紀錄。','').replace('管理貼文、留言與聊天內容時，系統會留下操作紀錄。','')
-          p.write_text(s,encoding='utf-8')
-
-          p=root/'account.js'; s=p.read_text(encoding='utf-8')
-          for a,b in {
-            'SEMESTERS / SWITCH FAST':'學期切換','ADD / EDIT':'新增或修改','WELCOME / SET YOUR WEEK':'第一次設定',
-            'HOW TO START':'開始使用','FASTEST':'快速匯入','MANUAL':'手動新增','ACCOUNT RECOVERY':'帳號救援','SAVE THIS ONCE':'請妥善保存'
-          }.items(): s=s.replace(a,b)
-          p.write_text(s,encoding='utf-8')
-
-          p=root/'pwa.js'; s=p.read_text(encoding='utf-8').replace("asset('./sw-v9.js')","asset('./sw.js')")
-          p.write_text(s,encoding='utf-8')
-
-          # 2) Consolidate all application styles into one app.css.
-          css_sources=['style.css','social-v6.css','pwa-v8.css','community-v12.css','admin-v14.css','mobile-v10.css','mobile-v12.css','layout-v13.css','discovery-v16.css','brand-v18.css','ui-v19.css']
-          chunks=[]
-          for name in css_sources:
-              p=root/name
-              if not p.exists(): continue
-              text=p.read_text(encoding='utf-8')
-              text=re.sub(r'^@import[^;]+;\s*','',text,flags=re.M)
-              chunks.append(f'/* {name} */\n{text}')
-          app_css='\n\n'.join(chunks)
-          app_css += r'''
-
-/* final app layout — single source of truth */
-.auth-gate,.auth-poster,.auth-card{display:none!important}
-body.app-page{min-height:100dvh;background:#f5f2ec}
-@media(max-width:760px){
-  .shell{display:block!important;width:100%!important;max-width:none!important;min-height:100dvh!important}
-  .sidebar{display:none!important}
-  .main{width:100%!important;max-width:none!important;min-width:0!important;padding:0 14px calc(94px + env(safe-area-inset-bottom))!important}
-  .topbar{margin:0 -14px 14px!important;padding:calc(10px + env(safe-area-inset-top)) 14px 10px!important;position:sticky!important;top:0!important}
-  .topbar h1{font-size:24px!important}.actions{gap:5px!important;flex-wrap:nowrap!important;overflow-x:auto!important;scrollbar-width:none}.actions::-webkit-scrollbar{display:none}
-  .actions .btn,.account-chip{flex:0 0 auto!important;min-height:36px!important;padding-inline:11px!important}
-  .hero{grid-template-columns:1fr!important}.hero-side{display:grid!important;grid-template-columns:repeat(3,1fr)!important}.stat{min-width:0!important;border-left:0!important;border-top:1px solid var(--line)!important}.stat:first-child{border-top:0!important}
-  .now-strip{grid-template-columns:1fr!important}.human-week{grid-template-columns:1fr!important}.friend-layout,.ai-layout,.settings,.feed-layout,.admin-chat-layout{grid-template-columns:1fr!important}
-  .friend-side,.friend-main,.ai-chat,.ai-side,#communityBody,.community-shell{min-width:0!important;width:100%!important}
-  .chat-layout{grid-template-columns:1fr!important}.table-wrap{max-width:100%!important;overflow-x:auto!important}
-  .bottom{display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;left:8px!important;right:8px!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;width:auto!important}
-  dialog{max-width:calc(100vw - 12px)!important;max-height:92dvh!important}.import-dialog{width:calc(100vw - 8px)!important}.import-grid{grid-template-columns:1fr!important}
-}
-'''
-          (root/'app.css').write_text(app_css,encoding='utf-8')
-
-          # 3) Build app.html by removing auth completely. No overlay remains in app DOM.
-          shell_start=old.index('<div class="shell">')
-          tail=old[shell_start:]
-          script_at=tail.find('<script src="app.js"></script>')
-          if script_at<0: raise SystemExit('app script anchor not found')
-          body_content=tail[:script_at]
-          # body_content includes closing body only after scripts, so keep dialogs and toast.
-          csp="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://hrrmkrayvrgnwcroyttp.supabase.co; media-src 'self' blob: https://hrrmkrayvrgnwcroyttp.supabase.co; connect-src 'self' https://hrrmkrayvrgnwcroyttp.supabase.co https://cdn.jsdelivr.net https://raw.githubusercontent.com https://tessdata.projectnaptha.com; worker-src 'self' blob: https://cdn.jsdelivr.net; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; upgrade-insecure-requests"
-          app_head=f'''<!doctype html>\n<html lang="zh-Hant">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#151515">\n<meta name="referrer" content="strict-origin-when-cross-origin">\n<meta http-equiv="Content-Security-Policy" content="{csp}">\n<title>Nolu</title>\n<link rel="stylesheet" href="app.css">\n<link rel="manifest" href="manifest.webmanifest">\n<link rel="apple-touch-icon" href="nolu-icon.svg">\n<script src="app-guard.js"></script>\n</head>\n<body class="app-page">\n'''
-          scripts='''\n<script src="app.js"></script>\n<script src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js"></script>\n<script type="module" src="cloud.js"></script>\n<script type="module" src="social-ui.js"></script>\n<script type="module" src="import.js"></script>\n<script type="module" src="social-router.js"></script>\n<script type="module" src="security.js"></script>\n<script type="module" src="account.js"></script>\n<script type="module" src="community.js"></script>\n<script type="module" src="replies.js"></script>\n<script type="module" src="discovery.js"></script>\n<script type="module" src="pwa.js"></script>\n<script type="module" src="planner.js"></script>\n<script type="module" src="admin.js"></script>\n<script type="module" src="privacy.js"></script>\n</body></html>'''
-          # Remove any closing body/html accidentally retained from pre-script content.
-          body_content=body_content.replace('</body>','').replace('</html>','')
-          (root/'app.html').write_text(app_head+body_content+scripts,encoding='utf-8')
-
-          # 4) Auth-only page. This page contains NO app shell.
-          auth_html='''<!doctype html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#f5f2ec">
-<meta name="referrer" content="strict-origin-when-cross-origin">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://hrrmkrayvrgnwcroyttp.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; upgrade-insecure-requests">
-<title>Nolu</title>
-<link rel="stylesheet" href="auth.css">
-<link rel="icon" href="nolu-icon.svg">
-<link rel="apple-touch-icon" href="nolu-icon.svg">
-</head>
-<body>
-<main class="auth-page">
-  <section class="auth-brand">
-    <a class="auth-logo" href="./" aria-label="Nolu"><img src="nolu-icon.svg" alt=""><strong>Nolu</strong></a>
-    <div class="auth-brand-copy"><h1>今天有空，<br>就碰面。</h1><p>課表、朋友、動態和聊天，都在同一個地方。</p></div>
-  </section>
-  <section class="auth-panel">
-    <div class="auth-tabs" role="tablist"><button type="button" data-tab="login" class="on">登入</button><button type="button" data-tab="register">註冊</button></div>
-    <form id="loginForm" class="auth-form">
-      <div class="form-title"><h2>回來了就繼續</h2></div>
-      <label>Email<input id="loginEmail" type="email" autocomplete="email" required></label>
-      <label>密碼<input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required></label>
-      <button class="primary" type="submit">登入</button>
-      <button class="text-button" id="openRecovery" type="button">忘記密碼？用帳號救援碼重設</button>
-    </form>
-    <form id="registerForm" class="auth-form hidden">
-      <div class="form-title"><h2>先留一個大家認得出的名字</h2></div>
-      <label>顯示名稱<input id="regName" maxlength="24" required></label>
-      <label>@帳號<input id="regUsername" maxlength="24" pattern="[A-Za-z0-9_.]+" placeholder="例如 jinwei" required><small>英文、數字、底線、句點都可以，之後還能改。</small></label>
-      <label>Email<input id="regEmail" type="email" autocomplete="email" required></label>
-      <label>密碼<input id="regPassword" type="password" autocomplete="new-password" minlength="8" required></label>
-      <button class="primary" type="submit">建立帳號</button>
-    </form>
-    <form id="recoveryForm" class="auth-form hidden">
-      <div class="form-title"><h2>重設密碼</h2><p>輸入 Email、帳號救援碼和新密碼。</p></div>
-      <label>Email<input id="recoveryEmail" type="email" required></label>
-      <label>帳號救援碼<input id="recoveryCode" required></label>
-      <label>新密碼<input id="recoveryPassword" type="password" minlength="8" required></label>
-      <button class="primary" type="submit">重設密碼</button>
-      <button class="text-button" id="backToLogin" type="button">回到登入</button>
-    </form>
-    <button class="guest" id="guestMode" type="button">先逛逛，不登入</button>
-    <div id="authStatus" class="auth-status" aria-live="polite"></div>
-  </section>
-</main>
-<script src="auth.js"></script>
-</body></html>'''
-          (root/'index.html').write_text(auth_html,encoding='utf-8')
-
-          auth_css=r''':root{--ink:#171717;--paper:#f5f2ec;--card:#fffdfa;--muted:#777169;--line:rgba(23,23,23,.13)}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang TC","Noto Sans TC",sans-serif}button,input{font:inherit;color:inherit}button{cursor:pointer}.hidden{display:none!important}.auth-page{min-height:100dvh;display:grid;grid-template-columns:minmax(0,1.08fr) minmax(390px,.72fr)}.auth-brand{min-height:100dvh;padding:clamp(32px,6vw,72px);background:#ebe6dc;display:flex;flex-direction:column}.auth-logo{display:inline-flex;align-items:center;gap:11px;width:max-content;color:inherit;text-decoration:none}.auth-logo img{width:44px;height:44px;border-radius:13px}.auth-logo strong{font-size:31px;letter-spacing:-.06em}.auth-brand-copy{margin-top:auto;max-width:680px}.auth-brand h1{margin:0 0 18px;font-size:clamp(54px,6.7vw,92px);line-height:.94;letter-spacing:-.075em}.auth-brand p{margin:0;color:var(--muted);font-size:16px;line-height:1.6;font-weight:600}.auth-panel{min-height:100dvh;background:var(--card);padding:clamp(28px,5vw,58px);display:flex;flex-direction:column;justify-content:center}.auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;background:#ece8e1;border-radius:999px}.auth-tabs button{height:46px;border:0;border-radius:999px;background:transparent;font-weight:760;color:var(--muted)}.auth-tabs button.on{background:var(--ink);color:#fff}.auth-form{display:grid;gap:13px}.form-title{margin:30px 0 4px}.form-title h2{margin:0;font-size:30px;line-height:1.08;letter-spacing:-.045em}.form-title p{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.5}.auth-form label{display:grid;gap:6px;font-size:12px;font-weight:720;color:#69645d}.auth-form input{width:100%;min-height:50px;border:1px solid transparent;border-radius:15px;background:#efebe4;padding:0 14px;outline:none}.auth-form input:focus{background:#fff;border-color:#bdb6ac}.auth-form small{font-size:10px;line-height:1.45;font-weight:500}.primary{min-height:50px;border:0;border-radius:999px;background:var(--ink);color:#fff;font-weight:800;margin-top:5px}.primary:disabled{opacity:.45}.text-button,.guest{border:0;background:transparent;color:var(--muted);text-decoration:underline;text-underline-offset:4px;font-size:12px;font-weight:650}.guest{align-self:center;margin-top:20px}.auth-status{min-height:22px;margin-top:10px;color:#7b3f3f;font-size:12px;line-height:1.5}@media(max-width:760px){.auth-page{display:block}.auth-brand{min-height:0;padding:calc(24px + env(safe-area-inset-top)) 22px 30px}.auth-logo img{width:38px;height:38px}.auth-logo strong{font-size:28px}.auth-brand-copy{margin-top:54px}.auth-brand h1{font-size:46px;line-height:.96;margin-bottom:13px}.auth-brand p{font-size:13px}.auth-panel{min-height:auto;padding:22px 22px calc(38px + env(safe-area-inset-bottom));justify-content:flex-start}.auth-tabs{margin-top:0}.form-title{margin-top:28px}.form-title h2{font-size:28px}}@media(max-width:390px){.auth-brand{padding-inline:18px}.auth-panel{padding-inline:18px}.auth-brand-copy{margin-top:38px}.auth-brand h1{font-size:41px}}'''
-          (root/'auth.css').write_text(auth_css,encoding='utf-8')
-
-          auth_js=r'''const CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';const RECOVERY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';const $=s=>document.querySelector(s);let busy=false;function goApp(){let target=sessionStorage.getItem('nolu_after_auth')||new URL('./app.html',location.href).href;sessionStorage.removeItem('nolu_after_auth');try{const u=new URL(target,location.href),base=new URL('./',location.href);if(u.origin!==location.origin||!u.pathname.startsWith(base.pathname))target=new URL('./app.html',location.href).href}catch{target=new URL('./app.html',location.href).href}location.replace(target)}if(localStorage.getItem('puplan_session')||localStorage.getItem('puplan_guest')==='1')goApp();function status(t=''){const e=$('#authStatus');if(e)e.textContent=t}async function api(url,body,token=''){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||'目前無法完成操作');return d}function show(tab){['login','register'].forEach(x=>{document.querySelector(`[data-tab="${x}"]`)?.classList.toggle('on',x===tab);$(`#${x}Form`)?.classList.toggle('hidden',x!==tab)});$('#recoveryForm')?.classList.add('hidden');$('.auth-tabs')?.classList.remove('hidden');$('#guestMode')?.classList.remove('hidden');status('')}document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>show(b.dataset.tab));$('#loginForm').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;const btn=e.currentTarget.querySelector('.primary');btn.disabled=true;status('正在登入…');try{const d=await api(CORE,{action:'login',email:$('#loginEmail').value.trim(),password:$('#loginPassword').value});localStorage.setItem('puplan_session',d.token);localStorage.removeItem('puplan_guest');goApp()}catch(err){status(err.message)}finally{busy=false;btn.disabled=false}};$('#registerForm').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;const btn=e.currentTarget.querySelector('.primary');btn.disabled=true;status('正在建立帳號…');try{const d=await api(CORE,{action:'signup',display_name:$('#regName').value.trim(),username:$('#regUsername').value.trim().toLowerCase(),email:$('#regEmail').value.trim(),password:$('#regPassword').value});localStorage.setItem('puplan_session',d.token);localStorage.removeItem('puplan_guest');goApp()}catch(err){status(err.message)}finally{busy=false;btn.disabled=false}};$('#guestMode').onclick=()=>{localStorage.removeItem('puplan_session');localStorage.setItem('puplan_guest','1');goApp()};$('#openRecovery').onclick=()=>{$('#loginForm').classList.add('hidden');$('.auth-tabs').classList.add('hidden');$('#guestMode').classList.add('hidden');$('#recoveryForm').classList.remove('hidden');status('')};$('#backToLogin').onclick=()=>show('login');$('#recoveryForm').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;const btn=e.currentTarget.querySelector('.primary');btn.disabled=true;status('正在重設密碼…');try{const d=await api(RECOVERY,{action:'recover_password',email:$('#recoveryEmail').value.trim(),recovery_code:$('#recoveryCode').value.trim(),new_password:$('#recoveryPassword').value});status(d.message||'密碼已重設，請重新登入');setTimeout(()=>show('login'),900)}catch(err){status(err.message)}finally{busy=false;btn.disabled=false}};const tab=new URLSearchParams(location.search).get('tab');show(tab==='register'?'register':'login');'''
-          (root/'auth.js').write_text(auth_js,encoding='utf-8')
-
-          guard=r'''(()=>{const signed=!!localStorage.getItem('puplan_session'),guest=localStorage.getItem('puplan_guest')==='1';if(signed||guest)return;sessionStorage.setItem('nolu_after_auth',location.href);location.replace(new URL('./?tab=login',location.href).href)})();'''
-          (root/'app-guard.js').write_text(guard,encoding='utf-8')
-
-          # 5) App auth is routing, not overlay manipulation.
-          p=root/'cloud.js'; s=p.read_text(encoding='utf-8')
-          s=re.sub(r"function switchTab\(tab\)\{.*?\n\}","function switchTab(tab){return tab}",s,count=1,flags=re.S)
-          s=re.sub(r"function showGate\(tab='register'\)\{.*?\n\}","function showGate(tab='login'){sessionStorage.setItem('nolu_after_auth',location.href);location.replace(new URL(`./?tab=${encodeURIComponent(tab)}`,location.href).href)}",s,count=1,flags=re.S)
-          s=re.sub(r"function hideGate\(\)\{.*?\n\}","function hideGate(){}",s,count=1,flags=re.S)
-          s=s.replace("async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}","async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');location.replace(new URL('./?tab=login',location.href).href)}")
-          p.write_text(s,encoding='utf-8')
-
-          # Visible share code no longer carries the old school-specific prefix; legacy codes still import.
-          p=root/'app.js'; s=p.read_text(encoding='utf-8')
-          s=s.replace("return 'PU1-'+", "return 'NL1-'+")
-          s=s.replace("if(!s.startsWith('PU1-'))throw Error('好友碼格式不正確');", "if(s.startsWith('PU1-'))s='NL1-'+s.slice(4);if(!s.startsWith('NL1-'))throw Error('好友碼格式不正確');")
-          s=s.replace('<small>TIME</small>','<small>時間</small>').replace('<small>WEEK</small>','<small>星期</small>').replace(' COURSES',' 門課').replace('FREE DAY / 無課','無課').replace("title||'MY SEMESTER'","title||'我的學期'")
-          p.write_text(s,encoding='utf-8')
-
-          # 6) Manifest + service worker now use stable files and app.html as the installed entry.
-          (root/'manifest.webmanifest').write_text('{"name":"Nolu","short_name":"Nolu","description":"課表、朋友、動態和聊天，都在這裡。","start_url":"./app.html","scope":"./","display":"standalone","background_color":"#f5f2ec","theme_color":"#151515","lang":"zh-Hant","icons":[{"src":"nolu-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}',encoding='utf-8')
-          sw="""const CACHE='nolu-shell-clean-1';const CORE=['./','./app.html','./auth.css','./auth.js','./app-guard.js','./app.css','./app.js','./cloud.js','./social-ui.js','./import.js','./social-router.js','./security.js','./account.js','./community.js','./replies.js','./discovery.js','./pwa.js','./planner.js','./admin.js','./privacy.js','./nolu-icon.svg','./manifest.webmanifest'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).catch(()=>{}));self.skipWaiting()});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE).map(x=>caches.delete(x)))));self.clients.claim()});self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.origin!==location.origin)return;e.respondWith(fetch(e.request).then(r=>{if(r.ok)caches.open(CACHE).then(c=>c.put(e.request,r.clone())).catch(()=>{});return r}).catch(()=>caches.match(e.request).then(r=>r||caches.match('./'))))});self.addEventListener('notificationclick',e=>{e.notification.close();const target=e.notification?.data?.url||new URL('./app.html',self.location.href).href;e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(async ws=>{for(const w of ws){try{await w.navigate(target);return w.focus()}catch{}}return clients.openWindow(target)}))});"""
-          (root/'sw.js').write_text(sw,encoding='utf-8')
-
-          # 7) Remove obsolete overlay/version files. Stable replacements above are kept.
-          keep={'index.html','app.html','auth.css','auth.js','app-guard.js','app.css','app.js','cloud.js','social-ui.js','import.js','social-router.js','security.js','account.js','community.js','replies.js','discovery.js','pwa.js','planner.js','admin.js','privacy.js','sw.js','manifest.webmanifest','nolu-icon.svg'}
-          for p in list(root.iterdir()):
-              if p.is_file() and p.name not in keep:
-                  p.unlink()
-
-          # 8) Deployment stops rewriting HTML. It only validates and publishes source as-is.
-          workflow=Path('.github/workflows/pu-plan-pages.yml')
-          workflow.write_text('''name: Deploy Nolu to GitHub Pages\n\non:\n  push:\n    branches: [main]\n    paths:\n      - 'pu-plan/**'\n      - '.github/workflows/pu-plan-pages.yml'\n  workflow_dispatch:\n\npermissions:\n  contents: read\n  pages: write\n  id-token: write\n\nconcurrency:\n  group: pages\n  cancel-in-progress: true\n\njobs:\n  deploy:\n    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v6\n      - name: Verify source\n        run: |\n          for f in app.js cloud.js import.js social-router.js security.js account.js community.js replies.js discovery.js pwa.js planner.js admin.js privacy.js auth.js app-guard.js sw.js; do node --check "pu-plan/$f"; done\n          grep -q 'class="auth-page"' pu-plan/index.html\n          ! grep -q 'class="shell"' pu-plan/index.html\n          grep -q 'class="shell"' pu-plan/app.html\n          ! grep -q 'auth-gate' pu-plan/app.html\n          test -f pu-plan/app.css\n          test -f pu-plan/auth.css\n          test -f pu-plan/manifest.webmanifest\n      - name: Configure Pages\n        uses: actions/configure-pages@v5\n      - name: Upload site\n        uses: actions/upload-pages-artifact@v4\n        with:\n          path: './pu-plan'\n      - name: Deploy\n        id: deployment\n        uses: actions/deploy-pages@v4\n''',encoding='utf-8')
-          PY
-
-          # Structural validation before publishing.
+          python3 .github/scripts/refactor_nolu.py
           for f in app.js cloud.js import.js social-router.js security.js account.js community.js replies.js discovery.js pwa.js planner.js admin.js privacy.js auth.js app-guard.js sw.js; do node --check "pu-plan/$f"; done
           grep -q 'class="auth-page"' pu-plan/index.html
           ! grep -q 'class="shell"' pu-plan/index.html
           grep -q 'class="shell"' pu-plan/app.html
           ! grep -q 'auth-gate' pu-plan/app.html
-          echo "Remaining files:" && find pu-plan -maxdepth 1 -type f -printf '%f\n' | sort
-
+          echo 'Clean source files:'
+          find pu-plan -maxdepth 1 -type f -printf '%f\n' | sort
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload cleaned site
@@ -229,12 +45,11 @@ body.app-page{min-height:100dvh;background:#f5f2ec}
       - name: Deploy cleaned site
         id: deployment
         uses: actions/deploy-pages@v4
-
       - name: Commit cleanup
         run: |
-          rm -f .github/workflows/refactor-nolu.yml
+          rm -f .github/workflows/refactor-nolu.yml .github/scripts/refactor_nolu.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'refactor: separate auth page from app and remove legacy layers'
+          git commit -m 'refactor: separate auth from app and remove legacy layers'
           git push
