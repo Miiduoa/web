@@ -68,11 +68,11 @@ jobs:
             for(const field of await page.locator('#loginForm input').all()){
               const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`);
             }
-            await page.screenshot({path:`ui-smoke/login-${label}.png`,fullPage:true});
+            await page.screenshot({path:`ui-smoke/login-${label}.png`,fullPage:false});
 
             await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
             await page.waitForTimeout(120);
-            await noHorizontalOverflow(page,label,'app');
+            await noHorizontalOverflow(page,label,'schedule');
             const bottom=await page.locator('.bottom').boundingBox();
             assert(bottom&&bottom.x>=0&&bottom.x+bottom.width<=metrics.innerWidth+1,`${label}: bottom navigation outside viewport`);
             const top=await page.locator('.topbar').boundingBox();
@@ -80,8 +80,37 @@ jobs:
             const actions=await page.locator('.actions').boundingBox();
             assert(top&&titleBox&&actions,`${label}: topbar elements missing`);
             assert(!intersects(titleBox,actions),`${label}: title overlaps topbar actions`);
+
+            const hero=await page.locator('.hero').boundingBox();
+            const heroMain=await page.locator('.hero-main').boundingBox();
+            const heroSide=await page.locator('.hero-side').boundingBox();
+            assert(hero&&heroMain&&heroSide,`${label}: schedule hero missing`);
+            assert(heroMain.width>=metrics.innerWidth*.82,`${label}: schedule headline collapsed to ${heroMain.width}px`);
+            assert(heroSide.width>=metrics.innerWidth*.82,`${label}: schedule stats collapsed to ${heroSide.width}px`);
+            assert(heroSide.y>=heroMain.y+heroMain.height-2,`${label}: schedule hero still uses desktop columns`);
+            await page.screenshot({path:`ui-smoke/schedule-${label}.png`,fullPage:false});
+
+            await page.locator('.bottom [data-view="ai"]').click();
+            await page.waitForTimeout(120);
+            await noHorizontalOverflow(page,label,'assistant');
+            const aiChat=await page.locator('.ai-chat').boundingBox();
+            const aiSide=await page.locator('.ai-side').boundingBox();
+            assert(aiChat&&aiSide,`${label}: assistant layout missing`);
+            assert(aiChat.width>=metrics.innerWidth*.82,`${label}: assistant chat collapsed to ${aiChat.width}px`);
+            assert(aiSide.width>=metrics.innerWidth*.82,`${label}: assistant side collapsed to ${aiSide.width}px`);
+            assert(aiSide.y>=aiChat.y+aiChat.height-2,`${label}: assistant still uses desktop columns`);
+            await page.screenshot({path:`ui-smoke/assistant-${label}.png`,fullPage:false});
+
+            await page.locator('.bottom [data-view="friends"]').click();
+            await page.waitForTimeout(100);
+            await noHorizontalOverflow(page,label,'friends');
+            const friendSide=await page.locator('.friend-side').boundingBox();
+            const friendMain=await page.locator('.friend-main').boundingBox();
+            assert(friendSide&&friendMain,`${label}: friend layout missing`);
+            assert(friendSide.width>=metrics.innerWidth*.82&&friendMain.width>=metrics.innerWidth*.82,`${label}: friend layout collapsed`);
+            assert(friendMain.y>=friendSide.y+friendSide.height-2,`${label}: friend layout still uses desktop columns`);
+
             const visibleViews=await page.locator('.view.on').count();assert(visibleViews>=1,`${label}: no visible view`);
-            await page.screenshot({path:`ui-smoke/app-${label}.png`,fullPage:true});
             assert(!errors.length,`${label}: page errors: ${errors.join(' | ')}`);
           }
           (async()=>{
