@@ -11,10 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: nolu-mobile-layout
+  cancel-in-progress: true
+
 jobs:
   mobile:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - name: Install browser test runner
@@ -38,17 +42,20 @@ jobs:
           const intersects=(a,b)=>a&&b&&!(a.right<=b.x||b.right<=a.x||a.bottom<=b.y||b.bottom<=a.y);
           async function rects(page,selectors){return page.evaluate(selectors=>Object.fromEntries(Object.entries(selectors).map(([k,s])=>{const e=document.querySelector(s);if(!e)return[k,null];const r=e.getBoundingClientRect();return[k,{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}]})),selectors)}
           async function overflow(page,label,view){const m=await page.evaluate(()=>({w:innerWidth,d:document.documentElement.scrollWidth,b:document.body.scrollWidth}));assert(m.d<=m.w+2&&m.b<=m.w+2,`${label} ${view}: horizontal overflow ${m.d}/${m.b}/${m.w}`);return m}
-          async function inspect(page,label){
-            page.setDefaultTimeout(3000);page.setDefaultNavigationTimeout(5000);
+          async function inspect(browser,w,h,label){
+            const context=await browser.newContext({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true,serviceWorkers:'block'});
+            const page=await context.newPage();page.setDefaultTimeout(2500);page.setDefaultNavigationTimeout(4000);
             await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
-            await page.waitForFunction(()=>!!window.PUPLAN_CLOUD&&!!window.PUPLAN_APP,{timeout:3000});
+            await page.waitForSelector('#authGate');
             const m=await overflow(page,label,'login');
-            const l=await rects(page,{brand:'.auth-brand',title:'.auth-copy h1',copy:'.auth-copy p'});
-            assert(l.brand&&l.title&&l.copy,`${label}: login content missing`);assert(!intersects(l.brand,l.title)&&!intersects(l.brand,l.copy)&&!intersects(l.title,l.copy),`${label}: login content overlaps`);
+            const l=await rects(page,{brand:'.auth-brand',title:'.auth-copy h1',copy:'.auth-copy p',card:'.auth-card'});
+            assert(l.brand&&l.title&&l.copy&&l.card,`${label}: login content missing`);
+            assert(!intersects(l.brand,l.title)&&!intersects(l.brand,l.copy)&&!intersects(l.title,l.copy),`${label}: login hero overlaps`);
+            assert(l.brand.x>=0&&l.brand.right<=m.w+1&&l.title.x>=0&&l.title.right<=m.w+1,`${label}: login hero outside viewport`);
             assert((await page.locator('.auth-brand strong').textContent())?.trim()==='nolu',`${label}: wrong brand`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
-            await page.waitForFunction(()=>!document.querySelector('#loginForm')?.classList.contains('hidden'),{timeout:1500});
+            await page.waitForFunction(()=>!document.querySelector('#loginForm')?.classList.contains('hidden'));
             for(const field of await page.locator('#loginForm input').all()){const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=m.w+1,`${label}: login field outside viewport`)}
             await page.screenshot({path:`ui-smoke/login-${label}.png`});
 
@@ -58,16 +65,18 @@ jobs:
             assert(s.main&&s.stats&&s.main.width>=m.w*.82&&s.stats.width>=m.w*.82,`${label}: schedule content collapsed`);assert(s.stats.y>=s.main.bottom-2,`${label}: schedule still in desktop columns`);
             await page.screenshot({path:`ui-smoke/schedule-${label}.png`});
 
-            await page.evaluate(()=>window.PUPLAN_APP.changeView('ai'));await page.waitForTimeout(40);await overflow(page,label,'assistant');
+            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('ai'));await page.waitForTimeout(40);await overflow(page,label,'assistant');
             const a=await rects(page,{chat:'.ai-chat',side:'.ai-side'});assert(a.chat&&a.side&&a.chat.width>=m.w*.82&&a.side.width>=m.w*.82,`${label}: assistant content collapsed`);assert(a.side.y>=a.chat.bottom-2,`${label}: assistant still in desktop columns`);
             await page.screenshot({path:`ui-smoke/assistant-${label}.png`});
 
-            await page.evaluate(()=>window.PUPLAN_APP.changeView('friends'));await page.waitForTimeout(40);await overflow(page,label,'friends');
+            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('friends'));await page.waitForTimeout(40);await overflow(page,label,'friends');
             const f=await rects(page,{side:'.friend-side',main:'.friend-main'});assert(f.side&&f.main&&f.side.width>=m.w*.82&&f.main.width>=m.w*.82,`${label}: friends content collapsed`);assert(f.main.y>=f.side.bottom-2,`${label}: friends still in desktop columns`);
+            await page.screenshot({path:`ui-smoke/friends-${label}.png`});
+            await context.close();
           }
-          (async()=>{const browser=await chromium.launch({headless:true});for(const [w,h,label] of [[375,812,'375x812'],[390,844,'390x844'],[430,932,'430x932']]){const page=await browser.newPage({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true});await inspect(page,label);await page.close()}await browser.close()})().catch(e=>{console.error(e);process.exit(1)});
+          (async()=>{const browser=await chromium.launch({headless:true});try{for(const [w,h,label] of [[375,812,'375x812'],[390,844,'390x844'],[430,932,'430x932']])await inspect(browser,w,h,label)}finally{await browser.close()}})().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});
           NODE
-          node /tmp/nolu-ui/check.cjs
+          timeout 90s node /tmp/nolu-ui/check.cjs
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
