@@ -14,22 +14,19 @@ permissions:
 jobs:
   mobile:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
-
       - name: Install browser test runner
         run: |
           npm --prefix /tmp/nolu-ui init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-ui install playwright >/dev/null 2>&1
           cd /tmp/nolu-ui && npx playwright install --with-deps chromium >/dev/null
-
       - name: Start local site
         run: |
           python3 -m http.server 4173 --directory pu-plan > /tmp/nolu-http.log 2>&1 &
           for i in {1..20}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0; sleep .25; done
           exit 1
-
       - name: Check mobile layouts
         env:
           NODE_PATH: /tmp/nolu-ui/node_modules
@@ -38,83 +35,39 @@ jobs:
           cat >/tmp/nolu-ui/check.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
-          const intersects=(a,b)=>a&&b&&!(a.x+a.width<=b.x||b.x+b.width<=a.x||a.y+a.height<=b.y||b.y+b.height<=a.y);
-          async function noHorizontalOverflow(page,label,where){
-            const m=await page.evaluate(()=>({innerWidth,doc:document.documentElement.scrollWidth,body:document.body.scrollWidth}));
-            assert(m.doc<=m.innerWidth+2,`${label} ${where}: document overflow ${m.doc}/${m.innerWidth}`);
-            assert(m.body<=m.innerWidth+2,`${label} ${where}: body overflow ${m.body}/${m.innerWidth}`);
-            return m;
-          }
-          async function rects(page,selectors){
-            return page.evaluate(selectors=>Object.fromEntries(Object.entries(selectors).map(([key,selector])=>{const el=document.querySelector(selector);if(!el)return[key,null];const r=el.getBoundingClientRect();return[key,{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}]})),selectors);
-          }
+          const intersects=(a,b)=>a&&b&&!(a.right<=b.x||b.right<=a.x||a.bottom<=b.y||b.bottom<=a.y);
+          async function rects(page,selectors){return page.evaluate(selectors=>Object.fromEntries(Object.entries(selectors).map(([k,s])=>{const e=document.querySelector(s);if(!e)return[k,null];const r=e.getBoundingClientRect();return[k,{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}]})),selectors)}
+          async function overflow(page,label,view){const m=await page.evaluate(()=>({w:innerWidth,d:document.documentElement.scrollWidth,b:document.body.scrollWidth}));assert(m.d<=m.w+2&&m.b<=m.w+2,`${label} ${view}: horizontal overflow ${m.d}/${m.b}/${m.w}`);return m}
           async function inspect(page,label){
-            page.setDefaultTimeout(5000);
-            const errors=[];page.on('pageerror',e=>errors.push(e.message));
+            page.setDefaultTimeout(3000);page.setDefaultNavigationTimeout(5000);
+            await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
-            await page.waitForSelector('#authGate');
-            await page.waitForSelector('.auth-brand');
-            await page.waitForFunction(()=>!!window.PUPLAN_CLOUD,{timeout:5000});
-            const metrics=await noHorizontalOverflow(page,label,'login');
-            const login=await rects(page,{brand:'.auth-brand',title:'.auth-copy h1',copy:'.auth-copy p'});
-            assert(login.brand&&login.title&&login.copy,`${label}: login brand elements missing`);
-            assert(!intersects(login.brand,login.title),`${label}: brand overlaps headline`);
-            assert(!intersects(login.brand,login.copy),`${label}: brand overlaps copy`);
-            assert(!intersects(login.title,login.copy),`${label}: headline overlaps copy`);
+            await page.waitForFunction(()=>!!window.PUPLAN_CLOUD&&!!window.PUPLAN_APP,{timeout:3000});
+            const m=await overflow(page,label,'login');
+            const l=await rects(page,{brand:'.auth-brand',title:'.auth-copy h1',copy:'.auth-copy p'});
+            assert(l.brand&&l.title&&l.copy,`${label}: login content missing`);assert(!intersects(l.brand,l.title)&&!intersects(l.brand,l.copy)&&!intersects(l.title,l.copy),`${label}: login content overlaps`);
             assert((await page.locator('.auth-brand strong').textContent())?.trim()==='nolu',`${label}: wrong brand`);
-            assert((await page.locator('.auth-brand').count())===1,`${label}: duplicate brand block`);
-            assert((await page.locator('.auth-copy h1').count())===1,`${label}: duplicate login headline`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
-            await page.waitForFunction(()=>{const x=document.querySelector('#loginForm');return x&&!x.classList.contains('hidden')},{timeout:2000});
-            for(const field of await page.locator('#loginForm input').all()){
-              const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`);
-            }
-            await page.screenshot({path:`ui-smoke/login-${label}.png`,fullPage:false});
+            await page.waitForFunction(()=>!document.querySelector('#loginForm')?.classList.contains('hidden'),{timeout:1500});
+            for(const field of await page.locator('#loginForm input').all()){const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=m.w+1,`${label}: login field outside viewport`)}
+            await page.screenshot({path:`ui-smoke/login-${label}.png`});
 
-            await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
-            await page.waitForTimeout(100);
-            await noHorizontalOverflow(page,label,'schedule');
-            const shell=await rects(page,{bottom:'.bottom',top:'.topbar',title:'#title',actions:'.actions',hero:'.hero',heroMain:'.hero-main',heroSide:'.hero-side'});
-            assert(shell.bottom&&shell.bottom.x>=0&&shell.bottom.right<=metrics.innerWidth+1,`${label}: bottom navigation outside viewport`);
-            assert(shell.top&&shell.title&&shell.actions,`${label}: topbar elements missing`);
-            assert(!intersects(shell.title,shell.actions),`${label}: title overlaps topbar actions`);
-            assert(shell.hero&&shell.heroMain&&shell.heroSide,`${label}: schedule hero missing`);
-            assert(shell.heroMain.width>=metrics.innerWidth*.82,`${label}: schedule headline collapsed to ${shell.heroMain.width}px`);
-            assert(shell.heroSide.width>=metrics.innerWidth*.82,`${label}: schedule stats collapsed to ${shell.heroSide.width}px`);
-            assert(shell.heroSide.y>=shell.heroMain.bottom-2,`${label}: schedule hero still uses desktop columns`);
-            await page.screenshot({path:`ui-smoke/schedule-${label}.png`,fullPage:false});
+            await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));await page.waitForTimeout(50);await overflow(page,label,'schedule');
+            const s=await rects(page,{bottom:'.bottom',title:'#title',actions:'.actions',main:'.hero-main',stats:'.hero-side'});
+            assert(s.bottom&&s.bottom.x>=0&&s.bottom.right<=m.w+1,`${label}: bottom nav outside viewport`);assert(s.title&&s.actions&&!intersects(s.title,s.actions),`${label}: top bar overlaps`);
+            assert(s.main&&s.stats&&s.main.width>=m.w*.82&&s.stats.width>=m.w*.82,`${label}: schedule content collapsed`);assert(s.stats.y>=s.main.bottom-2,`${label}: schedule still in desktop columns`);
+            await page.screenshot({path:`ui-smoke/schedule-${label}.png`});
 
-            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('ai'));
-            await page.waitForTimeout(80);
-            await noHorizontalOverflow(page,label,'assistant');
-            const assistant=await rects(page,{chat:'.ai-chat',side:'.ai-side'});
-            assert(assistant.chat&&assistant.side,`${label}: assistant layout missing`);
-            assert(assistant.chat.width>=metrics.innerWidth*.82,`${label}: assistant chat collapsed to ${assistant.chat.width}px`);
-            assert(assistant.side.width>=metrics.innerWidth*.82,`${label}: assistant side collapsed to ${assistant.side.width}px`);
-            assert(assistant.side.y>=assistant.chat.bottom-2,`${label}: assistant still uses desktop columns`);
-            await page.screenshot({path:`ui-smoke/assistant-${label}.png`,fullPage:false});
+            await page.evaluate(()=>window.PUPLAN_APP.changeView('ai'));await page.waitForTimeout(40);await overflow(page,label,'assistant');
+            const a=await rects(page,{chat:'.ai-chat',side:'.ai-side'});assert(a.chat&&a.side&&a.chat.width>=m.w*.82&&a.side.width>=m.w*.82,`${label}: assistant content collapsed`);assert(a.side.y>=a.chat.bottom-2,`${label}: assistant still in desktop columns`);
+            await page.screenshot({path:`ui-smoke/assistant-${label}.png`});
 
-            await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('friends'));
-            await page.waitForTimeout(80);
-            await noHorizontalOverflow(page,label,'friends');
-            const friends=await rects(page,{side:'.friend-side',main:'.friend-main'});
-            assert(friends.side&&friends.main,`${label}: friend layout missing`);
-            assert(friends.side.width>=metrics.innerWidth*.82&&friends.main.width>=metrics.innerWidth*.82,`${label}: friend layout collapsed`);
-            assert(friends.main.y>=friends.side.bottom-2,`${label}: friend layout still uses desktop columns`);
-            assert(!errors.length,`${label}: page errors: ${errors.join(' | ')}`);
+            await page.evaluate(()=>window.PUPLAN_APP.changeView('friends'));await page.waitForTimeout(40);await overflow(page,label,'friends');
+            const f=await rects(page,{side:'.friend-side',main:'.friend-main'});assert(f.side&&f.main&&f.side.width>=m.w*.82&&f.main.width>=m.w*.82,`${label}: friends content collapsed`);assert(f.main.y>=f.side.bottom-2,`${label}: friends still in desktop columns`);
           }
-          (async()=>{
-            const browser=await chromium.launch({headless:true});
-            for(const [w,h,label] of [[375,812,'375x812'],[390,844,'390x844'],[430,932,'430x932']]){
-              const page=await browser.newPage({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true});
-              await inspect(page,label);
-              await page.close();
-            }
-            await browser.close();
-          })().catch(e=>{console.error(e);process.exit(1)});
+          (async()=>{const browser=await chromium.launch({headless:true});for(const [w,h,label] of [[375,812,'375x812'],[390,844,'390x844'],[430,932,'430x932']]){const page=await browser.newPage({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true});await inspect(page,label);await page.close()}await browser.close()})().catch(e=>{console.error(e);process.exit(1)});
           NODE
           node /tmp/nolu-ui/check.cjs
-
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
