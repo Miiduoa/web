@@ -1,1 +1,1 @@
-{"name":"PU/PLAN 校園課表","short_name":"PU/PLAN","description":"校園社交課表 App","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f1e8","theme_color":"#111111","lang":"zh-Hant","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{"name":"hang.","short_name":"hang.","description":"課表、朋友、動態與聊天，都在這裡。","start_url":"./","scope":"./","display":"standalone","background_color":"#f6f1e8","theme_color":"#171717","lang":"zh-Hant","icons":[{"src":"hang-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
