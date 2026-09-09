@@ -19,11 +19,8 @@
   gap:48px;
   background:#ece7de;
   overflow:hidden;
-  isolation:isolate;
 }
 .auth-brand{
-  position:relative;
-  z-index:2;
   display:flex;
   align-items:center;
   gap:12px;
@@ -46,12 +43,9 @@
   white-space:nowrap;
 }
 .auth-copy{
-  position:relative;
-  z-index:1;
   align-self:end;
   min-width:0;
   max-width:680px;
-  padding-top:clamp(56px,10vh,140px);
 }
 .auth-copy h1{
   margin:0;
@@ -60,7 +54,6 @@
   line-height:.98;
   letter-spacing:-.065em;
   font-weight:850;
-  overflow-wrap:normal;
   word-break:keep-all;
 }
 .auth-copy p{
@@ -108,47 +101,59 @@
 
 @media(max-width:680px){
   .auth-gate{
-    display:block;
+    display:flex;
+    flex-direction:column;
+    width:100%;
     min-height:100dvh;
     overflow-x:hidden;
+    overflow-y:auto;
   }
   .auth-poster{
+    flex:0 0 auto;
     min-height:0;
-    padding:calc(24px + env(safe-area-inset-top)) 20px 28px;
+    padding:calc(18px + env(safe-area-inset-top)) 20px 22px;
     display:block;
     overflow:visible;
   }
   .auth-brand{
-    margin:0 0 42px;
+    margin:0 0 24px;
   }
-  .auth-brand img{width:40px;height:40px;flex-basis:40px;border-radius:11px}
-  .auth-brand strong{font-size:32px}
-  .auth-copy{
-    max-width:none;
-    padding-top:0;
-  }
+  .auth-brand img{width:38px;height:38px;flex-basis:38px;border-radius:11px}
+  .auth-brand strong{font-size:30px}
+  .auth-copy{max-width:none}
   .auth-copy h1{
-    max-width:360px;
-    font-size:clamp(36px,10.8vw,43px);
-    line-height:1.04;
-    letter-spacing:-.055em;
+    max-width:340px;
+    font-size:36px;
+    line-height:1.03;
+    letter-spacing:-.05em;
   }
-  .auth-copy p{margin-top:14px;font-size:13px;line-height:1.55}
+  .auth-copy p{
+    max-width:340px;
+    margin-top:10px;
+    font-size:12.5px;
+    line-height:1.5;
+  }
   .auth-card{
-    min-height:calc(100dvh - 250px);
-    padding:24px 20px calc(36px + env(safe-area-inset-bottom));
+    position:relative;
+    z-index:1;
+    flex:1 0 auto;
+    min-height:0;
+    width:100%;
+    padding:20px 20px calc(30px + env(safe-area-inset-bottom));
     justify-content:flex-start;
-    border-radius:28px 28px 0 0;
+    border-radius:24px 24px 0 0;
   }
-  .auth-form h2{margin:22px 0 8px;font-size:25px}
+  .auth-form h2{margin:20px 0 8px;font-size:25px}
   .auth-tabs button{min-height:44px}
+  .auth-form{gap:12px}
+  .auth-submit{min-height:50px}
 }
 
 @media(max-width:390px){
   .auth-poster{padding-left:18px;padding-right:18px}
-  .auth-brand{margin-bottom:34px}
-  .auth-brand img{width:37px;height:37px;flex-basis:37px}
-  .auth-brand strong{font-size:30px}
-  .auth-copy h1{font-size:35px}
+  .auth-brand{margin-bottom:20px}
+  .auth-brand img{width:36px;height:36px;flex-basis:36px}
+  .auth-brand strong{font-size:29px}
+  .auth-copy h1{font-size:34px}
   .auth-card{padding-left:18px;padding-right:18px}
 }
