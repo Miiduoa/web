@@ -1,4 +1,4 @@
-name: Deploy hang. to GitHub Pages
+name: Deploy Nolu to GitHub Pages
 
 on:
   push:
@@ -49,7 +49,6 @@ jobs:
           node --check pu-plan/polish-v9.js
           node --check pu-plan/sw-v9.js
           node --check pu-plan/next-round.js
-          node --check pu-plan/hang.js
           python3 - <<'PY'
           from pathlib import Path
           p = Path('pu-plan/index.html')
@@ -64,10 +63,11 @@ jobs:
           <link rel="stylesheet" href="brand-v18.css">
           <link rel="stylesheet" href="ui-v19.css">
           <link rel="manifest" href="manifest-v9.webmanifest">
-          <link rel="apple-touch-icon" href="hang-icon.svg">'''
+          <link rel="apple-touch-icon" href="nolu-icon.svg">'''
           if 'ui-v19.css' not in s:
               s = s.replace('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">' + additions)
-          s = s.replace('<link rel="apple-touch-icon" href="icon.svg">', '<link rel="apple-touch-icon" href="hang-icon.svg">')
+          s = s.replace('<link rel="apple-touch-icon" href="icon.svg">', '<link rel="apple-touch-icon" href="nolu-icon.svg">')
+          s = s.replace('<link rel="apple-touch-icon" href="hang-icon.svg">', '<link rel="apple-touch-icon" href="nolu-icon.svg">')
           s = s.replace('<script type="module" src="import.js"></script>', '<script type="module" src="import-v10.js"></script>')
           s = s.replace('<script type="module" src="ai.js"></script>', '')
           s = s.replace('<script type="module" src="hang.js"></script>', '')
@@ -76,8 +76,9 @@ jobs:
           p.write_text(s, encoding='utf-8')
           PY
           grep -q 'Content-Security-Policy' pu-plan/index.html
-          grep -q 'hang-icon.svg' pu-plan/index.html
+          grep -q 'nolu-icon.svg' pu-plan/index.html
           grep -q 'ui-v19.css' pu-plan/index.html
+          grep -q 'Nolu' pu-plan/index.html
           ! grep -q 'src="ai.js"' pu-plan/index.html
       - name: Configure Pages
         uses: actions/configure-pages@v5
