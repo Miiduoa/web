@@ -8,7 +8,6 @@ await import(asset('./auth-v13.js'));
 await import(asset('./next-round.js'));
 await import(asset('./social-router-v12.js'));
 await import(asset('./community-v12.js'));
-await import(asset('./social-experience-v18.js'));
 await import(asset('./discovery-v16.js'));
 await import(asset('./pwa-v9.js'));
 await import(asset('./planner-v14.js'));
