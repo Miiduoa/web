@@ -18,6 +18,6 @@ await import(asset('./polish-v9.js'));
 await import(asset('./social-router-v12.js'));
 await import(asset('./community-v12.js'));
 await import(asset('./pwa-v9.js'));
-await import(asset('./planner-v13.js'));
+await import(asset('./planner-v14.js'));
 await import(asset('./admin-v14.js'));
 await import(asset('./language-v14.js'));
