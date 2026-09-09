@@ -31,13 +31,12 @@ jobs:
           node --check pu-plan/app.js
           node --check pu-plan/cloud.js
           node --check pu-plan/import-v10.js
-          node --check pu-plan/ai.js
           node --check pu-plan/boot-v9.js
           node --check pu-plan/auth-v13.js
           node --check pu-plan/pwa-v9.js
           node --check pu-plan/community-v12.js
           node --check pu-plan/social-router-v12.js
-          node --check pu-plan/assistant-v12.js
+          node --check pu-plan/planner-v13.js
           node --check pu-plan/admin-v12.js
           node --check pu-plan/polish-v9.js
           node --check pu-plan/sw-v9.js
@@ -51,6 +50,7 @@ jobs:
               s = s.replace('<meta name="theme-color" content="#111111" />', '<meta name="theme-color" content="#111111" />' + security)
           s = s.replace('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">\n<link rel="stylesheet" href="social-v6.css">\n<link rel="stylesheet" href="ui-v9.css">\n<link rel="stylesheet" href="product-v9.css">\n<link rel="manifest" href="manifest-v9.webmanifest">\n<link rel="apple-touch-icon" href="icon.svg">')
           s = s.replace('<script type="module" src="import.js"></script>', '<script type="module" src="import-v10.js"></script>')
+          s = s.replace('<script type="module" src="ai.js"></script>', '')
           if '<script type="module" src="boot-v9.js"></script>' not in s:
               s = s.replace('</body>', '<script type="module" src="boot-v9.js"></script>\n</body>')
           p.write_text(s, encoding='utf-8')
