@@ -1,0 +1,11 @@
+{
+  "name":"PU/PLAN 校園課表",
+  "short_name":"PU/PLAN",
+  "description":"可編輯、可匯入圖片、可加好友與找共同空堂的校園課表 App",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#f4f1e8",
+  "theme_color":"#111111",
+  "lang":"zh-Hant",
+  "icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
