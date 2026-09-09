@@ -17,13 +17,13 @@ function privacyCopy(v){
     :['公開帳號','登入的使用者可以看到你的公開貼文；只限好友的貼文仍不會公開。'];
 }
 
+function setText(el,value){if(el&&el.textContent!==value)el.textContent=value}
 function renderPrivacy(){
   const card=document.querySelector('#privacyCard');
   if(!card)return;
   const [title,desc]=privacyCopy(privacyState);
-  const titleEl=card.querySelector('[data-privacy-title]'),descEl=card.querySelector('[data-privacy-desc]');
-  if(titleEl)titleEl.textContent=title;
-  if(descEl)descEl.textContent=desc;
+  setText(card.querySelector('[data-privacy-title]'),title);
+  setText(card.querySelector('[data-privacy-desc]'),desc);
   card.querySelectorAll('[data-privacy-value]').forEach(b=>{
     const active=b.dataset.privacyValue===privacyState;
     b.classList.toggle('on',active);
@@ -34,8 +34,8 @@ function renderPrivacy(){
   if(composer){
     const pub=composer.querySelector('option[value="public"]');
     const priv=composer.querySelector('option[value="private"]');
-    if(pub)pub.textContent=privacyState==='private'?'一般貼文（好友可見）':'公開貼文';
-    if(priv)priv.textContent='只限好友';
+    setText(pub,privacyState==='private'?'一般貼文（好友可見）':'公開貼文');
+    setText(priv,'只限好友');
   }
 }
 
@@ -67,18 +67,22 @@ async function setPrivacy(v){
 
 function installPrivacy(){
   const grid=document.querySelector('#settings .settings');
-  if(!grid||document.querySelector('#privacyCard'))return;
-  const card=document.createElement('article');
-  card.id='privacyCard';card.className='setting-card privacy-card';
-  card.innerHTML=`<div class="privacy-copy"><span class="settings-icon" aria-hidden="true">◎</span><div><h3 data-privacy-title>帳號隱私</h3><p data-privacy-desc></p></div></div><div class="privacy-choice" role="group" aria-label="帳號隱私"><button type="button" data-privacy-value="public">公開</button><button type="button" data-privacy-value="private">私人</button></div>`;
-  const profile=grid.querySelector('.profile-settings');
-  if(profile?.nextSibling)grid.insertBefore(card,profile.nextSibling);else grid.append(card);
-  card.querySelectorAll('[data-privacy-value]').forEach(b=>b.addEventListener('click',()=>setPrivacy(b.dataset.privacyValue)));
-  renderPrivacy();refreshPrivacy();
+  if(!grid)return;
+  let card=document.querySelector('#privacyCard');
+  if(!card){
+    card=document.createElement('article');
+    card.id='privacyCard';card.className='setting-card privacy-card';
+    card.innerHTML=`<div class="privacy-copy"><span class="settings-icon" aria-hidden="true">◎</span><div><h3 data-privacy-title>帳號隱私</h3><p data-privacy-desc></p></div></div><div class="privacy-choice" role="group" aria-label="帳號隱私"><button type="button" data-privacy-value="public">公開</button><button type="button" data-privacy-value="private">私人</button></div>`;
+    const profile=grid.querySelector('.profile-settings');
+    if(profile?.nextSibling)grid.insertBefore(card,profile.nextSibling);else grid.append(card);
+    card.querySelectorAll('[data-privacy-value]').forEach(b=>b.addEventListener('click',()=>setPrivacy(b.dataset.privacyValue)));
+  }
+  renderPrivacy();
 }
 
 installPrivacy();
-new MutationObserver(()=>{installPrivacy();renderPrivacy()}).observe(document.body,{childList:true,subtree:true});
-document.addEventListener('puplan:profile-changed',()=>setTimeout(refreshPrivacy,20));
+refreshPrivacy();
+document.addEventListener('puplan:profile-changed',()=>{installPrivacy();setTimeout(refreshPrivacy,20)});
+document.addEventListener('nolu:composer-ready',renderPrivacy);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPrivacy()});
-window.NOLU_PRIVACY={refresh:refreshPrivacy,set:setPrivacy,get:()=>privacyState};
+window.NOLU_PRIVACY={refresh:refreshPrivacy,set:setPrivacy,get:()=>privacyState,render:renderPrivacy};
