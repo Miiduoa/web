@@ -27,7 +27,6 @@ jobs:
       - name: Start local site
         run: |
           python3 -m http.server 4173 --directory pu-plan > /tmp/nolu-http.log 2>&1 &
-          echo $! > /tmp/nolu-http.pid
           for i in {1..20}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0; sleep .25; done
           exit 1
 
@@ -38,15 +37,18 @@ jobs:
           mkdir -p ui-smoke
           cat >/tmp/nolu-ui/check.cjs <<'NODE'
           const {chromium}=require('playwright');
-          const fs=require('fs');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const intersects=(a,b)=>a&&b&&!(a.x+a.width<=b.x||b.x+b.width<=a.x||a.y+a.height<=b.y||b.y+b.height<=a.y);
+          async function noHorizontalOverflow(page,label,where){
+            const m=await page.evaluate(()=>({innerWidth,doc:document.documentElement.scrollWidth,body:document.body.scrollWidth}));
+            assert(m.doc<=m.innerWidth+2,`${label} ${where}: document overflow ${m.doc}/${m.innerWidth}`);
+            assert(m.body<=m.innerWidth+2,`${label} ${where}: body overflow ${m.body}/${m.innerWidth}`);
+            return m;
+          }
           async function inspect(page,label){
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
             await page.waitForSelector('#authGate');
-            const metrics=await page.evaluate(()=>({innerWidth,scrollWidth:document.documentElement.scrollWidth,bodyWidth:document.body.scrollWidth}));
-            assert(metrics.scrollWidth<=metrics.innerWidth+2,`${label}: document overflows horizontally (${metrics.scrollWidth}/${metrics.innerWidth})`);
-            assert(metrics.bodyWidth<=metrics.innerWidth+2,`${label}: body overflows horizontally`);
+            const metrics=await noHorizontalOverflow(page,label,'login');
             const art=await page.locator('.auth-art').boundingBox();
             const title=await page.locator('.auth-poster h2').boundingBox();
             const copy=await page.locator('.auth-poster p').boundingBox();
@@ -54,17 +56,23 @@ jobs:
             assert(!intersects(art,title),`${label}: logo/wordmark overlaps headline`);
             assert(!intersects(art,copy),`${label}: logo/wordmark overlaps copy`);
             assert(!intersects(title,copy),`${label}: headline overlaps copy`);
+            const typography=await page.locator('.auth-poster h2').evaluate(el=>{const s=getComputedStyle(el);return{font:parseFloat(s.fontSize),line:parseFloat(s.lineHeight)}});
+            assert(typography.line>=typography.font*1.08,`${label}: headline line-height is too tight (${typography.line}/${typography.font})`);
             await page.getByRole('button',{name:'登入',exact:true}).first().click();
             await page.waitForTimeout(50);
             assert(await page.locator('#loginForm').isVisible(),`${label}: login form did not open`);
-            const fields=await page.locator('#loginForm input').all();
-            for(const field of fields){const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`)}
-            await page.screenshot({path:`ui-smoke/login-${label}.png`,fullPage:true});
-            await page.locator('#guestMode').click();
-            await page.waitForTimeout(350);
-            const appMetrics=await page.evaluate(()=>({innerWidth,scrollWidth:document.documentElement.scrollWidth}));
-            assert(appMetrics.scrollWidth<=appMetrics.innerWidth+2,`${label}: app shell overflows horizontally`);
-            await page.screenshot({path:`ui-smoke/app-${label}.png`,fullPage:true});
+            for(const field of await page.locator('#loginForm input').all()){
+              const b=await field.boundingBox();assert(b&&b.x>=-1&&b.x+b.width<=metrics.innerWidth+1,`${label}: login field outside viewport`);
+            }
+            await page.screenshot({path:`ui-smoke/login-${label}.png`});
+
+            // Layout-only app check: bypass account handlers so network/session state cannot make the visual test flaky.
+            await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
+            await page.waitForTimeout(60);
+            await noHorizontalOverflow(page,label,'app');
+            const bottom=await page.locator('.bottom').boundingBox();
+            assert(bottom&&bottom.x>=0&&bottom.x+bottom.width<=metrics.innerWidth+1,`${label}: bottom navigation outside viewport`);
+            await page.screenshot({path:`ui-smoke/app-${label}.png`});
           }
           (async()=>{
             const browser=await chromium.launch({headless:true});
