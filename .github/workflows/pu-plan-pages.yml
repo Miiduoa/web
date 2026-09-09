@@ -26,6 +26,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Prepare PU PLAN v9
+        run: |
+          node --check pu-plan/import-v9.js
+          node --check pu-plan/boot-v9.js
+          node --check pu-plan/pwa-v9.js
+          node --check pu-plan/sw-v9.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pu-plan/index.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('<link rel="stylesheet" href="style.css">', '<link rel="stylesheet" href="style.css">\n<link rel="stylesheet" href="social-v6.css">\n<link rel="stylesheet" href="ui-v9.css">\n<link rel="manifest" href="manifest-v9.webmanifest">\n<link rel="apple-touch-icon" href="icon.svg">')
+          s = s.replace('<script type="module" src="import.js"></script>', '<script type="module" src="import-v9.js"></script>')
+          s = s.replace('</body>', '<script type="module" src="boot-v9.js"></script>\n</body>')
+          p.write_text(s, encoding='utf-8')
+          PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload PU PLAN
