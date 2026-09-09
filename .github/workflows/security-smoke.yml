@@ -44,7 +44,7 @@ jobs:
       - name: Check unauthenticated API access
         env:
           API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
-          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
           set -euo pipefail
@@ -69,7 +69,7 @@ jobs:
       - name: Reject forged sessions
         env:
           API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
-          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
           set -euo pipefail
@@ -86,7 +86,7 @@ jobs:
       - name: Check cross-origin controls
         env:
           API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
-          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
           set -euo pipefail
@@ -125,7 +125,7 @@ jobs:
       - name: Check unsupported methods
         env:
           API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
-          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v12
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
           set -euo pipefail
