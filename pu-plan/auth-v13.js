@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s);
 const cloud=window.PUPLAN_CLOUD;
-if(!cloud)throw new Error('PU/PLAN auth unavailable');
+if(!cloud)throw new Error('帳號功能載入失敗');
 
 const ACCOUNT_KEYS=[
   'puplan_session','puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
@@ -60,7 +60,6 @@ function syncAuthUI(){
   }
 }
 
-// Account chip should always provide a way back to login while signed out/guest.
 $('#accountChip')?.addEventListener('click',e=>{
   if(cloud.isSignedIn?.())return;
   e.preventDefault();
@@ -68,7 +67,6 @@ $('#accountChip')?.addEventListener('click',e=>{
   openLogin();
 },true);
 
-// Avoid accidental double login / registration requests on slow mobile networks.
 for(const form of [$('#loginForm'),$('#registerForm')]){
   if(!form)continue;
   form.addEventListener('submit',()=>{
@@ -86,10 +84,8 @@ for(const form of [$('#loginForm'),$('#registerForm')]){
   },true);
 }
 
-// A successful login/profile bootstrap re-enables UI and clears password fields.
 document.addEventListener('puplan:profile-changed',()=>setTimeout(syncAuthUI,0));
 
-// If the prior action was an explicit logout, reopen the login tab rather than guest/register.
 const target=sessionStorage.getItem('puplan_auth_target');
 if(target==='login'&&!cloud.isSignedIn?.()){
   setTimeout(()=>{
