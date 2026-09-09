@@ -1,4 +1,4 @@
-name: Deploy Nolu to GitHub Pages
+name: Deploy nolu to GitHub Pages
 
 on:
   push:
@@ -31,16 +31,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r file; do node --check "$file"; done <<'FILES'
+          while IFS= read -r file; do node --experimental-default-type=module --check "$file"; done <<'FILES'
           pu-plan/main.js
           pu-plan/app.js
-          pu-plan/core/state.js
-          pu-plan/features/schedule.js
-          pu-plan/features/friends.js
-          pu-plan/features/share.js
-          pu-plan/features/analysis.js
-          pu-plan/features/navigation.js
-          pu-plan/features/settings.js
           pu-plan/views/auth.js
           pu-plan/views/shell.js
           pu-plan/views/schedule.js
@@ -73,33 +66,40 @@ jobs:
           manifest=json.loads((root/'manifest.webmanifest').read_text(encoding='utf-8'))
 
           required_files=[
-              'main.js','app.js','nolu-icon.svg','manifest.webmanifest',
-              'core/state.js',
-              'features/schedule.js','features/friends.js','features/share.js',
-              'features/analysis.js','features/navigation.js','features/settings.js',
+              'main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js',
               'views/auth.js','views/shell.js','views/schedule.js','views/friends.js',
               'views/assistant.js','views/settings.js','views/dialogs.js',
               'styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css',
               'styles/assistant.css','styles/dialogs.css','styles/mobile.css',
               'friends.css','community.css','discover.css','admin.css','pwa.css',
-              'cloud.js','social-ui.js','import.js','boot.js'
+              'cloud.js','social-ui.js','import.js','boot.js','security.js','auth.js',
+              'semesters.js','community.js','discover.js','planner.js','admin.js','privacy.js','pwa.js'
           ]
           missing=[p for p in required_files if not (root/p).is_file()]
-          assert not missing, f'missing modular production files: {missing}'
+          assert not missing, f'missing production files: {missing}'
 
           assert '<div id="app"></div>' in index, 'index must only mount the app shell'
           assert 'src="main.js"' in index, 'main.js entrypoint missing'
           for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css','styles/mobile.css']:
               assert css in index, f'index missing {css}'
 
-          assert not (root/'style.css').exists(), 'obsolete monolithic style.css must stay deleted'
-          forbidden=['boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js']
-          for item in forbidden:
+          # Do not re-introduce the old override architecture.
+          forbidden_paths=[
+              'style.css','core/state.js','features/analysis.js','features/friends.js',
+              'features/navigation.js','features/schedule.js','features/settings.js','features/share.js'
+          ]
+          for item in forbidden_paths:
+              assert not (root/item).exists(), f'obsolete frontend layer returned: {item}'
+
+          forbidden_refs=['boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js','style.css']
+          for item in forbidden_refs:
               assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
 
-          assert manifest.get('name')=='Nolu'
+          assert manifest.get('name')=='nolu'
+          assert manifest.get('short_name')=='nolu'
           assert manifest.get('start_url')=='./' and manifest.get('scope')=='./'
           assert 'styles/auth.css' in sw and 'views/auth.js' in sw and 'style.css' not in sw
+          assert 'PU/PLAN' not in index and 'PU PLAN' not in index
           PY
 
       - name: Configure Pages
