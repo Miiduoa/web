@@ -1,12 +1,13 @@
 :root{--hang-ink:#171717;--hang-paper:#f6f1e8;--hang-accent:#cfff4a;--hang-soft:#e9e3d8}
 .auth-poster{background:var(--hang-paper)!important}
 .auth-art{display:flex!important;align-items:center;gap:12px;font-size:clamp(28px,7vw,54px)!important;line-height:1!important;letter-spacing:-.055em!important;margin-bottom:22px!important}
+.auth-art:not([data-hang])>span,.auth-art:not([data-hang])>b{display:none!important}.auth-art:not([data-hang])::after{content:'hang.';font-weight:850;color:var(--hang-ink)}
 .auth-art img{width:46px;height:46px;border-radius:13px;display:block}
 .auth-art .hang-wordmark{font-weight:850;color:var(--hang-ink)}
 .sidebar .brand{align-items:center;gap:10px}
 .sidebar .brand .mark{width:34px;height:34px;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;overflow:hidden;border-radius:10px}
 .sidebar .brand .mark img{display:block;width:100%;height:100%}
-.sidebar .brand strong{font-size:17px;letter-spacing:-.04em;text-transform:none}
+.sidebar .brand strong{font-size:0!important;letter-spacing:-.04em;text-transform:none}.sidebar .brand strong::after{content:'hang.';font-size:17px}
 .sidebar .brand span{font-size:9px;letter-spacing:.03em;text-transform:none;opacity:.62}
 .hang-profile-dialog{width:min(560px,calc(100vw - 24px));max-height:min(82vh,760px);padding:0;border:1px solid rgba(23,23,23,.18);border-radius:22px;background:#fbf8f2;color:var(--hang-ink);box-shadow:0 24px 70px rgba(0,0,0,.18);overflow:hidden}
 .hang-profile-dialog::backdrop{background:rgba(18,18,18,.42);backdrop-filter:blur(3px)}
