@@ -8,6 +8,7 @@ link('stylesheet',asset('./community-v12.css'),'puplanCommunityV12');
 link('stylesheet',asset('./admin-v12.css'),'puplanAdminV12');
 link('stylesheet',asset('./mobile-v10.css'),'puplanMobile');
 link('stylesheet',asset('./mobile-v12.css'),'puplanMobileV12');
+link('stylesheet',asset('./layout-v13.css'),'puplanLayoutV13');
 link('manifest',asset('./manifest-v9.webmanifest'),'puplanManifestV9');
 link('apple-touch-icon',asset('./icon.svg'),'puplanIconV9');
 for(const [name,content] of [['apple-mobile-web-app-capable','yes'],['apple-mobile-web-app-status-bar-style','default'],['apple-mobile-web-app-title','PU/PLAN']]){if(!document.querySelector(`meta[name="${name}"]`)){const m=document.createElement('meta');m.name=name;m.content=content;document.head.appendChild(m)}}
@@ -17,5 +18,5 @@ await import(asset('./polish-v9.js'));
 await import(asset('./social-router-v12.js'));
 await import(asset('./community-v12.js'));
 await import(asset('./pwa-v9.js'));
-await import(asset('./assistant-v12.js'));
+await import(asset('./planner-v13.js'));
 await import(asset('./admin-v12.js'));
