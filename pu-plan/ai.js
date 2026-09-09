@@ -2,6 +2,8 @@ const q=(s)=>document.querySelector(s);
 const messages=q('#aiMessages'), input=q('#aiInput'), send=q('#aiSend'), launch=q('#aiLaunch'), status=q('#aiStatus'), light=q('#aiLight'), mode=q('#aiModeLabel');
 let engine=null, builtIn=null, loading=false;
 const MODEL='Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+const asset=(name)=>new URL(name,import.meta.url).href;
+if(!document.querySelector('link[data-puplan-social]')){const l=document.createElement('link');l.rel='stylesheet';l.href=asset('./social-v6.css');l.dataset.puplanSocial='1';document.head.appendChild(l)}
 function bubble(text,who='ai'){const d=document.createElement('div');d.className='bubble '+(who==='me'?'me':'ai');const mini=document.createElement('span');mini.className='mini';mini.textContent=who==='me'?'YOU':'PU/PLAN AI';d.append(mini,document.createTextNode(text));messages.appendChild(d);messages.scrollTop=messages.scrollHeight;return d}
 function setStatus(text,state=''){status.textContent=text;light.className='status-light '+state}
 async function tryBuiltIn(){try{if('LanguageModel' in self&&self.LanguageModel?.create){setStatus('偵測到瀏覽器內建 AI，正在啟動…','loading');builtIn=await self.LanguageModel.create({systemPrompt:window.PUPLAN_AI.buildAIContext()});mode.textContent='BROWSER AI';setStatus('內建 AI 已就緒','ready');launch.textContent='AI 已啟動 ✓';return true}}catch(e){console.warn('Built-in AI unavailable',e)}return false}
@@ -10,4 +12,4 @@ async function ask(){let text=input.value.trim();if(!text)return;input.value='';
 function quickAnswer(text){let t=text.toLowerCase();if(/累|忙|滿|壓力/.test(t))return window.PUPLAN_AI.smartAnalysis('stress');if(/好友|共同|一起|朋友/.test(t))return window.PUPLAN_AI.smartAnalysis('friend');if(/讀書|複習|作業|計畫/.test(t))return window.PUPLAN_AI.smartAnalysis('study');if(/空堂|空檔|有空|時間/.test(t))return window.PUPLAN_AI.smartAnalysis('free');return '快速模式目前最擅長：課表壓力、長空堂、讀書時段、好友共同空堂。要自由聊天請先啟動 Local AI。'}
 launch?.addEventListener('click',initAI);send?.addEventListener('click',ask);input?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask()}});
 if(!navigator.gpu)setStatus('快速分析可用；Local AI 需 WebGPU','');
-import('https://cdn.jsdelivr.net/gh/Miiduoa/web@0630bd172541b30dcdce2a819662a4b65c8364ae/pu-plan/next-round.js').catch(e=>console.warn('next-round',e));
+import(asset('./next-round.js')).catch(e=>console.warn('next-round',e));
