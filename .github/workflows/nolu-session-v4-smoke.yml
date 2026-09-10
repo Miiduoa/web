@@ -31,11 +31,12 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Type-check session primitive and core auth functions
+      - name: Type-check session primitive and active auth functions
         run: |
           deno check supabase/functions/_shared/session-v4.ts supabase/functions/_shared/session-v4_test.ts
           deno check supabase/functions/pu-plan-api-v6/index.ts
           deno check supabase/functions/pu-plan-core-v1/index.ts
+          deno check supabase/functions/pu-plan-admin/index.ts
       - name: Run session security unit tests
         run: deno test supabase/functions/_shared/session-v4_test.ts
       - name: Guard session design
@@ -52,15 +53,19 @@ jobs:
           fi
           python3 - <<'PY'
           from pathlib import Path
-          for path in [
+          active=[
               'supabase/functions/pu-plan-api-v6/index.ts',
               'supabase/functions/pu-plan-core-v1/index.ts',
-          ]:
+              'supabase/functions/pu-plan-admin/index.ts',
+          ]
+          for path in active:
               text=Path(path).read_text()
-              assert 'signSessionV4' in text, f'{path}: v4 signer missing'
               assert 'verifySignedSessionV4' in text, f'{path}: v4 verifier missing'
               assert 'assertCredentialCurrent' in text, f'{path}: credential revocation missing'
               assert 'password_salt' in text, f'{path}: current credential not queried'
               assert '{v:3' not in text.replace(' ', ''), f'{path}: legacy v3 signer remains'
-          print('v6/core session integration guard passed')
+          for path in active[:2]:
+              text=Path(path).read_text()
+              assert 'signSessionV4' in text, f'{path}: v4 signer missing'
+          print('v6/core/admin session integration guard passed')
           PY
