@@ -5,6 +5,7 @@ on:
     branches: [main, security/nolu-avatar-rendering-20260910]
     paths:
       - 'pu-plan/social-ui.js'
+      - 'pu-plan/community.js'
       - 'pu-plan/admin.js'
       - 'pu-plan/core/state.js'
       - '.github/workflows/nolu-avatar-security-smoke.yml'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/social-ui.js'
+      - 'pu-plan/community.js'
       - 'pu-plan/admin.js'
       - 'pu-plan/core/state.js'
       - '.github/workflows/nolu-avatar-security-smoke.yml'
@@ -30,16 +32,22 @@ jobs:
       - name: Syntax and source guardrails
         run: |
           node --check pu-plan/social-ui.js
+          node --check pu-plan/community.js
           node --check pu-plan/admin.js
           python3 - <<'PY'
           from pathlib import Path
           social = Path('pu-plan/social-ui.js').read_text()
+          community = Path('pu-plan/community.js').read_text()
           admin = Path('pu-plan/admin.js').read_text()
           assert "import {cleanAvatar} from './core/state.js';" in social
           assert "cleanAvatar(person?.avatar||person?.avatar_data||'')" in social
+          assert "import {cleanAvatar} from './core/state.js';" in community
+          assert "cleanAvatar(p?.avatar_data||'')" in community
+          assert "cleanAvatar(f.avatar||f.avatar_data||'')" in community
           assert "import {cleanAvatar} from './core/state.js';" in admin
           assert "cleanAvatar(u?.avatar_data||'')" in admin
           assert "const src=person?.avatar||person?.avatar_data||''" not in social
+          assert 'src="${esc(f.avatar)}"' not in community
           print('avatar source guardrails passed')
           PY
 
@@ -75,7 +83,7 @@ jobs:
           npm --prefix /tmp/nolu-avatar install playwright >/dev/null 2>&1
           cd /tmp/nolu-avatar && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Remote avatar payloads must not reach social or admin DOM
+      - name: Remote avatar payloads must not reach social, community or admin DOM
         env:
           NODE_PATH: /tmp/nolu-avatar/node_modules
         run: |
@@ -85,10 +93,10 @@ jobs:
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const evil=[
-            {id:'evil-1',name:'Injected One',display_name:'Injected One',username:'evil1',avatar:'x" onerror="window.__NOLU_XSS__=1',avatar_data:'x" onerror="window.__NOLU_XSS__=1',courses:[],meta:{}},
-            {id:'evil-2',name:'Injected Two',display_name:'Injected Two',username:'evil2',avatar:'javascript:alert(1)',avatar_data:'javascript:alert(1)',courses:[],meta:{}},
-            {id:'evil-3',name:'Injected Three',display_name:'Injected Three',username:'evil3',avatar:'data:image/svg+xml,<svg onload=alert(1)>',avatar_data:'data:image/svg+xml,<svg onload=alert(1)>',courses:[],meta:{}},
-            {id:'good-1',name:'Safe PNG',display_name:'Safe PNG',username:'safe',avatar:'data:image/png;base64,iVBORw0KGgo=',avatar_data:'data:image/png;base64,iVBORw0KGgo=',courses:[],meta:{}}
+            {id:'evil-1',name:'Injected One',display_name:'Injected One',username:'evil1',avatar:'x" onerror="window.__NOLU_XSS__=1',avatar_data:'x" onerror="window.__NOLU_XSS__=1',courses:[],meta:{},cloud:true},
+            {id:'evil-2',name:'Injected Two',display_name:'Injected Two',username:'evil2',avatar:'javascript:alert(1)',avatar_data:'javascript:alert(1)',courses:[],meta:{},cloud:true},
+            {id:'evil-3',name:'Injected Three',display_name:'Injected Three',username:'evil3',avatar:'data:image/svg+xml,<svg onload=alert(1)>',avatar_data:'data:image/svg+xml,<svg onload=alert(1)>',courses:[],meta:{},cloud:true},
+            {id:'good-1',name:'Safe PNG',display_name:'Safe PNG',username:'safe',avatar:'data:image/png;base64,iVBORw0KGgo=',avatar_data:'data:image/png;base64,iVBORw0KGgo=',courses:[],meta:{},cloud:true}
           ];
           const bundle=()=>({
             token:'test-token',
@@ -121,6 +129,10 @@ jobs:
                   if(action==='login')return respond(bundle());
                   if(action==='social')return respond({social:bundle().social});
                 }
+                if(url.includes('/functions/v1/pu-plan-social')){
+                  if(action==='inbox')return respond({conversations:[]});
+                  return respond({});
+                }
                 return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
               });
               await page.addInitScript(()=>{
@@ -132,7 +144,7 @@ jobs:
               await page.locator('[data-auth-tab="login"]').click();
               await page.locator('#loginEmail').fill('test@example.invalid');
               await page.locator('#loginPassword').fill('test-password');
-              await page.locator('#loginForm button[type="submit"]').click();
+              await page.locator('#loginForm').evaluate(form=>form.requestSubmit());
               await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.(),null,{timeout:10000});
 
               const sanitized=await page.evaluate(()=>window.PUPLAN_APP.friends().map(f=>({id:f.id,avatar:f.avatar})));
@@ -141,7 +153,18 @@ jobs:
               assert(byId['good-1']==='data:image/png;base64,iVBORw0KGgo=','valid PNG friend avatar was removed');
 
               await page.locator('[data-view="friends"]').first().click();
-              await page.waitForTimeout(300);
+              await page.waitForTimeout(200);
+
+              await page.waitForFunction(()=>document.querySelector('[data-community-open]'),null,{timeout:5000});
+              await page.locator('[data-community-open]').first().click();
+              await page.locator('[data-community-tab="chat"]').click();
+              await page.waitForFunction(()=>document.querySelector('#newChat'),null,{timeout:5000});
+              await page.locator('#newChat').click();
+              await page.waitForFunction(()=>document.querySelectorAll('#newChatDialog .friend-pick').length===4,null,{timeout:5000});
+              const pickerSrc=await page.evaluate(()=>[...document.querySelectorAll('#newChatDialog .avatar img')].map(i=>i.getAttribute('src')));
+              assert(pickerSrc.length===1&&pickerSrc[0]==='data:image/png;base64,iVBORw0KGgo=','community chat picker exposed an unsafe raw avatar');
+              await page.locator('#newChatDialog .x').click();
+
               await page.waitForFunction(()=>window.PUPLAN_ADMIN,null,{timeout:5000});
               await page.waitForFunction(()=>document.querySelector('#admin'),null,{timeout:5000});
               await page.evaluate(()=>window.PUPLAN_ADMIN.open());
