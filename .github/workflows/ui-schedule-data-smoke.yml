@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/social-ui.js'
       - 'pu-plan/features/schedule.js'
       - 'pu-plan/styles/schedule.css'
       - 'pu-plan/views/schedule.js'
@@ -66,13 +68,8 @@ jobs:
               await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
               await page.locator('[data-schedule-mode="week"]').click();
               await page.locator('[data-presentation="classic"]').click();
-              await page.waitForTimeout(80);
+              await page.waitForTimeout(100);
 
-              console.log('VISIBILITY',JSON.stringify(await page.evaluate(()=>{
-                const info=sel=>{const e=document.querySelector(sel);if(!e)return null;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return{display:s.display,visibility:s.visibility,opacity:s.opacity,inline:e.style.display,hidden:e.hidden,w:r.width,h:r.height,classes:e.className}};
-                return{body:document.body.className,schedule:info('#schedule'),classic:info('#classicSchedule'),table:info('.table-wrap'),grid:info('#grid'),human:info('#humanWeek')};
-              })));
-              await page.screenshot({path:'ui-populated/debug-classic-390x844.png',fullPage:true});
               const viewport=await page.evaluate(()=>innerWidth);
               const docWidth=await page.evaluate(()=>document.documentElement.scrollWidth);
               assert(docWidth<=viewport+2,`page overflows horizontally: ${docWidth}/${viewport}`);
@@ -81,6 +78,7 @@ jobs:
               assert(await page.locator('.classic-schedule').isVisible(),'classic schedule is hidden');
               assert(await page.locator('.table-wrap').isVisible(),'week grid wrapper is hidden');
               assert(await page.locator('#grid .course-slot').count()===7,'week grid did not render all 7 courses');
+              assert(await page.locator('#nowStrip').isHidden(),'legacy now strip should not compete with the schedule renderer');
               const wrap=await page.locator('.table-wrap').boundingBox();
               assert(wrap&&wrap.width>300&&wrap.height>400,'week grid wrapper has invalid size');
               const hero=await page.locator('.hero-main').boundingBox();
@@ -90,17 +88,19 @@ jobs:
 
               await page.locator('[data-schedule-mode="day"]').click();
               await page.locator('[data-day="4"]').click();
-              await page.waitForTimeout(40);
+              await page.waitForTimeout(100);
               assert(await page.locator('.mobile-list').isVisible(),'classic day list is hidden');
               assert(await page.locator('.mobile-course').count()===2,'Thursday should render 2 courses in day mode');
+              assert(await page.locator('#nowStrip').isHidden(),'legacy now strip returned in day mode');
               await page.screenshot({path:'ui-populated/classic-day-390x844.png',fullPage:true});
 
               await page.locator('[data-presentation="human"]').click();
               await page.locator('[data-schedule-mode="week"]').click();
-              await page.waitForTimeout(40);
+              await page.waitForTimeout(100);
               assert(await page.locator('.human-week').isVisible(),'human week is hidden');
               assert(await page.locator('.human-day').count()===5,'human week must render five weekdays');
               assert(await page.locator('.human-course').count()===7,'human week did not render all 7 courses');
+              assert(await page.locator('#nowStrip').isHidden(),'legacy now strip returned in human mode');
               await page.screenshot({path:'ui-populated/human-week-390x844.png',fullPage:true});
               await context.close();
             } finally { await browser.close(); }
