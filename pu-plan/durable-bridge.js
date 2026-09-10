@@ -1,4 +1,4 @@
-import {requestPersistentStorage,getSnapshot,putSnapshot,putMutation,listMutations,deleteMutation} from './durable-store.js';
+import {requestPersistentStorage,getSnapshot,putSnapshot,putMutation,listMutations,deleteMutation,clearUser} from './durable-store.js';
 
 const MAX_AVATAR=180000;
 const state={ready:false,persistent:false,lastMirrorAt:0};
@@ -59,6 +59,12 @@ async function restorePending(id){
   }
   if(changed)localStorage.setItem(pendingKey(id),JSON.stringify(q));return changed;
 }
+async function purge(id=uid()){
+  id=clean(id,100);if(!id)return false;
+  localStorage.removeItem(snapshotKey(id));
+  localStorage.removeItem(pendingKey(id));
+  return clearUser(id);
+}
 async function prepare(){
   const id=uid();if(!id){state.ready=true;return}
   state.persistent=await requestPersistentStorage();
@@ -74,9 +80,10 @@ document.addEventListener('puplan:courses-changed',e=>{
 });
 document.addEventListener('puplan:profile-changed',()=>{void mirror(false)});
 document.addEventListener('nolu:connectivity',e=>{void mirror(e.detail?.mode==='online')});
+document.addEventListener('nolu:purge-account',e=>{void purge(e.detail?.uid||'')});
 addEventListener('online',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 addEventListener('focus',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void restorePending(uid())});
 setInterval(()=>void mirror(false),5000);
 
-window.NOLU_DURABLE={state,mirror,restorePending,getSnapshot,listMutations};
+window.NOLU_DURABLE={state,mirror,restorePending,getSnapshot,listMutations,purge};
