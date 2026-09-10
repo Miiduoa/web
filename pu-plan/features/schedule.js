@@ -16,11 +16,27 @@ function renderFloatingCourses(){const box=$('#floatingCourses');if(!box)return;
 
 export function renderScheduleMeta(){const m=scheduleMeta(),title=m.title||[m.year?`${m.year} 學年度`:'',m.semester?`第 ${m.semester} 學期`:''].filter(Boolean).join('・');if($('#semesterLabel'))$('#semesterLabel').textContent=title||'我的學期';const bits=[m.school,m.className,m.credits?`${m.credits} 學分`:''].filter(Boolean);if($('#semesterMeta'))$('#semesterMeta').innerHTML=bits.length?bits.map(esc).join('<br>'):'自己的課表<br>匯入圖片後可自動辨識學期資訊'}
 
-export function applyScheduleMode(mode=localStorage.getItem('puplan_schedule_mode')||'week'){const next=mode==='day'?'day':'week';document.body.classList.toggle('schedule-day-mode',next==='day');$$('[data-schedule-mode]').forEach(b=>b.classList.toggle('on',b.dataset.scheduleMode===next));localStorage.setItem('puplan_schedule_mode',next)}
+function syncScheduleVisibility(){
+  const dayMode=document.body.classList.contains('schedule-day-mode');
+  const classic=document.body.classList.contains('schedule-presentation-classic');
+  const human=$('#humanWeek'),classicRoot=$('#classicSchedule'),tabs=$('#tabs'),table=$('.table-wrap'),mobile=$('#mobile');
+  if(human)human.style.display=classic?'none':'grid';
+  if(classicRoot)classicRoot.style.display=classic?'block':'none';
+  if(tabs)tabs.style.display=(dayMode||(classic&&window.innerWidth<=680))?'flex':'none';
+  if(classic){
+    if(table)table.style.display=dayMode?'none':'block';
+    if(mobile)mobile.style.display=dayMode?'grid':'none';
+  }else{
+    if(table)table.style.display='';
+    if(mobile)mobile.style.display='';
+  }
+}
 
-export function applyPresentation(mode=localStorage.getItem('puplan_schedule_presentation')||'human'){const next=mode==='classic'?'classic':'human';document.body.classList.toggle('schedule-presentation-classic',next==='classic');document.body.classList.toggle('schedule-presentation-human',next==='human');$$('[data-presentation]').forEach(b=>b.classList.toggle('on',b.dataset.presentation===next));localStorage.setItem('puplan_schedule_presentation',next)}
+export function applyScheduleMode(mode=localStorage.getItem('puplan_schedule_mode')||'week'){const next=mode==='day'?'day':'week';document.body.classList.toggle('schedule-day-mode',next==='day');$$('[data-schedule-mode]').forEach(b=>b.classList.toggle('on',b.dataset.scheduleMode===next));localStorage.setItem('puplan_schedule_mode',next);syncScheduleVisibility()}
 
-export function renderSchedule(){renderStats();renderTabs();renderGrid();renderHumanWeek();renderMobile();clearLegacyMobileWeek();renderFloatingCourses();renderScheduleMeta();applyScheduleMode();applyPresentation()}
+export function applyPresentation(mode=localStorage.getItem('puplan_schedule_presentation')||'human'){const next=mode==='classic'?'classic':'human';document.body.classList.toggle('schedule-presentation-classic',next==='classic');document.body.classList.toggle('schedule-presentation-human',next==='human');$$('[data-presentation]').forEach(b=>b.classList.toggle('on',b.dataset.presentation===next));localStorage.setItem('puplan_schedule_presentation',next);syncScheduleVisibility()}
+
+export function renderSchedule(){renderStats();renderTabs();renderGrid();renderHumanWeek();renderMobile();clearLegacyMobileWeek();renderFloatingCourses();renderScheduleMeta();applyScheduleMode();applyPresentation();syncScheduleVisibility()}
 
 function toggleCourseTimeFields(){const off=+$('#day').value===0;$('#start').disabled=off;$('#end').disabled=off}
 
@@ -36,4 +52,5 @@ export function initSchedule(){
   $$('[data-presentation]').forEach(b=>b.onclick=()=>applyPresentation(b.dataset.presentation));
   $('#add').onclick=$('#mobileAdd').onclick=()=>openCourse();
   $('#importSchedule')?.addEventListener('click',()=>{$('#importDialog')?.showModal();document.dispatchEvent(new CustomEvent('puplan:import-opened'))});
+  window.addEventListener('resize',syncScheduleVisibility,{passive:true});
 }
