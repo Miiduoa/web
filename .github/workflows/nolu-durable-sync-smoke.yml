@@ -1,0 +1,129 @@
+name: nolu durable sync smoke
+
+on:
+  push:
+    branches: [main, fix/nolu-durable-sync-v2]
+    paths:
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/transport-bridge.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-durable-sync-smoke.yml'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  durable-outbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax check
+        run: |
+          node --check pu-plan/durable-store.js
+          node --check pu-plan/durable-bridge.js
+          node --check pu-plan/transport-bridge.js
+          node --check pu-plan/resilience.js
+          node --check pu-plan/main.js
+          node --check pu-plan/sw.js
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-durable init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-durable install playwright >/dev/null 2>&1
+          cd /tmp/nolu-durable && npx playwright install --with-deps chromium >/dev/null
+      - name: Verify IndexedDB snapshot and outbox recovery
+        env:
+          NODE_PATH: /tmp/nolu-durable/node_modules
+        run: |
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-durable/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              await context.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',r=>r.abort('timedout'));
+              const page=await context.newPage();
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              const uid='22222222-2222-4222-8222-222222222222';
+              const payload=b64(JSON.stringify({v:3,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}));
+              await page.evaluate(({uid,token})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',token);
+                localStorage.setItem('puplan_course_owner',uid);
+                localStorage.setItem('puplan_name','Durable Test');
+                localStorage.setItem('puplan_username','durable_test');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'old',name:'原始課程',day:1,start:1,end:2,teacher:'',room:'A101',color:'violet'}]));
+              },{uid,token:`${payload}.test-signature`});
+              await page.reload({waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.()===true&&window.NOLU_DURABLE?.state?.ready===true,{timeout:15000});
+              await page.evaluate(()=>window.PUPLAN_APP.setCoursesFromUser([{id:'new',name:'Durable 新課程',day:2,start:3,end:4,teacher:'',room:'B202',color:'blue'}]));
+              await page.waitForFunction(async uid=>{
+                const rows=await window.NOLU_DURABLE.listMutations(uid);
+                const snap=await window.NOLU_DURABLE.getSnapshot(uid);
+                return rows.some(r=>r.action==='save_schedule'&&r.payload?.courses?.[0]?.name==='Durable 新課程')&&snap?.courses?.[0]?.name==='Durable 新課程';
+              },uid,{timeout:10000});
+              await page.evaluate(uid=>{
+                localStorage.removeItem(`nolu_pending_mutations_v1:${uid}`);
+                localStorage.removeItem('puplan_courses');
+              },uid);
+              await page.reload({waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.NOLU_DURABLE?.state?.ready===true&&window.PUPLAN_CLOUD?.isSignedIn?.()===true,{timeout:15000});
+              const recovered=await page.evaluate(uid=>({
+                course:window.PUPLAN_APP.courses()?.[0]?.name,
+                pending:JSON.parse(localStorage.getItem(`nolu_pending_mutations_v1:${uid}`)||'{}'),
+                mode:window.NOLU_RESILIENCE?.getMode?.()
+              }),uid);
+              console.log('DURABLE_RECOVERY',recovered);
+              assert(recovered.course==='Durable 新課程','IndexedDB snapshot should restore the latest schedule');
+              assert(recovered.pending.schedule?.courses?.[0]?.name==='Durable 新課程','IndexedDB outbox should rebuild the legacy pending queue');
+              assert(recovered.mode==='offline','cloud outage should stay in offline protection mode');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 90s node /tmp/nolu-durable/check.cjs
+      - name: Verify three-path legacy API failover
+        env:
+          NODE_PATH: /tmp/nolu-durable/node_modules
+        run: |
+          cat >/tmp/nolu-durable/failover.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const attempts=[];
+              await context.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
+                const path=new URL(route.request().url()).pathname;attempts.push(path);
+                if(path.endsWith('/pu-plan-api-v6')||path.endsWith('/pu-plan-core-v1'))return route.fulfill({status:503,contentType:'application/json',body:'{"message":"simulated unavailable"}'});
+                if(path.endsWith('/pu-plan-api'))return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-third-path"}'});
+                return route.abort('failed');
+              });
+              const page=await context.newPage();
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.NOLU_TRANSPORT?.candidates?.length===3,{timeout:10000});
+              attempts.length=0;
+              const result=await page.evaluate(async()=>{
+                const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
+                const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'semesters'})});
+                return {status:res.status,data:await res.json()};
+              });
+              console.log('FAILOVER_RESULT',result,'ATTEMPTS',attempts);
+              assert(result.status===200&&result.data?.via==='legacy-third-path','legacy request should reach the third path');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'primary path should be attempted');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'secondary path should be attempted');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-api')),'third path should be attempted');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 45s node /tmp/nolu-durable/failover.cjs
