@@ -3,6 +3,7 @@ const vm=require('vm');
 const assert=require('assert');
 
 const source=fs.readFileSync('pu-plan/guest-privacy.js','utf8');
+const tokenFor=(uid,exp=Math.floor(Date.now()/1000)+3600)=>`${Buffer.from(JSON.stringify({v:3,uid,iat:Math.floor(Date.now()/1000),exp})).toString('base64url')}.test-signature`;
 
 function makeStorage(seed={}){
   const map=new Map(Object.entries(seed));
@@ -21,7 +22,7 @@ function boot(localSeed,sessionSeed={}){
   const sessionStorage=makeStorage(sessionSeed);
   const listeners={};
   const document={addEventListener(type,fn,capture){listeners[type]={fn,capture}}};
-  vm.runInNewContext(source,{localStorage,sessionStorage,document});
+  vm.runInNewContext(source,{localStorage,sessionStorage,document,Date});
   return {localStorage,sessionStorage,listeners};
 }
 
@@ -53,16 +54,43 @@ const privateSeed={
   assert.equal(x.localStorage.getItem('puplan_courses'),'[{"name":"Guest class"}]');
 }
 
-// Signed-in users keep their own account cache until they explicitly enter guest mode.
+// Signed-in users keep cache only when its owner matches the session UID.
 {
-  const x=boot({...privateSeed,puplan_session:'valid-token'});
+  const x=boot({...privateSeed,puplan_session:tokenFor('user-a')});
   assert.equal(x.localStorage.getItem('puplan_name'),'Alice');
   assert.equal(x.localStorage.getItem('puplan_courses'),'[{"name":"Private class"}]');
+  assert.equal(x.localStorage.getItem('puplan_course_owner'),'user-a');
+}
+
+// A new account session must scrub the previous account before any UI can render it.
+{
+  const newToken=tokenFor('user-b');
+  const x=boot({...privateSeed,puplan_session:newToken},{puplan_assistant_history:'private chat'});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_session,newToken,'new account session should remain available for server bootstrap');
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`account switch leaked ${key}`);
+  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+}
+
+// Expired or malformed sessions must never expose account-scoped local data.
+{
+  const expired=tokenFor('user-a',Math.floor(Date.now()/1000)-1);
+  const x=boot({...privateSeed,puplan_session:expired},{puplan_assistant_history:'private chat'});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_session,undefined);
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`expired session leaked ${key}`);
+  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+}
+{
+  const x=boot({...privateSeed,puplan_session:'malformed-token'},{puplan_assistant_history:'private chat'});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_session,undefined);
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`malformed session leaked ${key}`);
 }
 
 // Entering guest mode clears account data before cloud.js' click handler runs.
 {
-  const x=boot({...privateSeed,puplan_session:'valid-token'},{puplan_assistant_history:'private chat'});
+  const x=boot({...privateSeed,puplan_session:tokenFor('user-a')},{puplan_assistant_history:'private chat'});
   const target={closest(selector){return selector==='#guestMode'?{}:null}};
   x.listeners.click.fn({target});
   const data=x.localStorage.dump();

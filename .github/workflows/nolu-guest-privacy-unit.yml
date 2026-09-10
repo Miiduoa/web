@@ -1,0 +1,31 @@
+name: nolu guest privacy unit
+
+on:
+  push:
+    branches: [main, audit/nolu-resilience-account-isolation-20260910]
+    paths:
+      - 'pu-plan/guest-privacy.js'
+      - '.github/tests/guest-privacy.cjs'
+      - '.github/workflows/nolu-guest-privacy-unit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/guest-privacy.js'
+      - '.github/tests/guest-privacy.cjs'
+      - '.github/workflows/nolu-guest-privacy-unit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify guest and cross-account cache isolation
+        run: |
+          set -euo pipefail
+          node --check pu-plan/guest-privacy.js
+          node .github/tests/guest-privacy.cjs

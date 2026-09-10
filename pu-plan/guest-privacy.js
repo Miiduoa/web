@@ -16,22 +16,64 @@ function clearAssistantSession(){
     if(key.startsWith('puplan_assistant_')||key==='puplan_assistant_history')sessionStorage.removeItem(key);
   }
 }
-function clearPrivateAccountState(){
-  clearLocal([SESSION_KEY,...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
+function clearPrivateCaches(){
+  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
   clearAssistantSession();
 }
+function clearPrivateAccountState(){
+  localStorage.removeItem(SESSION_KEY);
+  clearPrivateCaches();
+}
 
-const hasSession=!!localStorage.getItem(SESSION_KEY);
+// Decode only enough of the custom session payload to partition local cache before
+// any UI renders. This is NOT authentication: the server remains authoritative.
+// Treat malformed/expired payloads as unsafe and clear private local state.
+function decodeBase64UrlAscii(raw=''){
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const s=String(raw).replace(/-/g,'+').replace(/_/g,'/').replace(/=+$/,'');
+  let out='',buffer=0,bits=0;
+  for(const ch of s){
+    const value=alphabet.indexOf(ch);if(value<0)return'';
+    buffer=(buffer<<6)|value;bits+=6;
+    if(bits>=8){bits-=8;out+=String.fromCharCode((buffer>>bits)&255)}
+  }
+  return out;
+}
+function sessionUid(raw=''){
+  try{
+    const [payload,signature,...extra]=String(raw).split('.');
+    if(!payload||!signature||extra.length)return'';
+    const data=JSON.parse(decodeBase64UrlAscii(payload));
+    if(!data?.uid||!data?.exp||Number(data.exp)*1000<=Date.now())return'';
+    const uid=String(data.uid);
+    return /^[A-Za-z0-9._:-]{1,100}$/.test(uid)?uid:'';
+  }catch{return''}
+}
+
+const rawSession=localStorage.getItem(SESSION_KEY)||'';
+const hasSession=!!rawSession;
 const isGuest=localStorage.getItem(GUEST_KEY)==='1';
+const owner=localStorage.getItem('puplan_course_owner')||'';
 
 if(hasSession){
-  // A signed-in session owns the account-scoped cache. Guest data is never reused here.
-  localStorage.removeItem(GUEST_SCOPE_MARKER);
+  const uid=sessionUid(rawSession);
+  if(!uid){
+    // Never render account-scoped cache behind a malformed or expired session.
+    clearPrivateAccountState();
+    localStorage.removeItem(GUEST_SCOPE_MARKER);
+  }else{
+    // Account switches must be isolated before app.js can render the previous
+    // account. Missing ownership is also unsafe because legacy cache may remain.
+    if(owner!==uid)clearPrivateCaches();
+    localStorage.removeItem(GUEST_KEY);
+    localStorage.removeItem(GUEST_SCOPE_MARKER);
+  }
 }else if(isGuest){
   // One-time migration for guest sessions created by older builds. Those builds could
   // leave the previous account's profile/schedule cache behind, so start from a clean
-  // guest scope once. New guest data then remains local across later reloads.
-  if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'){
+  // guest scope once. If an account owner somehow survives, scrub it again even when
+  // the migration marker already exists; genuine guest-created data has no owner.
+  if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner){
     clearPrivateAccountState();
     localStorage.setItem(GUEST_KEY,'1');
     localStorage.setItem(GUEST_SCOPE_MARKER,'1');
