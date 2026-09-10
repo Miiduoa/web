@@ -1,0 +1,91 @@
+name: nolu account isolation smoke
+
+on:
+  push:
+    branches: [audit/nolu-resilience-account-isolation-20260910]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/nolu-account-isolation-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  account-switch-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-isolation init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-isolation install playwright >/dev/null 2>&1
+          cd /tmp/nolu-isolation && npx playwright install --with-deps chromium >/dev/null
+      - name: Previous account data must never flash or enter new snapshot
+        env:
+          NODE_PATH: /tmp/nolu-isolation/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-isolation/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const A='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+          const B='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+          const payload=b64(JSON.stringify({v:3,uid:B,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}));
+          const token=`${payload}.test-signature`;
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
+                let body={};try{body=JSON.parse(route.request().postData()||'{}')}catch{}
+                if(body.action==='bootstrap'){
+                  await new Promise(r=>setTimeout(r,650));
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+                    profile:{id:B,display_name:'User B',username:'user_b',avatar_data:'',bio:'',discoverable:true,role:'user',profile_visibility:'public'},
+                    courses:[{id:'b1',name:'USER B COURSE',day:2,start:3,end:4,teacher:'B Teacher',room:'B202',color:'blue'}],
+                    semesters:[],active_semester:null,
+                    social:{relationships:[],profiles:[],friends:[],meetups:[]}
+                  })});
+                }
+                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+              });
+              await page.addInitScript(({A,B,token})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',token);
+                localStorage.setItem('puplan_course_owner',A);
+                localStorage.setItem('puplan_name','PRIVATE USER A');
+                localStorage.setItem('puplan_username','private_a');
+                localStorage.setItem('puplan_bio','PRIVATE A BIO');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'a1',name:'PRIVATE A COURSE',day:1,start:1,end:2,teacher:'A Secret Teacher',room:'A101',color:'violet'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'PRIVATE A SCHOOL'}));
+                window.__NOLU_PREVIOUS_ACCOUNT_LEAK__=false;
+                const mark=()=>{const t=document.documentElement?.textContent||'';if(/PRIVATE USER A|PRIVATE A COURSE|PRIVATE A BIO|PRIVATE A SCHOOL|A Secret Teacher/.test(t))window.__NOLU_PREVIOUS_ACCOUNT_LEAK__=true};
+                new MutationObserver(mark).observe(document,{subtree:true,childList:true,characterData:true});
+                setTimeout(mark,0);
+              },{A,B,token});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>document.body.innerText.includes('USER B COURSE'),{timeout:15000});
+              await page.waitForTimeout(100);
+              const result=await page.evaluate(B=>({
+                leak:window.__NOLU_PREVIOUS_ACCOUNT_LEAK__,
+                text:document.body.innerText,
+                owner:localStorage.getItem('puplan_course_owner'),
+                courses:localStorage.getItem('puplan_courses'),
+                profile:localStorage.getItem('puplan_name'),
+                snapshot:localStorage.getItem(`nolu_account_snapshot_v1:${B}`)
+              }),B);
+              console.log('ACCOUNT_SWITCH_RESULT',result);
+              assert(!result.leak,'previous account private data was rendered during account switch');
+              assert(result.owner===B,'cache owner was not switched to user B');
+              assert(!/PRIVATE A|PRIVATE USER A|A Secret Teacher/.test(result.courses||''),'previous account course remained after bootstrap');
+              assert(!/PRIVATE A|PRIVATE USER A|A Secret Teacher/.test(result.snapshot||''),'previous account data was copied into user B resilience snapshot');
+              assert(!/PRIVATE A|PRIVATE USER A|A Secret Teacher/.test(result.text),'previous account data remains in DOM');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 70s node /tmp/nolu-isolation/check.cjs
