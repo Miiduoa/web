@@ -1,4 +1,4 @@
-const DB_NAME='nolu-resilience-v3';
+const DB_NAME='nolu-resilience-v2';
 const DB_VERSION=1;
 const SNAPSHOTS='snapshots';
 const OUTBOX='outbox';
