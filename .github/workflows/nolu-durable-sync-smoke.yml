@@ -98,7 +98,7 @@ jobs:
                 legacyPending:localStorage.getItem(`nolu_pending_mutations_v1:${uid}`)
               }),uid);
               console.log('DURABLE_PURGE',purged);
-              assert(purged.snapshot===null,'logout purge left an IndexedDB snapshot');
+              assert(purged.snapshot==null,'logout purge left an IndexedDB snapshot');
               assert(Array.isArray(purged.rows)&&purged.rows.length===0,'logout purge left IndexedDB outbox rows');
               assert(purged.legacySnapshot===null&&purged.legacyPending===null,'logout purge left legacy resilience data');
             }finally{await browser.close()}
