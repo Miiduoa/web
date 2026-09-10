@@ -89,7 +89,9 @@ jobs:
             assert(!await page.locator('#mobileAdd').isVisible(),`${label}: add button visible outside schedule`);
             await screenshot(page,`settings-${label}`);
 
-            await page.locator('[data-community-open]').first().click();await page.waitForTimeout(50);await overflow(page,label,'community');
+            const communityButton=page.locator('[data-community-open]:visible').first();
+            assert(await communityButton.count(),`${label}: visible community button missing`);
+            await communityButton.click();await page.waitForTimeout(50);await overflow(page,label,'community');
             await within(page,'.community-tabs',`${label} community`);assert(!await page.locator('#mobileAdd').isVisible(),`${label}: add button visible over community`);assert(!await page.locator('#importSchedule').isVisible(),`${label}: import visible over community`);
             assert((await page.locator('#title').textContent())?.trim()==='動態',`${label}: community title incorrect`);
             await screenshot(page,`community-${label}`);
