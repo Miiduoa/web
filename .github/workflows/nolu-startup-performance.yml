@@ -1,0 +1,89 @@
+name: nolu startup module performance
+
+on:
+  push:
+    branches: [main, perf/nolu-startup-modules-20260910]
+    paths:
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-startup-performance.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-startup-performance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  module-waterfall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-startup init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-startup install playwright >/dev/null 2>&1
+          cd /tmp/nolu-startup && npx playwright install --with-deps chromium >/dev/null
+      - name: Feature modules must fan out instead of loading serially
+        env:
+          NODE_PATH: /tmp/nolu-startup/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-startup/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const targets=[
+            '/auth.js','/social-ui.js','/import.js','/semesters.js','/community.js',
+            '/discover.js','/pwa.js','/features/planner.js','/admin.js','/privacy.js'
+          ];
+          const targetSet=new Set(targets);
+          const DELAY_MS=120;
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              const starts=[];
+              page.on('request',req=>{
+                try{
+                  const path=new URL(req.url()).pathname;
+                  if(targetSet.has(path))starts.push({path,t:Date.now()});
+                }catch{}
+              });
+              await page.route('http://127.0.0.1:4173/**',async route=>{
+                const path=new URL(route.request().url()).pathname;
+                if(targetSet.has(path))await new Promise(r=>setTimeout(r,DELAY_MS));
+                await route.continue();
+              });
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/**',route=>
+                route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'})
+              );
+              await page.addInitScript(()=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_guest','1');
+              });
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              const deadline=Date.now()+15000;
+              while(new Set(starts.map(x=>x.path)).size<targets.length&&Date.now()<deadline){
+                await new Promise(r=>setTimeout(r,25));
+              }
+              const firstByPath=new Map();
+              for(const x of starts)if(!firstByPath.has(x.path))firstByPath.set(x.path,x.t);
+              const missing=targets.filter(x=>!firstByPath.has(x));
+              assert(!missing.length,`feature modules were not all requested: ${missing.join(', ')}`);
+              const values=[...firstByPath.values()];
+              const spread=Math.max(...values)-Math.min(...values);
+              console.log('STARTUP_MODULE_FIRST_REQUESTS',Object.fromEntries([...firstByPath].map(([p,t])=>[p,t-Math.min(...values)])));
+              console.log('STARTUP_MODULE_SPREAD_MS',spread);
+              // auth.js may intentionally load first. The remaining feature modules should
+              // then fan out together. With a controlled 120 ms delay, a serial waterfall
+              // spans ~1 second; the safe parallel design stays comfortably below 500 ms.
+              assert(spread<500,`serial feature-module waterfall detected (${spread} ms)`);
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 70s node /tmp/nolu-startup/check.cjs
