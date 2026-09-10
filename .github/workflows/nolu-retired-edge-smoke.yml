@@ -2,7 +2,7 @@ name: nolu retired Edge endpoint guard
 
 on:
   push:
-    branches: [main, security/nolu-session-v4-20260911]
+    branches: [main, security/nolu-data-api-exposure-20260911]
     paths:
       - '.github/workflows/nolu-retired-edge-smoke.yml'
   pull_request:
@@ -32,6 +32,8 @@ jobs:
             pu-plan-social-v16
             pu-plan-social-v17
             pu-plan-api-v5
+            pu-plan-api-v7
+            pu-plan-sync-v1
             pu-plan-admin-audit-test
             pu-plan-db-probe
             pu-plan-load-proxy
