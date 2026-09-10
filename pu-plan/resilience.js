@@ -2,12 +2,14 @@ const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
 const FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,FALLBACK];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260910-r1';
+const VERSION='20260910-r2';
 const MAX_PROFILE_AVATAR=180000;
 const state={mode:'online',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION};
+let requestSequence=0,newestOfflineSequence=0;
 
 function now(){return Date.now()}
 function safeJson(raw,fallback=null){try{return JSON.parse(raw)}catch{return fallback}}
+function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}}
 function cleanText(v,max=120){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,max)}
 function ownerId(){return cleanText(localStorage.getItem('puplan_course_owner'),100)}
 function token(){return localStorage.getItem('puplan_session')||''}
@@ -90,33 +92,52 @@ function syntheticMutation(action,payload){
   }
   return new Response(JSON.stringify({ok:true,queued:true,offline:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 }
-async function captureSuccess(res,body,api){
+function clearMatchingPending(uid,action,body){
+  const q=readPending(uid);
+  if(action==='save_schedule'&&q.schedule){
+    const sent=Array.isArray(body?.courses)?body.courses.slice(0,80):[];
+    if(sameJson(q.schedule.courses,sent)){delete q.schedule;writePending(uid,q)}
+  }
+  if(action==='update_profile'&&q.profile&&sameJson(q.profile.payload,body)){
+    delete q.profile;writePending(uid,q);
+  }
+}
+async function captureSuccess(res,body,api,sequence){
   if(!res?.ok)return;
-  state.activeApi=api;setMode('online',api);
+  state.activeApi=api;
+  // A delayed response from an older request must not override a newer request that
+  // already fell back to offline mode.
+  if(sequence>=newestOfflineSequence)setMode('online',api);
   try{
     const data=await res.clone().json();
     const uid=data?.profile?.id||currentUid();
     if(data?.profile?.id){localStorage.setItem('puplan_course_owner',String(data.profile.id));snapshot(String(data.profile.id),data.profile)}
-    if(uid&&body?.action==='save_schedule'){const q=readPending(uid);delete q.schedule;writePending(uid,q)}
-    if(uid&&body?.action==='update_profile'){const q=readPending(uid);delete q.profile;writePending(uid,q)}
+    if(uid&&body?.action)clearMatchingPending(uid,body.action,body);
   }catch{}
 }
 
 window.fetch=async function noluResilientFetch(input,options={}){
   const url=typeof input==='string'?input:input?.url;
   if(!isCoreUrl(url))return nativeFetch(input,options);
+  const sequence=++requestSequence;
   const body=requestBody(options),action=String(body?.action||'');let lastError=null,lastResponse=null;
   for(const api of apiCandidates(String(url))){
     if(options?.signal?.aborted)break;
     try{
       const res=await timedFetch(api,options,2400);lastResponse=res;
-      if(res.status<500){captureSuccess(res,body,api);return res}
+      if(res.status<500){captureSuccess(res,body,api,sequence);return res}
       lastError=new Error(`HTTP ${res.status}`);
     }catch(e){lastError=e}
   }
   state.lastError=String(lastError||'cloud unavailable');
-  if(action==='bootstrap'){const local=syntheticBootstrap();if(local)return local}
-  if(action==='save_schedule'||action==='update_profile'){const local=syntheticMutation(action,body);if(local)return local}
+  if(action==='bootstrap'){
+    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
+    const local=syntheticBootstrap();if(local)return local;
+  }
+  if(action==='save_schedule'||action==='update_profile'){
+    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
+    const local=syntheticMutation(action,body);if(local)return local;
+  }
   if(lastResponse)return lastResponse;
   throw lastError||new TypeError('Nolu cloud unavailable');
 };
@@ -127,10 +148,24 @@ async function directJson(api,action,payload={},auth=true,ms=5000){
   const data=await res.json().catch(()=>({}));return {res,data};
 }
 async function flushPending(api){
-  const uid=currentUid();if(!uid)return false;const q=readPending(uid);
-  if(q.profile?.payload){const {res}=await directJson(api,'update_profile',q.profile.payload,true);if(!res.ok)return false;delete q.profile;writePending(uid,q)}
-  if(q.schedule?.courses){const {res}=await directJson(api,'save_schedule',{courses:q.schedule.courses},true);if(!res.ok)return false;delete q.schedule;writePending(uid,q)}
-  snapshot(uid);return true;
+  const uid=currentUid();if(!uid)return false;
+  let q=readPending(uid);
+  if(q.profile?.payload){
+    const sent=q.profile;
+    const {res}=await directJson(api,'update_profile',sent.payload,true);if(!res.ok)return false;
+    const latest=readPending(uid);
+    if(latest.profile?.changedAt===sent.changedAt&&sameJson(latest.profile.payload,sent.payload)){delete latest.profile;writePending(uid,latest)}
+  }
+  q=readPending(uid);
+  if(q.schedule?.courses){
+    const sent=q.schedule;
+    const {res}=await directJson(api,'save_schedule',{courses:sent.courses},true);if(!res.ok)return false;
+    const latest=readPending(uid);
+    if(latest.schedule?.changedAt===sent.changedAt&&sameJson(latest.schedule.courses,sent.courses)){delete latest.schedule;writePending(uid,latest)}
+  }
+  snapshot(uid);
+  const remaining=readPending(uid);
+  return !remaining.profile?.payload&&!remaining.schedule?.courses;
 }
 let recovering=false;
 async function recover(){
