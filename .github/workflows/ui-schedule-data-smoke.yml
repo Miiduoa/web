@@ -60,6 +60,7 @@ jobs:
               const page=await context.newPage();
               await page.addInitScript(sample=>{
                 localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('nolu_guest_scope_v1','1');
                 localStorage.setItem('puplan_courses',JSON.stringify(sample));
               },sample);
               await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
