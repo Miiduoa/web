@@ -1,0 +1,51 @@
+name: nolu retired Edge endpoint guard
+
+on:
+  push:
+    branches: [main, security/retired-edge-guard-20260911]
+    paths:
+      - '.github/workflows/nolu-retired-edge-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nolu-retired-edge-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retired-endpoints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Retired nolu Edge endpoints must remain disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1'
+          retired=(
+            pu-plan-social-v12
+            pu-plan-social-v13
+            pu-plan-social-v14
+            pu-plan-social-v15
+            pu-plan-social-v16
+            pu-plan-social-v17
+            pu-plan-api-v5
+            pu-plan-admin-audit-test
+            pu-plan-db-probe
+            pu-plan-load-proxy
+            pu-plan-load-fixture
+          )
+          failed=0
+          for slug in "${retired[@]}"; do
+            body="/tmp/${slug}.body"
+            code=$(curl -sS --max-time 25 -o "$body" -w '%{http_code}' "$base/$slug" || true)
+            echo "$slug HTTP=$code"
+            if [ "$code" != '410' ] || ! grep -q 'DISABLED' "$body"; then
+              echo "ERROR: $slug must remain HTTP 410 DISABLED"
+              cat "$body" 2>/dev/null || true
+              failed=1
+            fi
+          done
+          [ "$failed" = '0' ]
