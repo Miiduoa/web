@@ -2,9 +2,20 @@ name: nolu account isolation smoke
 
 on:
   push:
-    branches: [audit/nolu-resilience-account-isolation-20260910]
+    branches: [main, audit/nolu-resilience-account-isolation-20260910]
     paths:
-      - 'pu-plan/**'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/cloud.js'
+      - '.github/workflows/nolu-account-isolation-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/cloud.js'
       - '.github/workflows/nolu-account-isolation-smoke.yml'
   workflow_dispatch:
 
