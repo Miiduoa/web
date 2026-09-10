@@ -25,7 +25,7 @@ permissions:
 jobs:
   session-v4:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
       - uses: denoland/setup-deno@v2
@@ -36,6 +36,7 @@ jobs:
           deno check supabase/functions/_shared/session-v4.ts supabase/functions/_shared/session-v4_test.ts
           deno check supabase/functions/pu-plan-api-v6/index.ts
           deno check supabase/functions/pu-plan-core-v1/index.ts
+          deno check supabase/functions/pu-plan-social/index.ts
           deno check supabase/functions/pu-plan-admin/index.ts
       - name: Run session security unit tests
         run: deno test supabase/functions/_shared/session-v4_test.ts
@@ -56,6 +57,7 @@ jobs:
           active=[
               'supabase/functions/pu-plan-api-v6/index.ts',
               'supabase/functions/pu-plan-core-v1/index.ts',
+              'supabase/functions/pu-plan-social/index.ts',
               'supabase/functions/pu-plan-admin/index.ts',
           ]
           for path in active:
@@ -67,5 +69,5 @@ jobs:
           for path in active[:2]:
               text=Path(path).read_text()
               assert 'signSessionV4' in text, f'{path}: v4 signer missing'
-          print('v6/core/admin session integration guard passed')
+          print('v6/core/social/admin session integration guard passed')
           PY
