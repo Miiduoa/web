@@ -1,0 +1,25 @@
+name: nolu auth privacy test
+
+on:
+  push:
+    branches: [audit/nolu-hardening-v2-20260910]
+    paths:
+      - 'pu-plan/auth.js'
+      - '.github/tests/auth-session-privacy.cjs'
+      - '.github/workflows/nolu-auth-privacy-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify account and AI session isolation
+        run: |
+          set -euo pipefail
+          node --check pu-plan/auth.js
+          node .github/tests/auth-session-privacy.cjs
