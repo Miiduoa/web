@@ -20,16 +20,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Wait for production
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Wait for this revision in production
         run: |
           set -euo pipefail
-          for i in {1..20}; do
+          for i in {1..30}; do
             if curl -fsS --max-time 10 https://miiduoa.github.io/web/ -o /tmp/site.html; then
-              exit 0
+              src=$(python3 - <<'PY'
+          import re
+          html=open('/tmp/site.html',encoding='utf-8').read()
+          m=re.search(r'<script[^>]+src=["\']([^"\']*main\.js[^"\']*)["\']',html)
+          print(m.group(1) if m else '')
+          PY
+              )
+              if [ -n "$src" ] && curl -fsS --max-time 10 "https://miiduoa.github.io/web/${src#./}" -o /tmp/prod-main.js && cmp -s pu-plan/main.js /tmp/prod-main.js; then
+                exit 0
+              fi
             fi
             sleep 5
           done
-          echo 'Production site did not become reachable in time'
+          echo 'Current revision did not become live in time'
           exit 1
 
       - name: Check browser security policy
@@ -43,7 +55,7 @@ jobs:
 
       - name: Check unauthenticated API access
         env:
-          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
           SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
@@ -68,7 +80,7 @@ jobs:
 
       - name: Reject forged sessions
         env:
-          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
           SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
@@ -85,7 +97,7 @@ jobs:
 
       - name: Check cross-origin controls
         env:
-          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
           SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
@@ -124,7 +136,7 @@ jobs:
 
       - name: Check unsupported methods
         env:
-          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
           SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
           ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
         run: |
