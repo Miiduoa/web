@@ -79,5 +79,7 @@ jobs:
           assert 'ORIGIN_NOT_ALLOWED' in legacy, 'legacy evil-origin rejection missing'
           change=legacy[legacy.index("if(action==='change_password')"):]
           assert 'signSessionV4' in change.split("if(action==='rotate_recovery_code')",1)[0], 'password change must return a fresh v4 token'
-          print('active session integration and legacy CORS guard passed')
+          for workflow in Path('.github/workflows').glob('nolu-session-v4*.yml'):
+              assert 'contents: write' not in workflow.read_text(), f'temporary write workflow still present: {workflow}'
+          print('active session integration, CORS, and CI permission guard passed')
           PY
