@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260910-1610';
+const CACHE='nolu-shell-20260910-2040';
 const ROOT=new URL('./',self.registration.scope).href;
 const SHELL=['./','./index.html','./manifest.webmanifest','./nolu-icon.svg'].map(path=>new URL(path,ROOT).href);
 
