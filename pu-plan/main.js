@@ -26,8 +26,11 @@ localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule
 // before semesters/auth/social/import modules can read or write account state.
 await import('./cloud.js');
 
-for(const path of [
-  './auth.js',
+// Bind account controls first, then load independent feature modules concurrently.
+// This removes the previous serial dynamic-import waterfall on mobile/PWA startup
+// without changing the authenticated bootstrap ordering above.
+await startModule('./auth.js');
+await Promise.all([
   './social-ui.js',
   './import.js',
   './semesters.js',
@@ -37,7 +40,7 @@ for(const path of [
   './features/planner.js',
   './admin.js',
   './privacy.js'
-])await startModule(path);
+].map(startModule));
 
 // social-ui.js still contains a legacy timetable renderer. Until that module is
 // split, make features/schedule.js the final owner of schedule DOM and controls.
