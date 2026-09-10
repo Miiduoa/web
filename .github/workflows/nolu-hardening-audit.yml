@@ -1,0 +1,154 @@
+name: nolu hardening audit
+
+on:
+  push:
+    branches: [audit/nolu-hardening-20260910]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nolu-hardening-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: JavaScript syntax and guest isolation
+        run: |
+          set -euo pipefail
+          find pu-plan -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+          node .github/tests/guest-privacy.cjs
+
+      - name: Static security guardrails
+        run: |
+          set -euo pipefail
+          if grep -RInE --include='*.js' '\beval\s*\(|new[[:space:]]+Function\s*\(|document\.write\s*\(' pu-plan; then
+            echo 'Dangerous executable DOM/JS sink found'
+            exit 1
+          fi
+          if grep -RInE --exclude='*.svg' '(SUPABASE_SERVICE_ROLE_KEY|service_role[[:space:]]*[:=]|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|sk-(live|proj)-[A-Za-z0-9_-]{16,})' pu-plan; then
+            echo 'Potential secret material found in client bundle'
+            exit 1
+          fi
+          grep -q "object-src 'none'" pu-plan/index.html
+          grep -q "frame-src 'none'" pu-plan/index.html
+          grep -q "base-uri 'self'" pu-plan/index.html
+          grep -q "form-action 'self'" pu-plan/index.html
+          grep -q "upgrade-insecure-requests" pu-plan/index.html
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-audit init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-audit install playwright >/dev/null 2>&1
+          cd /tmp/nolu-audit && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Start local app
+        run: |
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0; sleep .25; done
+          cat /tmp/nolu-http.log
+          exit 1
+
+      - name: Browser privacy and XSS attack regression
+        env:
+          NODE_PATH: /tmp/nolu-audit/node_modules
+        run: |
+          cat >/tmp/nolu-audit/browser.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const privateKeys=['puplan_session','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              // Account -> guest transition must remove all account state before any app code can reuse it.
+              let context=await browser.newContext({serviceWorkers:'block'});
+              let page=await context.newPage();
+              await page.addInitScript(()=>{
+                localStorage.setItem('puplan_session','forged-but-present');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'private-1',name:'PRIVATE COURSE SHOULD NEVER LEAK',day:1,start:1,end:1,teacher:'Secret Teacher',room:'Secret Room'}]));
+                localStorage.setItem('puplan_friends',JSON.stringify([{id:'friend-1',name:'PRIVATE FRIEND SHOULD NEVER LEAK'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'PRIVATE SCHOOL'}));
+                localStorage.setItem('puplan_course_owner','victim-user');
+                localStorage.setItem('puplan_name','Victim Name');
+                localStorage.setItem('puplan_username','victim');
+                localStorage.setItem('puplan_bio','victim bio');
+              });
+              await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForSelector('#authGate');
+              await page.getByRole('button',{name:/訪客|Guest/}).click();
+              await page.waitForTimeout(100);
+              const leaked=await page.evaluate(keys=>({
+                values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),
+                text:document.body.innerText
+              }),privateKeys);
+              assert(leaked.values.puplan_session===null,'guest retained session token');
+              for(const key of privateKeys.filter(k=>k!=='puplan_session'))assert(leaked.values[key]===null,`guest retained ${key}`);
+              assert(!/PRIVATE COURSE|PRIVATE FRIEND|PRIVATE SCHOOL|Victim Name|Secret Teacher|Secret Room/.test(leaked.text),'private account data leaked into guest DOM');
+              await context.close();
+
+              // Persistent guest data may contain hostile text; it must render as text, never execute.
+              context=await browser.newContext({serviceWorkers:'block'});
+              page=await context.newPage();
+              await page.addInitScript(()=>{
+                window.__NOLU_XSS__=0;
+                localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('nolu_guest_scope_v1','1');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'xss-1',name:'<img src=x onerror="window.__NOLU_XSS__=1">',day:1,start:1,end:1,teacher:'<svg onload="window.__NOLU_XSS__=2">',room:'</div><script>window.__NOLU_XSS__=3</script>'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'<img src=x onerror="window.__NOLU_XSS__=4">'}));
+              });
+              await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForTimeout(250);
+              assert(await page.evaluate(()=>window.__NOLU_XSS__)===0,'stored XSS executed');
+              assert(await page.locator('script').filter({hasText:'__NOLU_XSS__=3'}).count()===0,'hostile course created a script element');
+              await context.close();
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-audit/browser.cjs
+
+      - name: Remote API attack smoke
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6
+          CORE: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+        run: |
+          set -euo pipefail
+          endpoints=("$API" "$CORE" "$SOCIAL" "$ADMIN")
+          for url in "${endpoints[@]}"; do
+            for method in GET PUT DELETE PATCH; do
+              code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X "$method" "$url")
+              if [ "$code" != 405 ] && [ "$code" != 401 ] && [ "$code" != 403 ]; then
+                echo "$url accepted unsupported $method with HTTP $code"; cat /tmp/resp; exit 1
+              fi
+            done
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' --data '{bad json')
+            if [ "$code" -ge 500 ] || [ "$code" -lt 400 ]; then echo "$url mishandled malformed JSON: $code"; cat /tmp/resp; exit 1; fi
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -H 'Authorization: Bearer not-a-real-token' --data '{"action":"bootstrap","__proto__":{"admin":true},"constructor":{"prototype":{"admin":true}}}')
+            if [ "$code" != 401 ]; then echo "$url accepted forged/prototype-pollution request: $code"; cat /tmp/resp; exit 1; fi
+            if grep -Eqi '(service_role|SUPABASE_SERVICE_ROLE_KEY|password_hash|password_salt|postgres://|stack trace|traceback|at file:|Deno\.env)' /tmp/resp; then echo "$url leaked server details"; cat /tmp/resp; exit 1; fi
+          done
+
+          # Evil origins must never receive credentialed wildcard CORS.
+          for url in "${endpoints[@]}"; do
+            curl -sS --max-time 15 -D /tmp/headers -o /tmp/resp -X OPTIONS "$url" \
+              -H 'Origin: https://evil.example' \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: authorization,content-type' >/dev/null || true
+            if grep -Eqi '^access-control-allow-credentials:[[:space:]]*true' /tmp/headers && grep -Eqi '^access-control-allow-origin:[[:space:]]*\*' /tmp/headers; then
+              echo "$url exposes credentialed wildcard CORS"; cat /tmp/headers; exit 1
+            fi
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo 'nolu hardening audit completed'
