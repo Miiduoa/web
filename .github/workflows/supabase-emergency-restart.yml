@@ -1,0 +1,69 @@
+name: Supabase emergency restart
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type restart-nolu to confirm production restart'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: hrrmkrayvrgnwcroyttp
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+    steps:
+      - name: Require explicit production confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != 'restart-nolu' ]; then
+            echo 'Confirmation mismatch. Production restart cancelled.'
+            exit 2
+          fi
+
+      - name: Restart project through Supabase Management API
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo 'SUPABASE_ACCESS_TOKEN secret is not configured in this repository.'
+            exit 2
+          fi
+          code=$(curl -sS --max-time 30 -o /tmp/restart.json -w '%{http_code}' \
+            -X POST "https://api.supabase.com/v1/projects/${PROJECT_REF}/restart" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H 'Content-Type: application/json')
+          echo "Restart request HTTP ${code}"
+          test "$code" -ge 200 -a "$code" -lt 300
+
+      - name: Wait for Nolu database to recover
+        shell: bash
+        run: |
+          set -euo pipefail
+          REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
+          for i in $(seq 1 36); do
+            code=$(curl -sS --max-time 8 -o /tmp/body -w '%{http_code}' \
+              "$REST" -H "apikey: ${PUBLISHABLE_KEY}" || true)
+            echo "database probe $i HTTP=$code"
+            # Anonymous table access is intentionally blocked. A 401/403 means
+            # PostgREST and the database are responsive while RLS/API protection remains intact.
+            if [ "$code" = '401' ] || [ "$code" = '403' ]; then
+              exit 0
+            fi
+            if [ "$code" = '200' ]; then
+              echo 'Unexpected anonymous database access after restart.'
+              cat /tmp/body || true
+              exit 1
+            fi
+            sleep 8
+          done
+          echo 'Database did not recover within the restart validation window.'
+          exit 1
