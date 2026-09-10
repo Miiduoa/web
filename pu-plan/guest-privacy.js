@@ -8,6 +8,7 @@ const ACCOUNT_DATA_KEYS=[
 const PROFILE_KEYS=[
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
+const RESILIENCE_PREFIXES=['nolu_account_snapshot_v1:','nolu_pending_mutations_v1:'];
 
 function clearLocal(keys){for(const key of keys)localStorage.removeItem(key)}
 function clearAssistantSession(){
@@ -16,13 +17,27 @@ function clearAssistantSession(){
     if(key.startsWith('puplan_assistant_')||key==='puplan_assistant_history')sessionStorage.removeItem(key);
   }
 }
-function clearPrivateCaches(){
+function clearResilienceFor(uid=''){
+  const id=String(uid||'').trim();if(!id)return;
+  for(const prefix of RESILIENCE_PREFIXES)localStorage.removeItem(`${prefix}${id}`);
+}
+function clearPrivateCaches(uid=''){
+  const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
   clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
+  clearResilienceFor(uid||ownerBefore);
   clearAssistantSession();
 }
-function clearPrivateAccountState(){
+function clearPrivateRuntime(uid=''){
+  const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
+  clearPrivateCaches(uid||ownerBefore);
+  // Runtime state is storage-backed. Re-render after the purge so data that was
+  // already painted before an authoritative 401 cannot remain visible.
+  window.PUPLAN_APP?.setSelectedFriend?.(null);
+  window.PUPLAN_APP?.render?.();
+}
+function clearPrivateAccountState(uid=''){
   localStorage.removeItem(SESSION_KEY);
-  clearPrivateCaches();
+  clearPrivateRuntime(uid);
 }
 
 // Decode only enough of the custom session payload to partition local cache before
@@ -59,12 +74,12 @@ if(hasSession){
   const uid=sessionUid(rawSession);
   if(!uid){
     // Never render account-scoped cache behind a malformed or expired session.
-    clearPrivateAccountState();
+    clearPrivateAccountState(owner);
     localStorage.removeItem(GUEST_SCOPE_MARKER);
   }else{
     // Account switches must be isolated before app.js can render the previous
     // account. Missing ownership is also unsafe because legacy cache may remain.
-    if(owner!==uid)clearPrivateCaches();
+    if(owner!==uid)clearPrivateCaches(owner);
     localStorage.removeItem(GUEST_KEY);
     localStorage.removeItem(GUEST_SCOPE_MARKER);
   }
@@ -74,13 +89,13 @@ if(hasSession){
   // guest scope once. If an account owner somehow survives, scrub it again even when
   // the migration marker already exists; genuine guest-created data has no owner.
   if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner){
-    clearPrivateAccountState();
+    clearPrivateAccountState(owner);
     localStorage.setItem(GUEST_KEY,'1');
     localStorage.setItem(GUEST_SCOPE_MARKER,'1');
   }
 }else{
   // No authenticated or guest session means no private account data should be visible.
-  clearPrivateAccountState();
+  clearPrivateAccountState(owner);
   localStorage.removeItem(GUEST_SCOPE_MARKER);
 }
 
@@ -88,7 +103,18 @@ if(hasSession){
 // cannot repopulate guest mode from the account that was active moments earlier.
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
-  clearPrivateAccountState();
+  const uid=localStorage.getItem('puplan_course_owner')||sessionUid(localStorage.getItem(SESSION_KEY)||'');
+  clearPrivateAccountState(uid);
   localStorage.setItem(GUEST_KEY,'1');
   localStorage.setItem(GUEST_SCOPE_MARKER,'1');
 },true);
+
+// A syntactically valid token can still be forged, revoked, or otherwise rejected by
+// the server. cloud.js removes the session before emitting this event on a 401. Keep
+// offline cache when a session still exists, but once authoritative auth rejects it,
+// scrub the browser state and repaint from empty storage immediately.
+document.addEventListener('puplan:profile-changed',event=>{
+  if(event.detail)return;
+  if(localStorage.getItem(SESSION_KEY)||localStorage.getItem(GUEST_KEY)==='1')return;
+  clearPrivateRuntime();
+});
