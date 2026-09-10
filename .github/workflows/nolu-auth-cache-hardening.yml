@@ -34,6 +34,25 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v6
+      - name: Verify strict avatar sanitizer
+        run: |
+          set -euo pipefail
+          cp pu-plan/core/state.js /tmp/nolu-state.mjs
+          node --input-type=module <<'NODE'
+          import {cleanAvatar} from 'file:///tmp/nolu-state.mjs';
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          assert(cleanAvatar('data:image/png;base64,AAAA')==='data:image/png;base64,AAAA','valid PNG data URL rejected');
+          assert(cleanAvatar('data:image/jpeg;base64,AAAA')==='data:image/jpeg;base64,AAAA','valid JPEG data URL rejected');
+          for(const bad of [
+            'javascript:alert(1)',
+            'data:text/html;base64,PHNjcmlwdD4=',
+            'data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PjE8L3NjcmlwdD48L3N2Zz4=',
+            'https://evil.example/avatar.png',
+            'data:image/png;base64,AAAA<script>'
+          ])assert(cleanAvatar(bad)==='',`unsafe avatar accepted: ${bad}`);
+          assert(cleanAvatar(`data:image/png;base64,${'A'.repeat(180001)}`)==='','oversized avatar accepted');
+          console.log('avatar sanitizer ok');
+          NODE
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-auth-cache init -y >/dev/null 2>&1
