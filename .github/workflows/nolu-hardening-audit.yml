@@ -64,7 +64,7 @@ jobs:
           cat /tmp/nolu-http.log
           exit 1
 
-      - name: Browser privacy and XSS attack regression
+      - name: Browser privacy XSS and functional regression
         env:
           NODE_PATH: /tmp/nolu-audit/node_modules
         run: |
@@ -73,11 +73,25 @@ jobs:
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const privateText=/PRIVATE COURSE|PRIVATE FRIEND|PRIVATE SCHOOL|Victim Name|victim bio|Secret Teacher|Secret Room/;
           const accountOnly=['puplan_session','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
-          const emptyOrMissing=v=>v===null||v==='[]'||v==='{}';
+          const collectionClean=v=>v===null||!privateText.test(v);
+          async function localOnly(page,unauthorized=false){
+            await page.route('**/*',route=>{
+              const u=new URL(route.request().url());
+              if(u.hostname==='127.0.0.1')return route.continue();
+              if(unauthorized&&u.hostname.endsWith('.supabase.co'))return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+              return route.abort();
+            });
+          }
+          async function assertNoPrivate(page,label){
+            const state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
+            for(const key of accountOnly)assert(state.values[key]===null,`${label} retained ${key}`);
+            assert(collectionClean(state.courses)&&collectionClean(state.friends)&&collectionClean(state.meta),`${label} retained private account collections`);
+            assert(!privateText.test(state.text),`${label} leaked private account data into DOM`);
+          }
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              // Expired/forged session must be scrubbed before the auth gate can expose stale account state.
+              // Forged/expired session must purge stale account state after a 401.
               let context=await browser.newContext({serviceWorkers:'block'});
               let page=await context.newPage();
               await page.addInitScript(()=>{
@@ -90,27 +104,14 @@ jobs:
                 localStorage.setItem('puplan_username','victim');
                 localStorage.setItem('puplan_bio','victim bio');
               });
-              await page.route('**/*',route=>{
-                const u=new URL(route.request().url());
-                if(u.hostname==='127.0.0.1')return route.continue();
-                if(u.hostname.endsWith('.supabase.co'))return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
-                return route.abort();
-              });
+              await localOnly(page,true);
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
               await page.waitForSelector('#authGate');
-              await page.waitForTimeout(150);
-              let state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
-              for(const key of accountOnly)assert(state.values[key]===null,`expired session retained ${key}`);
-              assert(emptyOrMissing(state.courses)&&emptyOrMissing(state.friends)&&emptyOrMissing(state.meta),'expired session retained account collections');
-              assert(!privateText.test(state.text),'expired session leaked private account data into DOM');
-
-              // Account -> guest transition must remain clean as well.
+              await page.waitForTimeout(200);
+              await assertNoPrivate(page,'expired session');
               await page.locator('#guestMode').click();
               await page.waitForTimeout(80);
-              state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
-              for(const key of accountOnly)assert(state.values[key]===null,`guest retained ${key}`);
-              assert(emptyOrMissing(state.courses)&&emptyOrMissing(state.friends)&&emptyOrMissing(state.meta),'guest retained account collections');
-              assert(!privateText.test(state.text),'private account data leaked into guest DOM');
+              await assertNoPrivate(page,'guest');
               await context.close();
 
               // Persistent guest data may contain hostile text; it must render as text, never execute.
@@ -123,11 +124,45 @@ jobs:
                 localStorage.setItem('puplan_courses',JSON.stringify([{id:'xss-1',name:'<img src=x onerror="window.__NOLU_XSS__=1">',day:1,start:1,end:1,teacher:'<svg onload="window.__NOLU_XSS__=2">',room:'</div><script>window.__NOLU_XSS__=3</script>'}]));
                 localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'<img src=x onerror="window.__NOLU_XSS__=4">'}));
               });
-              await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
+              await localOnly(page);
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
-              await page.waitForTimeout(250);
+              await page.waitForTimeout(300);
               assert(await page.evaluate(()=>window.__NOLU_XSS__)===0,'stored XSS executed');
               assert(await page.locator('script').filter({hasText:'__NOLU_XSS__=3'}).count()===0,'hostile course created a script element');
+              await context.close();
+
+              // iPhone-width guest regression verifies parallel module startup and key surfaces.
+              context=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true,serviceWorkers:'block'});
+              page=await context.newPage();
+              const moduleErrors=[];
+              page.on('console',m=>{if(m.type()==='error'&&m.text().includes('nolu module failed'))moduleErrors.push(m.text())});
+              await page.addInitScript(()=>{
+                localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('nolu_guest_scope_v1','1');
+                localStorage.setItem('puplan_courses',JSON.stringify([
+                  {id:'c1',name:'系統分析',day:1,start:1,end:2,teacher:'王老師',room:'主顧322',color:'blue'},
+                  {id:'c2',name:'資料庫',day:3,start:5,end:6,teacher:'林老師',room:'主顧323',color:'mint'}
+                ]));
+              });
+              await localOnly(page);
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelectorAll('.bottom button').length===5);
+              assert(moduleErrors.length===0,`feature module load errors: ${moduleErrors.join(' | ')}`);
+              assert((await page.locator('body').innerText()).includes('系統分析'),'populated schedule did not render');
+              for(const view of ['schedule','friends','ai','settings']){
+                await page.evaluate(v=>window.PUPLAN_APP.changeView(v),view);
+                await page.waitForTimeout(30);
+                const overflow=await page.evaluate(()=>Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)-innerWidth);
+                assert(overflow<=2,`${view} horizontal overflow: ${overflow}px`);
+              }
+              const community=page.locator('[data-community-open]:visible').first();
+              assert(await community.count()===1,'community module/nav did not load');
+              await community.click();
+              await page.waitForTimeout(30);
+              assert((await page.locator('#title').textContent())?.trim()==='動態','community navigation failed');
+              await page.evaluate(()=>window.PUPLAN_APP.changeView('schedule'));
+              await page.locator('#mobileAdd').click();
+              await page.waitForSelector('#courseDialog[open]');
               await context.close();
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
@@ -157,7 +192,6 @@ jobs:
             if grep -Eqi '(service_role|SUPABASE_SERVICE_ROLE_KEY|password_hash|password_salt|postgres://|stack trace|traceback|at file:|Deno\.env)' /tmp/resp; then echo "$url leaked server details"; cat /tmp/resp; exit 1; fi
           done
 
-          # Evil origins must never receive credentialed wildcard CORS.
           for url in "${endpoints[@]}"; do
             curl -sS --max-time 15 -D /tmp/headers -o /tmp/resp -X OPTIONS "$url" \
               -H 'Origin: https://evil.example' \
@@ -170,5 +204,4 @@ jobs:
 
       - name: Summary
         if: always()
-        run: |
-          echo 'nolu hardening audit completed'
+        run: echo 'nolu hardening audit completed'
