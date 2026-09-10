@@ -21,6 +21,11 @@ const scheduleUI=await import('./features/schedule.js');
 // saved classic timetable back to the old human presentation while it loads.
 localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule_presentation')||'human');
 
+// Install the transport/offline resilience layer before cloud bootstrap. It can
+// fail over between cloud endpoints, serve the signed-in user's own cached data
+// during an outage, and queue safe writes until a cloud backend is healthy again.
+await import('./resilience.js');
+
 // cloud.js exposes window.PUPLAN_CLOUD before its authenticated bootstrap finishes.
 // Await the whole module so the signed-in user's profile and schedule are hydrated
 // before semesters/auth/social/import modules can read or write account state.
