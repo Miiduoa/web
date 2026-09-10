@@ -1,4 +1,5 @@
 import './guest-privacy.js';
+import './avatar-guard.js';
 import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
 import {dialogsView} from './views/dialogs.js';
@@ -39,8 +40,12 @@ await import('./resilience.js');
 // before semesters/auth/social/import modules can read or write account state.
 await import('./cloud.js');
 
-for(const path of [
-  './auth.js',
+// Bind account controls first. The remaining modules all depend only on the shell,
+// app state, and the cloud bootstrap above, so fetch/evaluate them concurrently.
+// Keeping auth first preserves account-control ordering while removing the serial
+// feature-module waterfall that is especially costly on mobile/PWA connections.
+await startModule('./auth.js');
+await Promise.all([
   './social-ui.js',
   './import.js',
   './semesters.js',
@@ -50,7 +55,7 @@ for(const path of [
   './features/planner.js',
   './admin.js',
   './privacy.js'
-])await startModule(path);
+].map(startModule));
 
 // social-ui.js still contains a legacy timetable renderer. Until that module is
 // split, make features/schedule.js the final owner of schedule DOM and controls.
