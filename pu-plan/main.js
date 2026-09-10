@@ -27,18 +27,23 @@ localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule
 await import('./durable-bridge.js');
 
 // Some older modules still call the original API path directly. Give those
-// requests the same three-path transport failover before resilience captures fetch.
+// requests the same multi-path transport failover before resilience captures fetch.
 await import('./transport-bridge.js');
 
 // Install the transport/offline resilience layer before cloud bootstrap. It can
-// fail over between cloud endpoints, serve the signed-in user's own cached data
-// during an outage, and queue safe writes until a cloud backend is healthy again.
+// fail over between the Mumbai primary, Tokyo standby, compatibility endpoints,
+// and the signed-in user's own durable local cache.
 await import('./resilience.js');
 
 // cloud.js exposes window.PUPLAN_CLOUD before its authenticated bootstrap finishes.
 // Await the whole module so the signed-in user's profile and schedule are hydrated
 // before semesters/auth/social/import modules can read or write account state.
 await import('./cloud.js');
+
+// Reconcile core account/profile/schedule/semester state across the two independent
+// Supabase projects. It never blocks the local UI and only fails back to primary
+// after a standby -> primary replication has succeeded.
+await import('./cloud-replication.js');
 
 // Bind account controls first. The remaining modules all depend only on the shell,
 // app state, and the cloud bootstrap above, so fetch/evaluate them concurrently.
