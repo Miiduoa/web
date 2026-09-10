@@ -1,3 +1,4 @@
+import './guest-privacy.js';
 import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
 import {dialogsView} from './views/dialogs.js';
