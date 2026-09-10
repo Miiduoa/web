@@ -1,7 +1,10 @@
-const API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
+const API_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+const API_FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
+const APIS=[API_PRIMARY,API_FALLBACK];
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
 let token=localStorage.getItem('puplan_session')||'', profile=null;
+let preferredApi=Math.max(0,Math.min(APIS.length-1,Number(sessionStorage.getItem('puplan_api_index')||0)||0));
 let socialData={relationships:[],profiles:[],friends:[],meetups:[]}, searchTimer=null, syncTimer=null, socialLoading=null, socialLoaded=false, socialSummary={};
 
 const esc=s=>app?.esc?.(s)||String(s||'');
@@ -13,12 +16,34 @@ function showGate(tab='register'){localStorage.removeItem('puplan_guest');$('#au
 function hideGate(){$('#authGate')?.classList.add('off')}
 function switchTab(tab){$$('[data-auth-tab]').forEach(b=>b.classList.toggle('on',b.dataset.authTab===tab));$('#registerForm')?.classList.toggle('hidden',tab!=='register');$('#loginForm')?.classList.toggle('hidden',tab!=='login');setAuthStatus('')}
 
+function cloudError(message,props={}){const e=new Error(message);Object.assign(e,props);return e}
+async function fetchWithTimeout(url,options={},timeout=6500){
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),timeout);
+  try{return await fetch(url,{...options,signal:ctrl.signal,cache:'no-store'})}
+  finally{clearTimeout(timer)}
+}
 async function api(action,payload={},auth=true){
-  const headers={'Content-Type':'application/json'}; if(auth&&token)headers.Authorization=`Bearer ${token}`;
-  let res; try{res=await fetch(API,{method:'POST',headers,body:JSON.stringify({action,...payload})})}catch{throw new Error('目前連不上雲端，請檢查網路後再試')}
-  const data=await res.json().catch(()=>({}));
-  if(!res.ok){if(res.status===401&&auth){clearSession(false);showGate('login')}throw new Error(data.message||'操作失敗')}
-  return data;
+  const headers={'Content-Type':'application/json'};if(auth&&token)headers.Authorization=`Bearer ${token}`;
+  const body=JSON.stringify({action,...payload});
+  const order=[preferredApi,...APIS.map((_,i)=>i).filter(i=>i!==preferredApi)];
+  let lastFailure=null;
+  for(let n=0;n<order.length;n++){
+    const index=order[n],url=APIS[index];
+    let res;
+    try{res=await fetchWithTimeout(url,{method:'POST',headers,body},6500)}
+    catch(err){lastFailure=err;continue}
+    const data=await res.json().catch(()=>({}));
+    if(res.status>=500&&n<order.length-1){lastFailure=cloudError(data.message||`雲端服務錯誤 (${res.status})`,{status:res.status});continue}
+    preferredApi=index;sessionStorage.setItem('puplan_api_index',String(index));
+    if(!res.ok){
+      if(res.status===401&&auth){clearSession(false);showGate('login')}
+      throw cloudError(data.message||'操作失敗',{status:res.status,code:data.error||''});
+    }
+    return data;
+  }
+  const timedOut=lastFailure?.name==='AbortError';
+  throw cloudError(timedOut?'雲端回應逾時，已自動切換備援仍失敗，請稍後再試':'目前連不上雲端，已自動切換備援仍失敗',{connectivity:true,cause:lastFailure});
 }
 function isSignedIn(){return !!token&&!!profile}
 function purgeAccountCache(){
@@ -54,9 +79,9 @@ function updateAccountUI(){
   document.dispatchEvent(new CustomEvent('puplan:profile-changed',{detail:profile}));
 }
 function saveProfileLocal(p){
-  profile=p; localStorage.setItem('puplan_name',p.display_name);localStorage.setItem('puplan_username',p.username);localStorage.setItem('puplan_bio',p.bio||'');
+  profile=p;localStorage.setItem('puplan_name',p.display_name);localStorage.setItem('puplan_username',p.username);localStorage.setItem('puplan_bio',p.bio||'');
   if(p.avatar_data)localStorage.setItem('puplan_avatar',p.avatar_data);else localStorage.removeItem('puplan_avatar');
-  localStorage.setItem('puplan_discoverable',p.discoverable===false?'0':'1'); updateAccountUI();app?.renderShare?.();
+  localStorage.setItem('puplan_discoverable',p.discoverable===false?'0':'1');updateAccountUI();app?.renderShare?.();
 }
 function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};localStorage.removeItem('puplan_session');const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
 function emitSocial(){document.dispatchEvent(new CustomEvent('puplan:social-changed',{detail:socialData}))}
@@ -65,7 +90,7 @@ function relationFor(id){return (socialData.relationships||[]).find(r=>r.request
 function profileFor(id){return (socialData.profiles||[]).find(p=>p.id===id)||{display_name:'使用者',username:'',avatar_data:'',bio:''}}
 function applyCoreBundle(data){isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);socialSummary=data.social_summary||{};applySocial(data.social||{relationships:[],profiles:[],friends:[],meetups:[]})}
 
-async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn(e);clearSession(false);return false}}
+async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn('cloud bootstrap',e);if(e?.status===401)clearSession(false);return false}}
 async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
 async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
 async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
