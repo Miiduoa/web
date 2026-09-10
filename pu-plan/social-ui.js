@@ -1,3 +1,4 @@
+import {cleanAvatar} from './core/state.js';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 for(let i=0;i<80&&(!window.PUPLAN_APP||!window.PUPLAN_CLOUD);i++)await sleep(50);
 const app=window.PUPLAN_APP, cloud=window.PUPLAN_CLOUD;
@@ -11,7 +12,7 @@ const courseStart=c=>toMin(PERIODS[c.start-1][0]);
 const courseEnd=c=>toMin(PERIODS[c.end-1][1]);
 const fmtMins=n=>n<60?`${n} 分鐘`:`${Math.floor(n/60)} 小時${n%60?` ${n%60} 分`:''}`;
 const initial=(s='?')=>[...String(s||'?')][0]?.toUpperCase()||'?';
-const avatar=(person,cls='avatar')=>{const src=person?.avatar||person?.avatar_data||'';const name=person?.name||person?.display_name||'?';return `<div class="${cls}">${src?`<img src="${src}" alt="${esc(name)}">`:esc(initial(name))}</div>`};
+const avatar=(person,cls='avatar')=>{const src=cleanAvatar(person?.avatar||person?.avatar_data||'');const name=person?.name||person?.display_name||'?';return `<div class="${cls}">${src?`<img src="${src}" alt="${esc(name)}">`:esc(initial(name))}</div>`};
 const today=()=>new Date().getDay();
 const dayName=d=>DAYS[d-1]?.[1]||`星期${d}`;
 const periodLabel=(s,e)=>`${PERIODS[s-1][0]}–${PERIODS[e-1][1]}`;
