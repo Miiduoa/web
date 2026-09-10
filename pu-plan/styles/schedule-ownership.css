@@ -1,0 +1,52 @@
+/* Final schedule ownership layer.
+   Loaded after legacy friends.css so social styles cannot reshape the timetable. */
+#schedule #nowStrip{display:none!important}
+
+#schedule #humanWeek{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;overflow:visible;padding:0;min-width:0}
+#schedule #humanWeek .human-day{min-width:0;overflow:hidden;border:1px solid var(--line)!important;border-radius:18px!important;background:var(--surface)!important;box-shadow:none!important}
+#schedule #humanWeek .human-day.today{border-color:var(--line-strong)!important}
+#schedule #humanWeek .human-day>header{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;background:#f1ede6!important;border-bottom:1px solid var(--line)!important}
+#schedule #humanWeek .human-day>header>div{display:flex;align-items:baseline;gap:8px;min-width:0}
+#schedule #humanWeek .human-day>header b{font-size:15px;letter-spacing:-.02em}
+#schedule #humanWeek .human-day>header small{color:var(--muted);font-size:10px;white-space:nowrap}
+#schedule #humanWeek .human-day-body{display:grid;gap:7px;padding:8px}
+#schedule #humanWeek .human-course{display:grid;grid-template-columns:118px minmax(0,1fr);min-width:0;min-height:88px;overflow:hidden;border:1px solid var(--line)!important;border-radius:18px!important;background:var(--surface)!important;box-shadow:none!important;cursor:pointer}
+#schedule #humanWeek .human-course-time{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:5px;padding:11px 12px;border-right:1px solid var(--line)!important;background:#f5f1ea}
+#schedule #humanWeek .human-course-time b{font-size:12px;line-height:1.3;white-space:nowrap}
+#schedule #humanWeek .human-course-time small{margin:0;color:var(--muted);font-size:10px}
+#schedule #humanWeek .human-course-main{display:flex;min-width:0;flex-direction:column;justify-content:center;padding:11px 13px}
+#schedule #humanWeek .human-course-main>b{font-size:15px;line-height:1.35;letter-spacing:-.02em;overflow-wrap:anywhere}
+#schedule #humanWeek .human-course-main p{margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+#schedule #humanWeek .human-free{min-height:0;display:block;padding:18px 14px;border:1px dashed #ccc5ba!important;border-radius:15px!important;background:#faf8f4!important;color:var(--muted);font-size:12px;text-align:left}
+#schedule #humanWeek .human-free b,#schedule #humanWeek .human-free span{font-size:inherit}
+
+#schedule:has([data-presentation="classic"].on) #classicSchedule{display:block!important}
+#schedule:has([data-presentation="classic"].on) #humanWeek{display:none!important}
+#schedule:has([data-presentation="human"].on) #classicSchedule{display:none!important}
+#schedule:has([data-presentation="human"].on) #humanWeek{display:grid!important}
+#schedule:has([data-presentation="classic"].on):has([data-schedule-mode="week"].on) .table-wrap{display:block!important}
+#schedule:has([data-presentation="classic"].on):has([data-schedule-mode="week"].on) .mobile-list{display:none!important}
+#schedule:has([data-presentation="classic"].on):has([data-schedule-mode="day"].on) .table-wrap{display:none!important}
+#schedule:has([data-presentation="classic"].on):has([data-schedule-mode="day"].on) .mobile-list{display:grid!important;max-width:760px}
+#schedule:has([data-presentation="human"].on):has([data-schedule-mode="day"].on) #humanWeek .human-day{display:none!important}
+#schedule:has([data-presentation="human"].on):has([data-schedule-mode="day"].on) #humanWeek .human-day.focus{display:block!important}
+
+@media(max-width:940px){
+  #schedule #humanWeek{grid-template-columns:1fr!important}
+}
+@media(max-width:680px){
+  #schedule #humanWeek{grid-template-columns:1fr!important;gap:8px!important}
+  #schedule #humanWeek .human-day>header{padding:12px 13px}
+  #schedule #humanWeek .human-day-body{padding:7px;gap:6px}
+  #schedule #humanWeek .human-course{grid-template-columns:96px minmax(0,1fr);min-height:82px}
+  #schedule #humanWeek .human-course-time{padding:10px}
+  #schedule #humanWeek .human-course-time b{font-size:10.5px}
+  #schedule #humanWeek .human-course-main{padding:10px 11px}
+  #schedule #humanWeek .human-course-main>b{font-size:14px}
+  #schedule #humanWeek .human-course-main p{font-size:10px}
+  #schedule:has([data-presentation="classic"].on) #tabs,#schedule:has([data-schedule-mode="day"].on) #tabs{display:flex!important}
+  #schedule:has([data-presentation="classic"].on):has([data-schedule-mode="week"].on) .grid{min-width:690px;grid-template-columns:56px repeat(5,126px);grid-auto-rows:54px}
+}
+@media(max-width:390px){
+  #schedule #humanWeek .human-course{grid-template-columns:90px minmax(0,1fr)}
+}
