@@ -8,12 +8,15 @@ const ACCOUNT_KEYS=[
 ];
 let loggingOut=false;
 
-function clearAccountCache(){
-  for(const key of ACCOUNT_KEYS)localStorage.removeItem(key);
+function clearAssistantSession(){
   for(let i=sessionStorage.length-1;i>=0;i--){
     const key=sessionStorage.key(i)||'';
     if(key.startsWith('puplan_assistant_')||key==='puplan_assistant_history')sessionStorage.removeItem(key);
   }
+}
+function clearAccountCache(){
+  for(const key of ACCOUNT_KEYS)localStorage.removeItem(key);
+  clearAssistantSession();
 }
 
 async function safeLogout(){
@@ -36,12 +39,15 @@ async function safeLogout(){
 function openLogin(){
   loggingOut=false;
   localStorage.removeItem('puplan_guest');
+  clearAssistantSession();
   cloud.showGate?.('login');
   setTimeout(()=>$('#loginEmail')?.focus(),80);
 }
 
 function syncAuthUI(){
   const signed=cloud.isSignedIn?.()===true;
+  const guest=localStorage.getItem('puplan_guest')==='1';
+  if(!signed&&!guest)clearAssistantSession();
   const logout=$('#logout');
   if(logout){
     logout.disabled=false;
@@ -83,6 +89,9 @@ for(const form of [$('#loginForm'),$('#registerForm')]){
   },true);
 }
 
-document.addEventListener('puplan:profile-changed',()=>setTimeout(syncAuthUI,0));
+document.addEventListener('puplan:profile-changed',event=>{
+  if(!event.detail&&localStorage.getItem('puplan_guest')!=='1')clearAssistantSession();
+  setTimeout(syncAuthUI,0);
+});
 syncAuthUI();
-window.PUPLAN_AUTH={logout:safeLogout,login:openLogin,clearAccountCache};
+window.PUPLAN_AUTH={logout:safeLogout,login:openLogin,clearAccountCache,clearAssistantSession};
