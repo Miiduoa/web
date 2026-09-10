@@ -16,25 +16,25 @@ function clearAccountCache(){
   }
 }
 
-function redirectToLogin(message=''){
-  sessionStorage.setItem('puplan_auth_target','login');
-  if(message)sessionStorage.setItem('puplan_auth_message',message);
-  const url=new URL(location.href);
-  url.hash='';
-  url.searchParams.delete('logout');
-  location.replace(url.pathname+url.search);
-}
-
 async function safeLogout(){
   if(loggingOut)return;
   loggingOut=true;
   const btn=$('#logout');
   if(btn){btn.disabled=true;btn.textContent='登出中…'}
-  clearAccountCache();
-  redirectToLogin('已登出，可以登入其他帳號。');
+  try{
+    clearAccountCache();
+    await cloud.logout?.();
+    cloud.showGate?.('login');
+    const status=$('#authStatus');
+    if(status){status.textContent='已登出，可以登入其他帳號。';status.style.color='#226b43'}
+  }finally{
+    loggingOut=false;
+    syncAuthUI();
+  }
 }
 
 function openLogin(){
+  loggingOut=false;
   localStorage.removeItem('puplan_guest');
   cloud.showGate?.('login');
   setTimeout(()=>$('#loginEmail')?.focus(),80);
@@ -56,7 +56,6 @@ function syncAuthUI(){
   if(signed){
     $('#loginPassword')&&($('#loginPassword').value='');
     $('#regPassword')&&($('#regPassword').value='');
-    sessionStorage.removeItem('puplan_auth_target');
   }
 }
 
@@ -80,22 +79,10 @@ for(const form of [$('#loginForm'),$('#registerForm')]){
         submit.disabled=false;
         if(submit.dataset.authOriginal)submit.textContent=submit.dataset.authOriginal;
       }
-    },4500);
+    },15000);
   },true);
 }
 
 document.addEventListener('puplan:profile-changed',()=>setTimeout(syncAuthUI,0));
-
-const target=sessionStorage.getItem('puplan_auth_target');
-if(target==='login'&&!cloud.isSignedIn?.()){
-  setTimeout(()=>{
-    openLogin();
-    const msg=sessionStorage.getItem('puplan_auth_message')||'';
-    sessionStorage.removeItem('puplan_auth_message');
-    const status=$('#authStatus');
-    if(status&&msg){status.textContent=msg;status.style.color='#226b43'}
-  },0);
-}
-
 syncAuthUI();
 window.PUPLAN_AUTH={logout:safeLogout,login:openLogin,clearAccountCache};
