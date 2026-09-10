@@ -93,20 +93,24 @@ jobs:
                 window.PUPLAN_CLOUD &&
                 window.PUPLAN_COMMUNITY &&
                 window.CAMPUS_DISCOVERY &&
-                document.querySelector('#admin') &&
-                document.querySelector('#adminAccessCard') &&
+                window.PUPLAN_ADMIN &&
+                document.querySelector('#community') &&
                 document.querySelector('[data-community-open]')
               ,{timeout:10000});
               await page.waitForTimeout(100);
               const ui=await page.evaluate(()=>({
                 gateHidden:document.querySelector('#authGate')?.classList.contains('off'),
                 scheduleExists:!!document.querySelector('#humanWeek'),
-                adminExists:!!document.querySelector('#admin'),
-                communityExists:!!document.querySelector('#community')
+                adminModuleLoaded:!!window.PUPLAN_ADMIN,
+                adminUiExposed:!!document.querySelector('#admin')||!!document.querySelector('#adminAccessCard')||!!document.querySelector('[data-admin-open]'),
+                communityExists:!!document.querySelector('#community'),
+                communityNavExists:!!document.querySelector('[data-community-open]')
               }));
               console.log('STARTUP_UI_RESULT',ui);
+              console.log('STARTUP_MODULE_ERRORS',moduleErrors);
               assert(ui.gateHidden===true,'guest startup gate was not hidden after modules completed');
-              assert(ui.scheduleExists&&ui.adminExists&&ui.communityExists,'parallel startup left required UI modules uninstalled');
+              assert(ui.scheduleExists&&ui.adminModuleLoaded&&ui.communityExists&&ui.communityNavExists,'parallel startup left required guest-safe modules uninstalled');
+              assert(ui.adminUiExposed===false,'guest startup exposed administrator UI');
               assert(moduleErrors.length===0,`parallel startup module errors: ${moduleErrors.join(' | ')}`);
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
