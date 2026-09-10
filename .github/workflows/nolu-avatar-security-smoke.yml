@@ -90,6 +90,13 @@ jobs:
             {id:'evil-3',name:'Injected Three',display_name:'Injected Three',username:'evil3',avatar:'data:image/svg+xml,<svg onload=alert(1)>',avatar_data:'data:image/svg+xml,<svg onload=alert(1)>',courses:[],meta:{}},
             {id:'good-1',name:'Safe PNG',display_name:'Safe PNG',username:'safe',avatar:'data:image/png;base64,iVBORw0KGgo=',avatar_data:'data:image/png;base64,iVBORw0KGgo=',courses:[],meta:{}}
           ];
+          const bundle=()=>({
+            token:'test-token',
+            profile:{id:'user-1',email:'user@example.invalid',display_name:'Test User',username:'tester',bio:'',discoverable:true,avatar_data:''},
+            courses:[],
+            social:{relationships:[],profiles:evil.map(x=>({id:x.id,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,bio:''})),friends:evil,meetups:[]},
+            social_summary:{}
+          });
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
@@ -111,23 +118,22 @@ jobs:
                   return route.fulfill({status:400,contentType:'application/json',body:'{"message":"unsupported test action"}'});
                 }
                 if(url.includes('/functions/v1/pu-plan-api-v6')||url.includes('/functions/v1/pu-plan-core-v1')){
-                  if(action==='bootstrap')return respond({
-                    profile:{id:'user-1',email:'user@example.invalid',display_name:'Test User',username:'tester',bio:'',discoverable:true,avatar_data:''},
-                    courses:[],
-                    social:{relationships:[],profiles:evil.map(x=>({id:x.id,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,bio:''})),friends:evil,meetups:[]},
-                    social_summary:{}
-                  });
-                  if(action==='social')return respond({social:{relationships:[],profiles:[],friends:evil,meetups:[]}});
+                  if(action==='login')return respond(bundle());
+                  if(action==='social')return respond({social:bundle().social});
                 }
                 return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
               });
               await page.addInitScript(()=>{
                 localStorage.clear();sessionStorage.clear();
-                localStorage.setItem('puplan_session','test-token');
                 window.__NOLU_XSS__=0;
               });
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
-              await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD?.isSignedIn?.(),{timeout:10000});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD,null,{timeout:10000});
+              await page.locator('[data-auth-tab="login"]').click();
+              await page.locator('#loginEmail').fill('test@example.invalid');
+              await page.locator('#loginPassword').fill('test-password');
+              await page.locator('#loginForm button[type="submit"]').click();
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.(),null,{timeout:10000});
 
               const sanitized=await page.evaluate(()=>window.PUPLAN_APP.friends().map(f=>({id:f.id,avatar:f.avatar})));
               const byId=Object.fromEntries(sanitized.map(x=>[x.id,x.avatar]));
@@ -136,10 +142,11 @@ jobs:
 
               await page.locator('[data-view="friends"]').first().click();
               await page.waitForTimeout(300);
-              await page.waitForFunction(()=>window.PUPLAN_ADMIN,{timeout:5000});
+              await page.waitForFunction(()=>window.PUPLAN_ADMIN,null,{timeout:5000});
+              await page.waitForFunction(()=>document.querySelector('#admin'),null,{timeout:5000});
               await page.evaluate(()=>window.PUPLAN_ADMIN.open());
               await page.locator('[data-admin-tab="users"]').click();
-              await page.waitForFunction(()=>document.querySelectorAll('.admin-user-row').length===4,{timeout:5000});
+              await page.waitForFunction(()=>document.querySelectorAll('.admin-user-row').length===4,null,{timeout:5000});
 
               const dom=await page.evaluate(()=>({
                 xss:window.__NOLU_XSS__,
