@@ -59,13 +59,13 @@ jobs:
               await page.addInitScript(sample=>{
                 localStorage.setItem('puplan_guest','1');
                 localStorage.setItem('puplan_courses',JSON.stringify(sample));
-                localStorage.setItem('puplan_schedule_mode','week');
-                localStorage.setItem('puplan_schedule_presentation','classic');
               },sample);
               await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelector('#count')?.textContent==='7');
               await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
+              await page.locator('[data-schedule-mode="week"]').click();
+              await page.locator('[data-presentation="classic"]').click();
               await page.waitForTimeout(80);
 
               const viewport=await page.evaluate(()=>innerWidth);
