@@ -2,7 +2,13 @@ name: nolu guest privacy unit
 
 on:
   push:
-    branches: [audit/nolu-resilience-account-isolation-20260910]
+    branches: [main, audit/nolu-resilience-account-isolation-20260910]
+    paths:
+      - 'pu-plan/guest-privacy.js'
+      - '.github/tests/guest-privacy.cjs'
+      - '.github/workflows/nolu-guest-privacy-unit.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'pu-plan/guest-privacy.js'
       - '.github/tests/guest-privacy.cjs'
