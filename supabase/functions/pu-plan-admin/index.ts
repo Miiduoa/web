@@ -1,4 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  assertCredentialCurrent,
+  SessionError,
+  verifySignedSessionV4,
+} from '../_shared/session-v4.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -6,8 +11,6 @@ const db = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const enc = new TextEncoder();
-const dec = new TextDecoder();
 const ALLOWED_ORIGINS = new Set([
   'https://miiduoa.github.io',
   'http://localhost:3000',
@@ -48,77 +51,34 @@ const json = (req: Request, body: unknown, status = 200) =>
     },
   });
 
-function b64url(bytes: Uint8Array) {
-  let value = '';
-  for (const byte of bytes) value += String.fromCharCode(byte);
-  return btoa(value)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-
-function fromB64url(value: string) {
-  let padded = value.replace(/-/g, '+').replace(/_/g, '/');
-  while (padded.length % 4) padded += '=';
-  const raw = atob(padded);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-async function hmac(message: string) {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(SERVICE_KEY),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  return new Uint8Array(
-    await crypto.subtle.sign('HMAC', key, enc.encode(message)),
-  );
-}
-
-function equalBytes(a: Uint8Array, b: Uint8Array) {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
-  return difference === 0;
+function sessionApiError(error: unknown): ApiError {
+  if (error instanceof SessionError) return new ApiError(401, error.message, error.code);
+  return new ApiError(401, '登入狀態無效，請重新登入', 'UNAUTHORIZED');
 }
 
 async function requireAdmin(req: Request) {
   const auth = req.headers.get('authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  const [payload, signature, ...extra] = token.split('.');
-  if (!payload || !signature || extra.length) {
-    throw new ApiError(401, '請重新登入', 'UNAUTHORIZED');
-  }
-
-  let session: any;
+  let session;
   try {
-    if (!equalBytes(await hmac(payload), fromB64url(signature))) {
-      throw new Error('bad signature');
-    }
-    session = JSON.parse(dec.decode(fromB64url(payload)));
-  } catch {
-    throw new ApiError(401, '登入狀態無效', 'UNAUTHORIZED');
+    session = await verifySignedSessionV4(token, SERVICE_KEY);
+  } catch (error) {
+    throw sessionApiError(error);
   }
 
-  if (
-    !session.uid ||
-    !session.exp ||
-    session.exp < Math.floor(Date.now() / 1000)
-  ) {
-    throw new ApiError(401, '登入已過期', 'SESSION_EXPIRED');
-  }
-
-  const { data: user } = await db
+  const { data: user, error } = await db
     .from('puplan_app_users')
-    .select('id,email,display_name,username,role')
+    .select('id,email,display_name,username,role,password_salt')
     .eq('id', session.uid)
     .maybeSingle();
 
+  if (error) throw error;
   if (!user) throw new ApiError(401, '找不到帳號', 'UNAUTHORIZED');
+  try {
+    await assertCredentialCurrent(session, user.password_salt || '');
+  } catch (credentialError) {
+    throw sessionApiError(credentialError);
+  }
   if (user.role !== 'admin') {
     throw new ApiError(403, '你沒有管理權限', 'FORBIDDEN');
   }

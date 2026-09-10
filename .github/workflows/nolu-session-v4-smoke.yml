@@ -1,0 +1,86 @@
+name: nolu session v4 security
+
+on:
+  push:
+    branches: [security/nolu-session-v4-20260911, main]
+    paths:
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/functions/_shared/session-v4_test.ts'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
+      - 'supabase/functions/pu-plan-api/**'
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-session-v4-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/nolu-session-v4-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# All current custom-session API paths are checked here. Historical duplicate
+# endpoints are separately required to stay HTTP 410 by nolu-retired-edge-smoke.
+jobs:
+  session-v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check session primitive and active auth functions
+        run: |
+          deno check supabase/functions/_shared/session-v4.ts supabase/functions/_shared/session-v4_test.ts
+          deno check supabase/functions/pu-plan-api-v6/index.ts
+          deno check supabase/functions/pu-plan-core-v1/index.ts
+          deno check supabase/functions/pu-plan-api/index.ts
+          deno check supabase/functions/pu-plan-social/index.ts
+          deno check supabase/functions/pu-plan-admin/index.ts
+      - name: Run session security unit tests
+        run: deno test supabase/functions/_shared/session-v4_test.ts
+      - name: Guard session design and legacy CORS
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'SESSION_VERSION = 4' supabase/functions/_shared/session-v4.ts
+          grep -q 'SESSION_UPGRADE_REQUIRED' supabase/functions/_shared/session-v4.ts
+          grep -q 'SESSION_REVOKED' supabase/functions/_shared/session-v4.ts
+          grep -q 'nolu-session-v4:' supabase/functions/_shared/session-v4.ts
+          if grep -Eqi 'password_hash|recovery_code|service_role' supabase/functions/_shared/session-v4.ts; then
+            echo 'session payload/helper must not depend on password hashes or recovery secrets'
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          active=[
+              'supabase/functions/pu-plan-api-v6/index.ts',
+              'supabase/functions/pu-plan-core-v1/index.ts',
+              'supabase/functions/pu-plan-api/index.ts',
+              'supabase/functions/pu-plan-social/index.ts',
+              'supabase/functions/pu-plan-admin/index.ts',
+          ]
+          for path in active:
+              text=Path(path).read_text()
+              assert 'verifySignedSessionV4' in text, f'{path}: v4 verifier missing'
+              assert 'assertCredentialCurrent' in text, f'{path}: credential revocation missing'
+              assert 'password_salt' in text, f'{path}: current credential not queried'
+              assert '{v:3' not in text.replace(' ', ''), f'{path}: legacy v3 signer remains'
+          for path in active[:3]:
+              text=Path(path).read_text()
+              assert 'signSessionV4' in text, f'{path}: v4 signer missing'
+          legacy=Path('supabase/functions/pu-plan-api/index.ts').read_text()
+          assert "'Access-Control-Allow-Origin': '*'" not in legacy, 'legacy wildcard CORS remains'
+          assert 'ALLOWED_ORIGINS' in legacy, 'legacy origin allowlist missing'
+          assert 'ORIGIN_NOT_ALLOWED' in legacy, 'legacy evil-origin rejection missing'
+          change=legacy[legacy.index("if(action==='change_password')"):]
+          assert 'signSessionV4' in change.split("if(action==='rotate_recovery_code')",1)[0], 'password change must return a fresh v4 token'
+          forbidden='contents:'+' write'
+          for workflow in Path('.github/workflows').glob('nolu-session-v4*.yml'):
+              assert forbidden not in workflow.read_text(), f'temporary write workflow still present: {workflow}'
+          print('active session integration, CORS, and CI permission guard passed')
+          PY
