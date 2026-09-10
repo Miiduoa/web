@@ -1,10 +1,6 @@
 name: Supabase emergency restart
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/supabase-emergency-restart.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,6 +13,7 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       PROJECT_REF: hrrmkrayvrgnwcroyttp
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
     steps:
       - name: Restart project through Supabase Management API
         shell: bash
@@ -34,19 +31,32 @@ jobs:
           cat /tmp/restart.json || true
           test "$code" -ge 200 -a "$code" -lt 300
 
-      - name: Wait for Nolu database to recover
+      - name: Wait for Data API path and auth boundary
         shell: bash
         run: |
           set -euo pipefail
+          REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
           for i in $(seq 1 36); do
+            rm -f /tmp/body
+            rc=0
             code=$(curl -sS --max-time 8 -o /tmp/body -w '%{http_code}' \
-              'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe' || true)
+              "$REST" -H "apikey: ${PUBLISHABLE_KEY}") || rc=$?
             body=$(cat /tmp/body 2>/dev/null || true)
-            echo "probe $i HTTP=$code $body"
-            if [ "$code" = '200' ] && echo "$body" | grep -q '"ok":true'; then
+            echo "Data API probe $i rc=$rc HTTP=$code"
+
+            # This table must never be directly readable with the publishable key.
+            # A stable 4xx means the Data API path is responsive and the anonymous
+            # access boundary is still enforced after restart.
+            if [ "$rc" -eq 0 ] && [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
+              echo 'Data API is responsive and anonymous direct access remains blocked.'
               exit 0
+            fi
+            if [ "$rc" -eq 0 ] && [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+              echo '::error::Data API recovered but anonymous puplan_app_users access is exposed.'
+              echo "$body"
+              exit 1
             fi
             sleep 8
           done
-          echo 'Database did not recover within the restart validation window.'
+          echo 'Data API did not become responsive within the restart validation window.'
           exit 1
