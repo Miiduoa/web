@@ -2,7 +2,7 @@ import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
 import {dialogsView} from './views/dialogs.js';
 
-window.CAMPUS_SOCIAL_ENDPOINT='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+window.CAMPUS_SOCIAL_ENDPOINT='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v15';
 
 const root=document.querySelector('#app');
 root.innerHTML=authView()+shellView()+dialogsView();
