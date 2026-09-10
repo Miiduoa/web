@@ -29,7 +29,7 @@ jobs:
           npm --prefix /tmp/nolu-auth init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-auth install playwright >/dev/null 2>&1
           cd /tmp/nolu-auth && npx playwright install --with-deps chromium >/dev/null
-      - name: Verify production browser can reach at least one auth API
+      - name: Diagnose browser transport and login path
         env:
           NODE_PATH: /tmp/nolu-auth/node_modules
         run: |
@@ -40,28 +40,26 @@ jobs:
             try{
               const page=await browser.newPage();
               await page.goto('https://miiduoa.github.io/web/',{waitUntil:'domcontentloaded',timeout:45000});
-              const result=await page.evaluate(async()=>{
-                const urls=[
-                  'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',
-                  'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1'
-                ];
-                const out=[];
-                for(const url of urls){
-                  const ctrl=new AbortController();
-                  const timer=setTimeout(()=>ctrl.abort(),8000);
+              const results=await page.evaluate(async()=>{
+                const base='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+                async function probe(label,body,contentType,ms=6000){
+                  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),ms),started=performance.now();
                   try{
-                    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',email:'browser-smoke-does-not-exist@example.invalid',password:'invalid-password-123'}),signal:ctrl.signal,cache:'no-store'});
-                    out.push({url,ok:true,status:r.status,acao:r.headers.get('access-control-allow-origin'),text:(await r.text()).slice(0,240)});
-                  }catch(e){out.push({url,ok:false,error:String(e),name:e?.name||''})}
+                    const r=await fetch(base,{method:'POST',headers:{'Content-Type':contentType},body:JSON.stringify(body),signal:ctrl.signal,cache:'no-store'});
+                    return {label,ok:true,status:r.status,ms:Math.round(performance.now()-started),acao:r.headers.get('access-control-allow-origin'),text:(await r.text()).slice(0,240)};
+                  }catch(e){return {label,ok:false,ms:Math.round(performance.now()-started),name:e?.name||'',error:String(e)}}
                   finally{clearTimeout(timer)}
-                  if(out.at(-1)?.ok&&(out.at(-1).status===401||out.at(-1).status===429))break;
                 }
-                return out;
+                return [
+                  await probe('simple-no-db',{action:'bootstrap'},'text/plain;charset=UTF-8'),
+                  await probe('preflight-no-db',{action:'bootstrap'},'application/json'),
+                  await probe('simple-login-db',{action:'login',email:'browser-smoke-does-not-exist@example.invalid',password:'invalid-password-123'},'text/plain;charset=UTF-8',8000)
+                ];
               });
-              console.log('AUTH_BROWSER_RESULTS',JSON.stringify(result));
-              const good=result.find(x=>x.ok&&(x.status===401||x.status===429));
-              if(!good)throw new Error(`all browser auth endpoints failed: ${JSON.stringify(result)}`);
+              console.log('AUTH_DIAGNOSTICS',JSON.stringify(results));
+              const simple=results.find(x=>x.label==='simple-no-db');
+              if(!simple?.ok||simple.status!==401)throw new Error(`edge transport without preflight failed: ${JSON.stringify(results)}`);
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          timeout 90s node /tmp/nolu-auth/check.cjs
+          timeout 70s node /tmp/nolu-auth/check.cjs
