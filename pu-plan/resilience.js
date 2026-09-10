@@ -126,7 +126,7 @@ window.fetch=async function noluResilientFetch(input,options={}){
     try{
       const res=await timedFetch(api,options,1800);lastResponse=res;
       if(api===STANDBY&&res.status===401&&hasAuthorization(options)){standby401=res;lastError=new Error('standby authorization unavailable');markFailure(api,lastError);continue}
-      if(res.status<500){markSuccess(api);captureSuccess(res,body,api,sequence);return res}
+      if(res.status<500){markSuccess(api);await captureSuccess(res,body,api,sequence);return res}
       lastError=new Error(`HTTP ${res.status}`);markFailure(api,lastError);
     }catch(e){lastError=e;markFailure(api,e)}
   }
