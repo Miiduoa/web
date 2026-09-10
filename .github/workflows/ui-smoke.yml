@@ -52,7 +52,6 @@ jobs:
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
             await page.waitForSelector('#authGate');
 
-            localStorage='';
             await page.evaluate(()=>{localStorage.removeItem('puplan_guest');document.querySelector('#authGate')?.classList.remove('off')});
             await overflow(page,label,'login');
             const brand=await within(page,'.auth-brand',`${label} login`),title=await within(page,'.auth-copy h1',`${label} login`),copy=await within(page,'.auth-copy p',`${label} login`),card=await within(page,'.auth-card',`${label} login`);
