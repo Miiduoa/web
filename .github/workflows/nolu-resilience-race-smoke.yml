@@ -1,0 +1,91 @@
+name: nolu resilience write race smoke
+
+on:
+  push:
+    branches: [audit/nolu-resilience-write-race-20260910]
+    paths:
+      - 'pu-plan/resilience.js'
+      - '.github/workflows/nolu-resilience-race-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-race init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-race install playwright >/dev/null 2>&1
+          cd /tmp/nolu-race && npx playwright install --with-deps chromium >/dev/null
+      - name: Newer offline edit must survive older success response
+        env:
+          NODE_PATH: /tmp/nolu-race/node_modules
+        run: |
+          set -euo pipefail
+          cat >pu-plan/__resilience_race_test.html <<'HTML'
+          <!doctype html><html><body><script type="module" src="./resilience.js"></script></body></html>
+          HTML
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-race/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+          const UID='11111111-1111-4111-8111-111111111111';
+          const payload=Buffer.from(JSON.stringify({v:3,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600})).toString('base64url');
+          const token=`${payload}.test-signature`;
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const page=await browser.newPage();
+              await page.addInitScript(({UID,token})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',token);
+                localStorage.setItem('puplan_course_owner',UID);
+                localStorage.setItem('puplan_name','Race User');
+                localStorage.setItem('puplan_courses','[]');
+              },{UID,token});
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
+                let body={};try{body=JSON.parse(route.request().postData()||'{}')}catch{}
+                const name=body?.courses?.[0]?.name;
+                if(body.action==='save_schedule'&&name==='OLD'){
+                  await new Promise(r=>setTimeout(r,800));
+                  return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true}'});
+                }
+                if(body.action==='save_schedule'&&name==='NEW'){
+                  return route.fulfill({status:503,contentType:'application/json',body:'{"message":"offline"}'});
+                }
+                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+              });
+              await page.goto('http://127.0.0.1:4173/__resilience_race_test.html',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.NOLU_RESILIENCE);
+              const result=await page.evaluate(async ({API,UID})=>{
+                const old=[{id:'old',name:'OLD',day:1,start:1,end:1}];
+                const newer=[{id:'new',name:'NEW',day:2,start:2,end:2}];
+                document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:old}));
+                const oldRequest=fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:old})});
+                await new Promise(r=>setTimeout(r,80));
+                localStorage.setItem('puplan_courses',JSON.stringify(newer));
+                document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:newer}));
+                const newerResponse=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:newer})});
+                const newerBody=await newerResponse.json();
+                await oldRequest;
+                await new Promise(r=>setTimeout(r,120));
+                return {
+                  queued:newerBody.queued===true,
+                  pending:localStorage.getItem(`nolu_pending_mutations_v1:${UID}`),
+                  mode:window.NOLU_RESILIENCE.getMode()
+                };
+              },{API,UID});
+              console.log('RACE_RESULT',result);
+              assert(result.queued,'newer failed write was not queued');
+              assert(result.pending&&result.pending.includes('NEW'),'older success deleted the newer queued schedule');
+              assert(result.mode==='offline','older delayed success incorrectly overrode newer offline state');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 75s node /tmp/nolu-race/check.cjs
