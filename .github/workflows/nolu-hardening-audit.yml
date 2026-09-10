@@ -1,0 +1,230 @@
+name: nolu hardening audit
+
+on:
+  push:
+    branches: [audit/nolu-hardening-v2-20260910]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nolu-hardening-audit-v2
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: JavaScript syntax and guest isolation
+        run: |
+          set -euo pipefail
+          find pu-plan -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+          node .github/tests/guest-privacy.cjs
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {cleanAvatar} from './pu-plan/core/state.js';
+          assert.equal(cleanAvatar('javascript:alert(1)'),'');
+          assert.equal(cleanAvatar('data:image/svg+xml,<svg onload=alert(1)>'),'');
+          assert.equal(cleanAvatar('data:text/html;base64,PHNjcmlwdD4='),'');
+          assert.equal(cleanAvatar('data:image/png;base64,QUJD'),'data:image/png;base64,QUJD');
+          console.log('avatar allowlist: ok');
+          NODE
+
+      - name: Static security guardrails
+        run: |
+          set -euo pipefail
+          if grep -RInE --include='*.js' '\beval\s*\(|new[[:space:]]+Function\s*\(|document\.write\s*\(' pu-plan; then
+            echo 'Dangerous executable DOM/JS sink found'
+            exit 1
+          fi
+          if grep -RInE --exclude='*.svg' '(SUPABASE_SERVICE_ROLE_KEY|service_role[[:space:]]*[:=]|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|sk-(live|proj)-[A-Za-z0-9_-]{16,})' pu-plan; then
+            echo 'Potential secret material found in client bundle'
+            exit 1
+          fi
+          grep -q "object-src 'none'" pu-plan/index.html
+          grep -q "frame-src 'none'" pu-plan/index.html
+          grep -q "base-uri 'self'" pu-plan/index.html
+          grep -q "form-action 'self'" pu-plan/index.html
+          grep -q "upgrade-insecure-requests" pu-plan/index.html
+          test ! -e .github/workflows/db-direct-probe.yml
+          grep -q 'workflow_dispatch:' .github/workflows/supabase-emergency-restart.yml
+          if grep -q '^[[:space:]]*push:' .github/workflows/supabase-emergency-restart.yml; then
+            echo 'Production restart must never trigger from push'
+            exit 1
+          fi
+          if grep -q 'pu-plan-db-probe' .github/workflows/supabase-emergency-restart.yml; then
+            echo 'Production restart still depends on direct DB probe'
+            exit 1
+          fi
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-audit init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-audit install playwright >/dev/null 2>&1
+          cd /tmp/nolu-audit && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Start local app
+        run: |
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0; sleep .25; done
+          cat /tmp/nolu-http.log
+          exit 1
+
+      - name: Browser privacy XSS and functional regression
+        env:
+          NODE_PATH: /tmp/nolu-audit/node_modules
+        run: |
+          cat >/tmp/nolu-audit/browser.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const privateText=/PRIVATE COURSE|PRIVATE FRIEND|PRIVATE SCHOOL|Victim Name|victim bio|Secret Teacher|Secret Room/;
+          const accountOnly=['puplan_session','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
+          const collectionClean=v=>v===null||!privateText.test(v);
+          async function localOnly(page,unauthorized=false){
+            await page.route('**/*',route=>{
+              const u=new URL(route.request().url());
+              if(u.hostname==='127.0.0.1')return route.continue();
+              if(unauthorized&&u.hostname.endsWith('.supabase.co'))return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+              return route.abort();
+            });
+          }
+          async function assertNoPrivate(page,label){
+            const state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
+            for(const key of accountOnly)assert(state.values[key]===null,`${label} retained ${key}`);
+            assert(collectionClean(state.courses)&&collectionClean(state.friends)&&collectionClean(state.meta),`${label} retained private account collections`);
+            assert(!privateText.test(state.text),`${label} leaked private account data into DOM`);
+          }
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              let context=await browser.newContext({serviceWorkers:'block'});
+              let page=await context.newPage();
+              await page.addInitScript(()=>{
+                localStorage.setItem('puplan_session','forged-but-present');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'private-1',name:'PRIVATE COURSE SHOULD NEVER LEAK',day:1,start:1,end:1,teacher:'Secret Teacher',room:'Secret Room'}]));
+                localStorage.setItem('puplan_friends',JSON.stringify([{id:'friend-1',name:'PRIVATE FRIEND SHOULD NEVER LEAK'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'PRIVATE SCHOOL'}));
+                localStorage.setItem('puplan_course_owner','victim-user');
+                localStorage.setItem('puplan_name','Victim Name');
+                localStorage.setItem('puplan_username','victim');
+                localStorage.setItem('puplan_bio','victim bio');
+              });
+              await localOnly(page,true);
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForSelector('#authGate');
+              await page.waitForTimeout(200);
+              await assertNoPrivate(page,'expired session');
+              await page.locator('#guestMode').click();
+              await page.waitForTimeout(80);
+              await assertNoPrivate(page,'guest');
+              await context.close();
+
+              context=await browser.newContext({serviceWorkers:'block'});
+              page=await context.newPage();
+              await page.addInitScript(()=>{
+                window.__NOLU_XSS__=0;
+                localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('nolu_guest_scope_v1','1');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'xss-1',name:'<img src=x onerror="window.__NOLU_XSS__=1">',day:1,start:1,end:1,teacher:'<svg onload="window.__NOLU_XSS__=2">',room:'</div><script>window.__NOLU_XSS__=3</script>'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'<img src=x onerror="window.__NOLU_XSS__=4">'}));
+              });
+              await localOnly(page);
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForTimeout(300);
+              assert(await page.evaluate(()=>window.__NOLU_XSS__)===0,'stored XSS executed');
+              assert(await page.locator('script').filter({hasText:'__NOLU_XSS__=3'}).count()===0,'hostile course created a script element');
+              await context.close();
+
+              context=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true,serviceWorkers:'block'});
+              page=await context.newPage();
+              const moduleErrors=[];
+              page.on('console',m=>{if(m.type()==='error'&&m.text().includes('nolu module failed'))moduleErrors.push(m.text())});
+              await page.addInitScript(()=>{
+                localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('nolu_guest_scope_v1','1');
+                localStorage.setItem('puplan_courses',JSON.stringify([
+                  {id:'c1',name:'系統分析',day:1,start:1,end:2,teacher:'王老師',room:'主顧322',color:'blue'},
+                  {id:'c2',name:'資料庫',day:3,start:5,end:6,teacher:'林老師',room:'主顧323',color:'mint'}
+                ]));
+              });
+              await localOnly(page);
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelectorAll('.bottom button').length===5);
+              assert(moduleErrors.length===0,`feature module load errors: ${moduleErrors.join(' | ')}`);
+              assert((await page.locator('body').innerText()).includes('系統分析'),'populated schedule did not render');
+              for(const view of ['schedule','friends','ai','settings']){
+                await page.evaluate(v=>window.PUPLAN_APP.changeView(v),view);
+                await page.waitForTimeout(30);
+                const overflow=await page.evaluate(()=>Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)-innerWidth);
+                assert(overflow<=2,`${view} horizontal overflow: ${overflow}px`);
+              }
+              const community=page.locator('[data-community-open]:visible').first();
+              assert(await community.count()===1,'community module/nav did not load');
+              await community.click();
+              await page.waitForTimeout(30);
+              assert((await page.locator('#title').textContent())?.trim()==='動態','community navigation failed');
+              await page.evaluate(()=>window.PUPLAN_APP.changeView('schedule'));
+              await page.locator('#mobileAdd').click();
+              await page.waitForSelector('#courseDialog[open]');
+              await context.close();
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-audit/browser.cjs
+
+      - name: Remote API attack smoke
+        env:
+          API: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6
+          CORE: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1
+          SOCIAL: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social
+          ADMIN: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin
+          REST: https://hrrmkrayvrgnwcroyttp.supabase.co/rest/v1/puplan_app_users?select=id&limit=1
+          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+        run: |
+          set -euo pipefail
+          endpoints=("$API" "$CORE" "$SOCIAL" "$ADMIN")
+          for url in "${endpoints[@]}"; do
+            for method in GET PUT DELETE PATCH; do
+              code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X "$method" "$url")
+              if [ "$code" -lt 400 ] || [ "$code" -ge 500 ]; then
+                echo "$url mishandled unsupported $method with HTTP $code"; cat /tmp/resp; exit 1
+              fi
+            done
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' --data '{bad json')
+            if [ "$code" -ge 500 ] || [ "$code" -lt 400 ]; then echo "$url mishandled malformed JSON: $code"; cat /tmp/resp; exit 1; fi
+            code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -H 'Authorization: Bearer not-a-real-token' --data '{"action":"bootstrap","__proto__":{"admin":true},"constructor":{"prototype":{"admin":true}}}')
+            if [ "$code" != 401 ] && [ "$code" != 403 ]; then echo "$url accepted forged/prototype-pollution request: $code"; cat /tmp/resp; exit 1; fi
+            if grep -Eqi '(service_role|SUPABASE_SERVICE_ROLE_KEY|password_hash|password_salt|postgres://|stack trace|traceback|at file:|Deno\.env)' /tmp/resp; then echo "$url leaked server details"; cat /tmp/resp; exit 1; fi
+          done
+
+          for url in "${endpoints[@]}"; do
+            curl -sS --max-time 15 -D /tmp/headers -o /tmp/resp -X OPTIONS "$url" \
+              -H 'Origin: https://evil.example' \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: authorization,content-type' >/dev/null || true
+            if grep -Eqi '^access-control-allow-credentials:[[:space:]]*true' /tmp/headers && grep -Eqi '^access-control-allow-origin:[[:space:]]*\*' /tmp/headers; then
+              echo "$url exposes credentialed wildcard CORS"; cat /tmp/headers; exit 1
+            fi
+          done
+
+          code=$(curl -sS --max-time 15 -o /tmp/rest -w '%{http_code}' "$REST" -H "apikey: $PUBLISHABLE_KEY")
+          if [ "$code" -lt 400 ]; then
+            echo "Anonymous REST access to puplan_app_users was not blocked (HTTP $code)"
+            cat /tmp/rest
+            exit 1
+          fi
+
+          code=$(curl -sS --max-time 15 -o /tmp/probe -w '%{http_code}' 'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe')
+          if [ "$code" != '410' ]; then
+            echo "Direct database probe should be disabled with HTTP 410, got $code"
+            cat /tmp/probe
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: echo 'nolu hardening audit completed'
