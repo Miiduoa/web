@@ -1,0 +1,136 @@
+name: nolu Data API exposure smoke
+
+on:
+  push:
+    branches: [main, security/nolu-data-api-exposure-20260911]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/nolu-data-api-exposure-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/nolu-data-api-exposure-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  data-api-exposure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Probe anonymous REST and Storage exposure
+        shell: bash
+        env:
+          PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+        run: |
+          set -euo pipefail
+          tables=(
+            puplan_app_users
+            puplan_app_semesters
+            puplan_app_schedules
+            puplan_app_rate_limits
+            puplan_app_friendships
+            puplan_app_meetups
+            puplan_app_posts
+            puplan_app_post_likes
+            puplan_app_post_media
+            puplan_app_author_affinity
+            puplan_app_feed_preferences
+            puplan_app_conversation_members
+            puplan_app_messages
+            puplan_app_conversations
+          )
+
+          failed=0
+          reachable=0
+          for table in "${tables[@]}"; do
+            body="/tmp/rest-${table}.json"
+            code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+              -o "$body" -w '%{http_code}' \
+              "$PROJECT_URL/rest/v1/$table?select=*&limit=1" \
+              -H "apikey: $PUBLISHABLE_KEY" \
+              -H 'Accept: application/json') || {
+                echo "::error::REST probe transport failed for $table"
+                failed=1
+                continue
+              }
+
+            echo "$table -> HTTP $code"
+            if [[ "$code" =~ ^2 ]]; then
+              reachable=$((reachable+1))
+              compact=$(tr -d '[:space:]' < "$body")
+              if [ "$compact" != '[]' ]; then
+                echo "::error::Anonymous Data API returned row data from $table"
+                cat "$body"
+                failed=1
+              else
+                echo "::warning::Anonymous role can reach $table but current RLS filters all rows; revoke anon table grants for Edge-only defense in depth."
+              fi
+            elif [ "$code" -lt 400 ]; then
+              echo "::error::Unexpected HTTP $code from $table"
+              cat "$body"
+              failed=1
+            fi
+          done
+
+          storage_body=/tmp/storage-list.json
+          storage_code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+            -o "$storage_body" -w '%{http_code}' -X POST \
+            "$PROJECT_URL/storage/v1/object/list/puplan-media" \
+            -H "apikey: $PUBLISHABLE_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"prefix":"","limit":1,"offset":0}') || {
+              echo '::error::Storage anonymous listing probe transport failed'
+              failed=1
+              storage_code=000
+            }
+          echo "puplan-media listing -> HTTP $storage_code"
+          if [[ "$storage_code" =~ ^2 ]]; then
+            compact=$(tr -d '[:space:]' < "$storage_body")
+            if [ "$compact" != '[]' ]; then
+              echo '::error::Anonymous Storage listing returned media metadata'
+              cat "$storage_body"
+              failed=1
+            else
+              echo '::warning::Anonymous role can call the media listing endpoint but currently receives no objects.'
+            fi
+          fi
+
+          echo "Anonymous-reachable REST tables with zero visible rows: $reachable"
+          [ "$failed" -eq 0 ]
+
+      - name: Probe read-style RPC exposure without mutation
+        shell: bash
+        env:
+          PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+        run: |
+          set -euo pipefail
+          probe_rpc() {
+            local fn="$1" payload="$2"
+            local body="/tmp/rpc-${fn}.json"
+            local code
+            code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+              -o "$body" -w '%{http_code}' -X POST \
+              "$PROJECT_URL/rest/v1/rpc/$fn" \
+              -H "apikey: $PUBLISHABLE_KEY" \
+              -H 'Content-Type: application/json' \
+              --data "$payload")
+            echo "$fn -> HTTP $code"
+            if [[ "$code" =~ ^2 ]]; then
+              compact=$(tr -d '[:space:]' < "$body")
+              if [ "$compact" != '[]' ] && [ "$compact" != 'null' ] && [ "$compact" != '{}' ]; then
+                echo "::error::Anonymous RPC $fn returned data"
+                cat "$body"
+                return 1
+              fi
+              echo "::warning::Anonymous role can execute RPC $fn; revoke anon EXECUTE unless intentionally public."
+            fi
+          }
+
+          probe_rpc puplan_latest_replies '{"p_post_ids":[],"p_per_post":1}'
+          probe_rpc puplan_inbox_page '{"p_user_id":"00000000-0000-4000-8000-000000000000","p_limit":1,"p_before":null}'
