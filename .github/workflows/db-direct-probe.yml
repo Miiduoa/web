@@ -1,4 +1,4 @@
-name: nolu direct database recovery probe
+name: nolu database recovery probe
 
 on:
   push:
@@ -13,12 +13,18 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
-      - name: Probe direct Postgres edge route
+      - name: Verify nolu database through Edge health probe
+        shell: bash
         run: |
           set -euo pipefail
-          curl -sS --max-time 12 -D /tmp/h -o /tmp/b -w 'HTTP %{http_code}\n' \
-            'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe'
-          cat /tmp/h
-          cat /tmp/b
+          url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe'
+          code=$(curl -sS --max-time 45 -o /tmp/body -w '%{http_code}' "$url" || true)
+          body=$(cat /tmp/body 2>/dev/null || true)
+          echo "HTTP=$code"
+          echo "$body"
+          if [ "$code" != '200' ] || ! echo "$body" | grep -q '"ok":true'; then
+            echo 'nolu database path is not healthy.'
+            exit 1
+          fi
