@@ -1,0 +1,60 @@
+name: nolu browser auth connectivity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/auth.js'
+      - 'pu-plan/index.html'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/auth-browser-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nolu-browser-auth-connectivity
+  cancel-in-progress: true
+
+jobs:
+  browser-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-auth init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-auth install playwright >/dev/null 2>&1
+          cd /tmp/nolu-auth && npx playwright install --with-deps chromium >/dev/null
+      - name: Verify production browser can reach auth API
+        env:
+          NODE_PATH: /tmp/nolu-auth/node_modules
+        run: |
+          cat >/tmp/nolu-auth/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const page=await browser.newPage();
+              const consoleErrors=[];
+              page.on('console',m=>{if(m.type()==='error')consoleErrors.push(m.text())});
+              page.on('pageerror',e=>consoleErrors.push(String(e)));
+              await page.goto('https://miiduoa.github.io/web/',{waitUntil:'domcontentloaded',timeout:45000});
+              const result=await page.evaluate(async()=>{
+                const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
+                try{
+                  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',email:'browser-smoke-does-not-exist@example.invalid',password:'invalid-password-123'})});
+                  return {ok:true,status:r.status,acao:r.headers.get('access-control-allow-origin'),text:(await r.text()).slice(0,400)};
+                }catch(e){return {ok:false,error:String(e),name:e?.name||''}}
+              });
+              console.log('AUTH_BROWSER_RESULT',JSON.stringify(result));
+              if(!result.ok)throw new Error(`browser fetch failed: ${result.name} ${result.error}`);
+              if(result.status!==401&&result.status!==429)throw new Error(`unexpected login probe HTTP ${result.status}: ${result.text}`);
+              if(consoleErrors.some(x=>/content security policy|cors|blocked by/i.test(x)))throw new Error(`browser security error: ${consoleErrors.join(' | ')}`);
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-auth/check.cjs
