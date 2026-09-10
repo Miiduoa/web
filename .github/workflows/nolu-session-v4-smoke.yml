@@ -36,11 +36,12 @@ jobs:
           deno check supabase/functions/_shared/session-v4.ts supabase/functions/_shared/session-v4_test.ts
           deno check supabase/functions/pu-plan-api-v6/index.ts
           deno check supabase/functions/pu-plan-core-v1/index.ts
+          deno check supabase/functions/pu-plan-api/index.ts
           deno check supabase/functions/pu-plan-social/index.ts
           deno check supabase/functions/pu-plan-admin/index.ts
       - name: Run session security unit tests
         run: deno test supabase/functions/_shared/session-v4_test.ts
-      - name: Guard session design
+      - name: Guard session design and legacy CORS
         shell: bash
         run: |
           set -euo pipefail
@@ -57,6 +58,7 @@ jobs:
           active=[
               'supabase/functions/pu-plan-api-v6/index.ts',
               'supabase/functions/pu-plan-core-v1/index.ts',
+              'supabase/functions/pu-plan-api/index.ts',
               'supabase/functions/pu-plan-social/index.ts',
               'supabase/functions/pu-plan-admin/index.ts',
           ]
@@ -66,8 +68,14 @@ jobs:
               assert 'assertCredentialCurrent' in text, f'{path}: credential revocation missing'
               assert 'password_salt' in text, f'{path}: current credential not queried'
               assert '{v:3' not in text.replace(' ', ''), f'{path}: legacy v3 signer remains'
-          for path in active[:2]:
+          for path in active[:3]:
               text=Path(path).read_text()
               assert 'signSessionV4' in text, f'{path}: v4 signer missing'
-          print('v6/core/social/admin session integration guard passed')
+          legacy=Path('supabase/functions/pu-plan-api/index.ts').read_text()
+          assert "'Access-Control-Allow-Origin': '*'" not in legacy, 'legacy wildcard CORS remains'
+          assert 'ALLOWED_ORIGINS' in legacy, 'legacy origin allowlist missing'
+          assert 'ORIGIN_NOT_ALLOWED' in legacy, 'legacy evil-origin rejection missing'
+          change=legacy[legacy.index("if(action==='change_password')"):]
+          assert 'signSessionV4' in change.split("if(action==='rotate_recovery_code')",1)[0], 'password change must return a fresh v4 token'
+          print('active session integration and legacy CORS guard passed')
           PY
