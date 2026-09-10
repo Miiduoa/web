@@ -1,9 +1,10 @@
+import {cleanAvatar} from './core/state.js';
+
 const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,FALLBACK];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260910-r2';
-const MAX_PROFILE_AVATAR=180000;
+const VERSION='20260910-r3';
 const state={mode:'online',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION};
 let requestSequence=0,newestOfflineSequence=0;
 
@@ -27,12 +28,11 @@ function parseTokenUid(raw=token()){
 function currentUid(){const uid=parseTokenUid();const owner=ownerId();return uid&&owner&&uid===owner?uid:''}
 function localProfile(uid=currentUid()){
   if(!uid)return null;
-  const avatar=localStorage.getItem('puplan_avatar')||'';
   return {
     id:uid,
     display_name:cleanText(localStorage.getItem('puplan_name')||'使用者',80)||'使用者',
     username:cleanText(localStorage.getItem('puplan_username')||'',24),
-    avatar_data:avatar.length<=MAX_PROFILE_AVATAR?avatar:'',
+    avatar_data:cleanAvatar(localStorage.getItem('puplan_avatar')||''),
     bio:cleanText(localStorage.getItem('puplan_bio')||'',120),
     discoverable:localStorage.getItem('puplan_discoverable')!=='0',
     role:'user',profile_visibility:'public'
@@ -44,14 +44,19 @@ function readPending(uid=currentUid()){const v=safeJson(localStorage.getItem(pen
 function writePending(uid,value){if(uid)localStorage.setItem(pendingKey(uid),JSON.stringify(value||{}))}
 function snapshot(uid=currentUid(),profile=localProfile(uid)){
   if(!uid||!profile)return;
-  const data={uid,profile,courses:localCourses(),meta:localMeta(),savedAt:now()};
+  const safeProfile={...profile,avatar_data:cleanAvatar(profile?.avatar_data||'')};
+  const data={uid,profile:safeProfile,courses:localCourses(),meta:localMeta(),savedAt:now()};
   try{localStorage.setItem(snapshotKey(uid),JSON.stringify(data))}catch{}
 }
 function queueMutation(action,payload){
   const uid=currentUid();if(!uid)return false;
   const q=readPending(uid);
   if(action==='save_schedule')q.schedule={courses:Array.isArray(payload?.courses)?payload.courses.slice(0,80):[],changedAt:now()};
-  if(action==='update_profile')q.profile={payload:{...payload},changedAt:now()};
+  if(action==='update_profile'){
+    const safePayload={...payload};
+    if(Object.prototype.hasOwnProperty.call(safePayload,'avatar_data'))safePayload.avatar_data=cleanAvatar(safePayload.avatar_data||'');
+    q.profile={payload:safePayload,changedAt:now()};
+  }
   writePending(uid,q);snapshot(uid);setMode('offline');return true;
 }
 function setMode(mode,api=''){
@@ -87,7 +92,7 @@ function syntheticMutation(action,payload){
   if(!queueMutation(action,payload))return null;
   if(action==='update_profile'){
     const uid=currentUid(),p={...localProfile(uid),display_name:cleanText(payload.display_name,80),username:cleanText(payload.username,24),bio:cleanText(payload.bio,120),discoverable:payload.discoverable!==false};
-    if(Object.prototype.hasOwnProperty.call(payload,'avatar_data'))p.avatar_data=String(payload.avatar_data||'').slice(0,MAX_PROFILE_AVATAR);
+    if(Object.prototype.hasOwnProperty.call(payload,'avatar_data'))p.avatar_data=cleanAvatar(payload.avatar_data||'');
     return new Response(JSON.stringify({profile:p,queued:true,offline:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
   }
   return new Response(JSON.stringify({ok:true,queued:true,offline:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
