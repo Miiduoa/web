@@ -10,7 +10,7 @@ export function changeView(view){
   const titles={schedule:'我的課表',friends:'找人',ai:'安排',settings:'我的'};
   if($('#title'))$('#title').textContent=titles[view]||'';
   const schedule=view==='schedule';
-  if($('#add'))$('#add').hidden=!schedule;
+  if($('#add')){$('#add').hidden=!schedule;$('#add').style.visibility=''}
   if($('#mobileAdd'))$('#mobileAdd').hidden=!schedule;
   if($('#importSchedule'))$('#importSchedule').hidden=!schedule;
   if($('#shareTop'))$('#shareTop').hidden=!schedule;
