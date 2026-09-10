@@ -1,0 +1,58 @@
+name: temporary avatar hardening patch
+
+on:
+  push:
+    branches: [security/nolu-avatar-rendering-20260910]
+    paths:
+      - '.github/workflows/tmp-avatar-hardening-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: security/nolu-avatar-rendering-20260910
+      - name: Apply focused avatar sanitizer patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          social = Path('pu-plan/social-ui.js')
+          text = social.read_text()
+          if not text.startswith("import {cleanAvatar} from './core/state.js';\n"):
+              text = "import {cleanAvatar} from './core/state.js';\n" + text
+          old = "const avatar=(person,cls='avatar')=>{const src=person?.avatar||person?.avatar_data||'';const name=person?.name||person?.display_name||'?';return `<div class=\"${cls}\">${src?`<img src=\"${src}\" alt=\"${esc(name)}\">`:esc(initial(name))}</div>`};"
+          new = "const avatar=(person,cls='avatar')=>{const src=cleanAvatar(person?.avatar||person?.avatar_data||'');const name=person?.name||person?.display_name||'?';return `<div class=\"${cls}\">${src?`<img src=\"${src}\" alt=\"${esc(name)}\">`:esc(initial(name))}</div>`};"
+          if old not in text and new not in text:
+              raise SystemExit('social avatar target not found')
+          text = text.replace(old, new)
+          social.write_text(text)
+
+          admin = Path('pu-plan/admin.js')
+          text = admin.read_text()
+          if not text.startswith("import {cleanAvatar} from './core/state.js';\n"):
+              text = "import {cleanAvatar} from './core/state.js';\n" + text
+          old = "function avatar(u){return u?.avatar_data?`<span class=\"admin-avatar\"><img src=\"${esc(u.avatar_data)}\" alt=\"\"></span>`:`<span class=\"admin-avatar\">${esc((u?.display_name||'?')[0])}</span>`}"
+          new = "function avatar(u){const src=cleanAvatar(u?.avatar_data||'');return src?`<span class=\"admin-avatar\"><img src=\"${esc(src)}\" alt=\"\"></span>`:`<span class=\"admin-avatar\">${esc((u?.display_name||'?')[0])}</span>`}"
+          if old not in text and new not in text:
+              raise SystemExit('admin avatar target not found')
+          text = text.replace(old, new)
+          admin.write_text(text)
+          PY
+          git diff --check
+          git diff -- pu-plan/social-ui.js pu-plan/admin.js
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo 'No changes needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pu-plan/social-ui.js pu-plan/admin.js
+          git commit -m 'security(nolu): sanitize social and admin avatars'
+          git push origin HEAD:security/nolu-avatar-rendering-20260910
