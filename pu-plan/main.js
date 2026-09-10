@@ -1,5 +1,4 @@
 import './guest-privacy.js';
-import './avatar-guard.js';
 import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
 import {dialogsView} from './views/dialogs.js';
@@ -22,6 +21,14 @@ const scheduleUI=await import('./features/schedule.js');
 // saved classic timetable back to the old human presentation while it loads.
 localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule_presentation')||'human');
 
+// Restore the signed-in account's durable IndexedDB snapshot/outbox first. This
+// gives iPhone/PWA launches a second local copy before any cloud bootstrap runs.
+await import('./durable-bridge.js');
+
+// Some older modules still call the original API path directly. Give those
+// requests the same three-path transport failover before resilience captures fetch.
+await import('./transport-bridge.js');
+
 // Install the transport/offline resilience layer before cloud bootstrap. It can
 // fail over between cloud endpoints, serve the signed-in user's own cached data
 // during an outage, and queue safe writes until a cloud backend is healthy again.
@@ -32,12 +39,8 @@ await import('./resilience.js');
 // before semesters/auth/social/import modules can read or write account state.
 await import('./cloud.js');
 
-// Bind account controls first. The remaining modules all depend only on the shell,
-// app state, and the cloud bootstrap above, so fetch/evaluate them concurrently.
-// Keeping auth first preserves account-control ordering while removing the serial
-// feature-module waterfall that is especially costly on mobile/PWA connections.
-await startModule('./auth.js');
-await Promise.all([
+for(const path of [
+  './auth.js',
   './social-ui.js',
   './import.js',
   './semesters.js',
@@ -47,7 +50,7 @@ await Promise.all([
   './features/planner.js',
   './admin.js',
   './privacy.js'
-].map(startModule));
+])await startModule(path);
 
 // social-ui.js still contains a legacy timetable renderer. Until that module is
 // split, make features/schedule.js the final owner of schedule DOM and controls.
