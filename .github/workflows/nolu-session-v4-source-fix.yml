@@ -1,0 +1,40 @@
+name: nolu session v4 source fix
+
+on:
+  push:
+    branches: [security/nolu-session-v4-20260911]
+    paths:
+      - '.github/workflows/nolu-session-v4-source-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-social:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Patch production-derived social source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/pu-plan-social/index.ts')
+          text=p.read_text()
+          old="if(body.author_id)await db.rpc('puplan_adjust_affinity',{p_viewer:viewer.id,p_author:String(body.author_id),p_delta:direction>0?.5:-.65}).catch(()=>{});"
+          new="if(body.author_id){const affinity=await db.rpc('puplan_adjust_affinity',{p_viewer:viewer.id,p_author:String(body.author_id),p_delta:direction>0?.5:-.65});if(affinity.error)console.warn('affinity adjustment failed',affinity.error.code||affinity.error.message)}"
+          assert old in text, 'expected affinity source not found'
+          text=text.replace(old,new,1)
+          old="const raw=Array.isArray(body.user_ids)?body.user_ids:[],targets=[...new Set(raw.map(String).filter((x:string)=>x&&x!==u.id))].slice(0,20);"
+          new="const raw:any[]=Array.isArray(body.user_ids)?body.user_ids:[],targets:string[]=[...new Set<string>(raw.map((value:any)=>String(value)).filter((x:string)=>x&&x!==u.id))].slice(0,20);"
+          assert old in text, 'expected create_chat source not found'
+          text=text.replace(old,new,1)
+          p.write_text(text)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/pu-plan-social/index.ts
+          git diff --cached --check
+          git commit -m 'fix(nolu): type-check production social source'
+          git push
