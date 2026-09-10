@@ -12,8 +12,20 @@ async function startModule(path){
   catch(error){console.error(`nolu module failed: ${path}`,error);return null}
 }
 
+async function waitForCloudController(timeout=1800){
+  const started=performance.now();
+  while(!window.PUPLAN_CLOUD&&performance.now()-started<timeout){
+    await new Promise(resolve=>setTimeout(resolve,30));
+  }
+  return !!window.PUPLAN_CLOUD;
+}
+
 await import('./app.js');
-await import('./cloud.js');
+
+// cloud.js performs an authenticated bootstrap with top-level await. Start it first,
+// but do not let a slow/unreachable API freeze every other Nolu module (including PWA recovery).
+const cloudLoad=startModule('./cloud.js');
+await waitForCloudController();
 
 for(const path of [
   './auth.js',
@@ -27,3 +39,6 @@ for(const path of [
   './admin.js',
   './privacy.js'
 ])await startModule(path);
+
+// Keep the bootstrap alive in the background; startModule already reports failures.
+void cloudLoad;
