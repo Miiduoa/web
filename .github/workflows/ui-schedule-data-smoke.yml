@@ -68,6 +68,11 @@ jobs:
               await page.locator('[data-presentation="classic"]').click();
               await page.waitForTimeout(80);
 
+              console.log('VISIBILITY',JSON.stringify(await page.evaluate(()=>{
+                const info=sel=>{const e=document.querySelector(sel);if(!e)return null;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return{display:s.display,visibility:s.visibility,opacity:s.opacity,inline:e.style.display,hidden:e.hidden,w:r.width,h:r.height,classes:e.className}};
+                return{body:document.body.className,schedule:info('#schedule'),classic:info('#classicSchedule'),table:info('.table-wrap'),grid:info('#grid'),human:info('#humanWeek')};
+              })));
+              await page.screenshot({path:'ui-populated/debug-classic-390x844.png',fullPage:true});
               const viewport=await page.evaluate(()=>innerWidth);
               const docWidth=await page.evaluate(()=>document.documentElement.scrollWidth);
               assert(docWidth<=viewport+2,`page overflows horizontally: ${docWidth}/${viewport}`);
