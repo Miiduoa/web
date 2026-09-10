@@ -2,10 +2,12 @@ name: nolu durable sync smoke
 
 on:
   push:
-    branches: [main, fix/nolu-durable-sync-v2]
+    branches: [main, fix/nolu-durable-sync-v3]
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/auth.js'
       - 'pu-plan/resilience.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
@@ -30,13 +32,15 @@ jobs:
           node --check pu-plan/durable-bridge.js
           node --check pu-plan/resilience.js
           node --check pu-plan/main.js
+          node --check pu-plan/auth.js
+          node --check pu-plan/guest-privacy.js
           node --check pu-plan/sw.js
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-durable init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-durable install playwright >/dev/null 2>&1
           cd /tmp/nolu-durable && npx playwright install --with-deps chromium >/dev/null
-      - name: Verify IndexedDB snapshot and outbox recovery
+      - name: Verify IndexedDB snapshot, outbox recovery, and purge
         env:
           NODE_PATH: /tmp/nolu-durable/node_modules
         run: |
@@ -85,6 +89,18 @@ jobs:
               assert(recovered.course==='Durable 新課程','IndexedDB snapshot should restore the latest schedule');
               assert(recovered.pending.schedule?.courses?.[0]?.name==='Durable 新課程','IndexedDB outbox should rebuild the legacy pending queue');
               assert(recovered.mode==='offline','cloud outage should stay in offline protection mode');
+
+              await page.evaluate(uid=>window.NOLU_DURABLE.purge(uid),uid);
+              const purged=await page.evaluate(async uid=>({
+                snapshot:await window.NOLU_DURABLE.getSnapshot(uid),
+                rows:await window.NOLU_DURABLE.listMutations(uid),
+                legacySnapshot:localStorage.getItem(`nolu_account_snapshot_v1:${uid}`),
+                legacyPending:localStorage.getItem(`nolu_pending_mutations_v1:${uid}`)
+              }),uid);
+              console.log('DURABLE_PURGE',purged);
+              assert(purged.snapshot===null,'logout purge left an IndexedDB snapshot');
+              assert(Array.isArray(purged.rows)&&purged.rows.length===0,'logout purge left IndexedDB outbox rows');
+              assert(purged.legacySnapshot===null&&purged.legacyPending===null,'logout purge left legacy resilience data');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
