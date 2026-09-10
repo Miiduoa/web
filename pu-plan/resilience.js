@@ -4,8 +4,10 @@ const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api
 const FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,FALLBACK];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260910-r3';
-const state={mode:'online',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION};
+const VERSION='20260911-r4';
+const BASE_COOLDOWN=15000;
+const MAX_COOLDOWN=60000;
+const state={mode:'online',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION,endpoints:{}};
 let requestSequence=0,newestOfflineSequence=0;
 
 function now(){return Date.now()}
@@ -71,9 +73,29 @@ function setMode(mode,api=''){
   if(cloud&&mode==='offline')cloud.innerHTML='離線保護模式<br><b>本機資料可繼續使用</b><br><span>雲端恢復後會自動補同步。</span>';
   document.dispatchEvent(new CustomEvent('nolu:connectivity',{detail:{...state}}));
 }
-function apiCandidates(requested){
+function endpointState(api){
+  if(!state.endpoints[api])state.endpoints[api]={failures:0,openUntil:0,lastFailureAt:0,lastSuccessAt:0,lastError:''};
+  return state.endpoints[api];
+}
+function circuitOpen(api,at=now()){return endpointState(api).openUntil>at}
+function markSuccess(api){
+  const h=endpointState(api);h.failures=0;h.openUntil=0;h.lastSuccessAt=now();h.lastError='';
+}
+function markFailure(api,error){
+  const h=endpointState(api);h.failures=Math.min(8,(h.failures||0)+1);h.lastFailureAt=now();h.lastError=String(error?.message||error||'cloud unavailable');
+  const cooldown=Math.min(MAX_COOLDOWN,BASE_COOLDOWN*Math.pow(2,Math.max(0,h.failures-1)));
+  h.openUntil=now()+cooldown;
+}
+function allApiCandidates(requested){
   const extra=Array.isArray(window.NOLU_SECONDARY_APIS)?window.NOLU_SECONDARY_APIS.filter(x=>typeof x==='string'&&/^https:\/\//.test(x)):[];
-  return [...new Set([requested,...CORE_APIS,...extra])];
+  return [...new Set([requested,...CORE_APIS,...extra].filter(Boolean))];
+}
+function apiCandidates(requested,{force=false}={}){
+  const all=allApiCandidates(requested);return force?all:all.filter(api=>!circuitOpen(api));
+}
+function earliestProbe(requested){
+  const all=allApiCandidates(requested);if(!all.length)return'';
+  return [...all].sort((a,b)=>(endpointState(a).openUntil||0)-(endpointState(b).openUntil||0))[0];
 }
 function requestBody(options){if(typeof options?.body!=='string')return null;return safeJson(options.body,null)}
 function isCoreUrl(url){return CORE_APIS.includes(String(url))||(Array.isArray(window.NOLU_SECONDARY_APIS)&&window.NOLU_SECONDARY_APIS.includes(String(url)))}
@@ -97,6 +119,17 @@ function syntheticMutation(action,payload){
   }
   return new Response(JSON.stringify({ok:true,queued:true,offline:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 }
+function offlineResponse(action,body,sequence){
+  if(action==='bootstrap'){
+    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
+    return syntheticBootstrap();
+  }
+  if(action==='save_schedule'||action==='update_profile'){
+    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
+    return syntheticMutation(action,body);
+  }
+  return null;
+}
 function clearMatchingPending(uid,action,body){
   const q=readPending(uid);
   if(action==='save_schedule'&&q.schedule){
@@ -110,8 +143,6 @@ function clearMatchingPending(uid,action,body){
 async function captureSuccess(res,body,api,sequence){
   if(!res?.ok)return;
   state.activeApi=api;
-  // A delayed response from an older request must not override a newer request that
-  // already fell back to offline mode.
   if(sequence>=newestOfflineSequence)setMode('online',api);
   try{
     const data=await res.clone().json();
@@ -126,31 +157,33 @@ window.fetch=async function noluResilientFetch(input,options={}){
   if(!isCoreUrl(url))return nativeFetch(input,options);
   const sequence=++requestSequence;
   const body=requestBody(options),action=String(body?.action||'');let lastError=null,lastResponse=null;
-  for(const api of apiCandidates(String(url))){
+  const candidates=apiCandidates(String(url));
+  if(!candidates.length){
+    state.lastError='all cloud circuits are temporarily open';
+    const local=offlineResponse(action,body,sequence);if(local)return local;
+    throw new TypeError('Nolu cloud temporarily unavailable');
+  }
+  for(const api of candidates){
     if(options?.signal?.aborted)break;
     try{
       const res=await timedFetch(api,options,2400);lastResponse=res;
-      if(res.status<500){captureSuccess(res,body,api,sequence);return res}
-      lastError=new Error(`HTTP ${res.status}`);
-    }catch(e){lastError=e}
+      if(res.status<500){markSuccess(api);captureSuccess(res,body,api,sequence);return res}
+      lastError=new Error(`HTTP ${res.status}`);markFailure(api,lastError);
+    }catch(e){lastError=e;markFailure(api,e)}
   }
   state.lastError=String(lastError||'cloud unavailable');
-  if(action==='bootstrap'){
-    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
-    const local=syntheticBootstrap();if(local)return local;
-  }
-  if(action==='save_schedule'||action==='update_profile'){
-    newestOfflineSequence=Math.max(newestOfflineSequence,sequence);
-    const local=syntheticMutation(action,body);if(local)return local;
-  }
+  const local=offlineResponse(action,body,sequence);if(local)return local;
   if(lastResponse)return lastResponse;
   throw lastError||new TypeError('Nolu cloud unavailable');
 };
 
 async function directJson(api,action,payload={},auth=true,ms=5000){
   const headers={'Content-Type':'application/json'};if(auth&&token())headers.Authorization=`Bearer ${token()}`;
-  const res=await timedFetch(api,{method:'POST',headers,body:JSON.stringify({action,...payload}),cache:'no-store'},ms);
-  const data=await res.json().catch(()=>({}));return {res,data};
+  try{
+    const res=await timedFetch(api,{method:'POST',headers,body:JSON.stringify({action,...payload}),cache:'no-store'},ms);
+    if(res.status<500)markSuccess(api);else markFailure(api,new Error(`HTTP ${res.status}`));
+    const data=await res.json().catch(()=>({}));return {res,data};
+  }catch(error){markFailure(api,error);throw error}
 }
 async function flushPending(api){
   const uid=currentUid();if(!uid)return false;
@@ -176,7 +209,9 @@ let recovering=false;
 async function recover(){
   if(recovering||document.visibilityState==='hidden'||!currentUid())return;recovering=true;
   try{
-    for(const api of apiCandidates(PRIMARY)){
+    let candidates=apiCandidates(PRIMARY);
+    if(!candidates.length){const probe=earliestProbe(PRIMARY);candidates=probe?[probe]:[]}
+    for(const api of candidates){
       try{
         const {res}=await directJson(api,'bootstrap',{},true,3600);
         if(res.ok){if(await flushPending(api)){setMode('online',api);sessionStorage.setItem('puplan_api_index',String(CORE_APIS.indexOf(api)>=0?CORE_APIS.indexOf(api):0));location.reload()}return}
@@ -195,4 +230,4 @@ async function recover(){
   setInterval(recover,30000);
 })();
 
-window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid};
+window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates};

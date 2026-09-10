@@ -39,18 +39,24 @@ async function run(storeName,mode,fn){
   const db=await openDb();
   if(!db)return null;
   return new Promise(resolve=>{
-    let settled=false;
+    let settled=false,completed=false,resultReady=false,result=null;
     const finish=value=>{if(!settled){settled=true;resolve(value)}};
     let tx;
     try{tx=db.transaction(storeName,mode)}catch{return finish(null)}
     tx.onabort=()=>finish(null);
     tx.onerror=()=>finish(null);
+    tx.oncomplete=()=>{completed=true;if(resultReady)finish(result)};
     try{
-      const value=fn(tx.objectStore(storeName),tx);
-      Promise.resolve(value).then(v=>{
-        tx.oncomplete=()=>finish(v);
-      }).catch(()=>finish(null));
-    }catch{finish(null)}
+      Promise.resolve(fn(tx.objectStore(storeName),tx)).then(value=>{
+        result=value;resultReady=true;if(completed)finish(value);
+      }).catch(()=>{
+        try{tx.abort()}catch{}
+        finish(null);
+      });
+    }catch{
+      try{tx.abort()}catch{}
+      finish(null);
+    }
   });
 }
 
