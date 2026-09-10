@@ -1,0 +1,101 @@
+name: nolu auth cache hardening
+
+on:
+  push:
+    branches: [main, audit/nolu-auth-cache-hardening-20260910]
+    paths:
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/core/state.js'
+      - 'pu-plan/community.js'
+      - 'pu-plan/discover.js'
+      - 'pu-plan/admin.js'
+      - '.github/workflows/nolu-auth-cache-hardening.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/core/state.js'
+      - 'pu-plan/community.js'
+      - 'pu-plan/discover.js'
+      - 'pu-plan/admin.js'
+      - '.github/workflows/nolu-auth-cache-hardening.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rejected-session-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-auth-cache init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-auth-cache install playwright >/dev/null 2>&1
+          cd /tmp/nolu-auth-cache && npx playwright install --with-deps chromium >/dev/null
+      - name: Server-rejected session must purge private browser state
+        env:
+          NODE_PATH: /tmp/nolu-auth-cache/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-auth-cache/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const UID='77777777-7777-4777-8777-777777777777';
+          const payload=Buffer.from(JSON.stringify({v:3,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600})).toString('base64url');
+          const token=`${payload}.forged-signature`;
+          const privatePattern=/PRIVATE REJECTED|Secret Teacher|Secret School/;
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',route=>route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'}));
+              await page.addInitScript(({UID,token})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',token);
+                localStorage.setItem('puplan_course_owner',UID);
+                localStorage.setItem('puplan_name','PRIVATE REJECTED USER');
+                localStorage.setItem('puplan_username','private_rejected');
+                localStorage.setItem('puplan_bio','PRIVATE REJECTED BIO');
+                localStorage.setItem('puplan_avatar','data:image/png;base64,AAAA');
+                localStorage.setItem('puplan_discoverable','1');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'secret',name:'PRIVATE REJECTED COURSE',day:1,start:1,end:2,teacher:'Secret Teacher',room:'S101',color:'violet'}]));
+                localStorage.setItem('puplan_friends',JSON.stringify([{id:'secret-friend',name:'PRIVATE REJECTED FRIEND'}]));
+                localStorage.setItem('puplan_schedule_meta',JSON.stringify({school:'Secret School'}));
+                localStorage.setItem(`nolu_account_snapshot_v1:${UID}`,JSON.stringify({uid:UID,profile:{display_name:'PRIVATE REJECTED USER'},courses:[{name:'PRIVATE REJECTED SNAPSHOT'}]}));
+                localStorage.setItem(`nolu_pending_mutations_v1:${UID}`,JSON.stringify({schedule:{courses:[{name:'PRIVATE REJECTED PENDING'}],changedAt:Date.now()}}));
+                sessionStorage.setItem('puplan_assistant_history','PRIVATE REJECTED AI CHAT');
+              },{UID,token});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>!localStorage.getItem('puplan_session'),{timeout:15000});
+              await page.waitForTimeout(250);
+              const result=await page.evaluate(UID=>{
+                const fixed=['puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
+                return {
+                  fixed:Object.fromEntries(fixed.map(k=>[k,localStorage.getItem(k)])),
+                  snapshot:localStorage.getItem(`nolu_account_snapshot_v1:${UID}`),
+                  pending:localStorage.getItem(`nolu_pending_mutations_v1:${UID}`),
+                  assistant:sessionStorage.getItem('puplan_assistant_history'),
+                  body:document.body.innerText,
+                  gateOff:document.querySelector('#authGate')?.classList.contains('off')
+                };
+              },UID);
+              console.log('REJECTED_SESSION_RESULT',result);
+              assert(Object.values(result.fixed).every(v=>v===null),'server-rejected session left fixed private cache behind');
+              assert(result.snapshot===null,'server-rejected session left resilience snapshot behind');
+              assert(result.pending===null,'server-rejected session left pending mutation behind');
+              assert(result.assistant===null,'server-rejected session left AI session data behind');
+              assert(!privatePattern.test(result.body),'server-rejected session left private data rendered in DOM');
+              assert(result.gateOff===false,'login gate was not shown after server rejection');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 70s node /tmp/nolu-auth-cache/check.cjs
