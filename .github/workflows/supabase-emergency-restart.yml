@@ -2,6 +2,10 @@ name: Supabase emergency restart
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ops/nolu-db-restart-v2-20260911]
+    paths:
+      - '.github/workflows/supabase-emergency-restart.yml'
 
 permissions:
   contents: read
