@@ -16,10 +16,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: nolu-data-api-exposure
+  cancel-in-progress: true
+
 jobs:
   data-api-exposure:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 3
     steps:
       - name: Probe anonymous REST and Storage exposure
         shell: bash
@@ -49,15 +53,17 @@ jobs:
           reachable=0
           for table in "${tables[@]}"; do
             body="/tmp/rest-${table}.json"
-            code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+            rc=0
+            code=$(curl -sS --connect-timeout 2 --max-time 4 \
               -o "$body" -w '%{http_code}' \
               "$PROJECT_URL/rest/v1/$table?select=*&limit=1" \
               -H "apikey: $PUBLISHABLE_KEY" \
-              -H 'Accept: application/json') || {
-                echo "::error::REST probe transport failed for $table"
-                failed=1
-                continue
-              }
+              -H 'Accept: application/json') || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::REST gateway probe failed for $table (curl=$rc HTTP=${code:-000})"
+              failed=1
+              continue
+            fi
 
             echo "$table -> HTTP $code"
             if [[ "$code" =~ ^2 ]]; then
@@ -78,25 +84,27 @@ jobs:
           done
 
           storage_body=/tmp/storage-list.json
-          storage_code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+          rc=0
+          storage_code=$(curl -sS --connect-timeout 2 --max-time 4 \
             -o "$storage_body" -w '%{http_code}' -X POST \
             "$PROJECT_URL/storage/v1/object/list/puplan-media" \
             -H "apikey: $PUBLISHABLE_KEY" \
             -H 'Content-Type: application/json' \
-            --data '{"prefix":"","limit":1,"offset":0}') || {
-              echo '::error::Storage anonymous listing probe transport failed'
-              failed=1
-              storage_code=000
-            }
-          echo "puplan-media listing -> HTTP $storage_code"
-          if [[ "$storage_code" =~ ^2 ]]; then
-            compact=$(tr -d '[:space:]' < "$storage_body")
-            if [ "$compact" != '[]' ]; then
-              echo '::error::Anonymous Storage listing returned media metadata'
-              cat "$storage_body"
-              failed=1
-            else
-              echo '::warning::Anonymous role can call the media listing endpoint but currently receives no objects.'
+            --data '{"prefix":"","limit":1,"offset":0}') || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Storage anonymous listing probe failed (curl=$rc HTTP=${storage_code:-000})"
+            failed=1
+          else
+            echo "puplan-media listing -> HTTP $storage_code"
+            if [[ "$storage_code" =~ ^2 ]]; then
+              compact=$(tr -d '[:space:]' < "$storage_body")
+              if [ "$compact" != '[]' ]; then
+                echo '::error::Anonymous Storage listing returned media metadata'
+                cat "$storage_body"
+                failed=1
+              else
+                echo '::warning::Anonymous role can call the media listing endpoint but currently receives no objects.'
+              fi
             fi
           fi
 
@@ -112,14 +120,17 @@ jobs:
           set -euo pipefail
           probe_rpc() {
             local fn="$1" payload="$2"
-            local body="/tmp/rpc-${fn}.json"
-            local code
-            code=$(curl -sS --retry 2 --retry-all-errors --retry-delay 1 --max-time 15 \
+            local body="/tmp/rpc-${fn}.json" code rc=0
+            code=$(curl -sS --connect-timeout 2 --max-time 4 \
               -o "$body" -w '%{http_code}' -X POST \
               "$PROJECT_URL/rest/v1/rpc/$fn" \
               -H "apikey: $PUBLISHABLE_KEY" \
               -H 'Content-Type: application/json' \
-              --data "$payload")
+              --data "$payload") || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::RPC gateway probe failed for $fn (curl=$rc HTTP=${code:-000})"
+              return 1
+            fi
             echo "$fn -> HTTP $code"
             if [[ "$code" =~ ^2 ]]; then
               compact=$(tr -d '[:space:]' < "$body")
