@@ -1,3 +1,4 @@
+import {cleanAvatar} from './core/state.js';
 const SOCIAL_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const SUPABASE_URL='https://hrrmkrayvrgnwcroyttp.supabase.co';
 const SUPABASE_KEY='sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN';
@@ -17,7 +18,8 @@ async function request(action,payload={}){
   return data;
 }
 function avatar(p,cls='avatar'){
-  return p?.avatar_data?`<div class="${cls}"><img src="${esc(p.avatar_data)}" alt=""></div>`:`<div class="${cls}">${esc((p?.display_name||'?').slice(0,1))}</div>`;
+  const src=cleanAvatar(p?.avatar_data||'');
+  return src?`<div class="${cls}"><img src="${esc(src)}" alt=""></div>`:`<div class="${cls}">${esc((p?.display_name||'?').slice(0,1))}</div>`;
 }
 function timeAgo(v){
   const d=new Date(v),m=Math.floor((Date.now()-d.getTime())/60000);
