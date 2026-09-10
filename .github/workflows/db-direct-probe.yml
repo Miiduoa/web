@@ -20,4 +20,5 @@ jobs:
           set -euo pipefail
           curl -sS --max-time 12 -D /tmp/h -o /tmp/b -w 'HTTP %{http_code}\n' \
             'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe'
+          cat /tmp/h
           cat /tmp/b
