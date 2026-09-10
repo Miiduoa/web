@@ -22,6 +22,8 @@ async function safeLogout(){
   const btn=$('#logout');
   if(btn){btn.disabled=true;btn.textContent='登出中…'}
   try{
+    const accountId=cloud.getProfile?.()?.id||localStorage.getItem('puplan_course_owner')||'';
+    if(accountId)await window.NOLU_DURABLE?.purge?.(accountId).catch?.(()=>{});
     clearAccountCache();
     await cloud.logout?.();
     cloud.showGate?.('login');
