@@ -1,0 +1,111 @@
+name: nolu populated schedule check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/features/schedule.js'
+      - 'pu-plan/styles/schedule.css'
+      - 'pu-plan/views/schedule.js'
+      - 'pu-plan/app.js'
+      - '.github/workflows/ui-schedule-data-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nolu-populated-schedule
+  cancel-in-progress: true
+
+jobs:
+  populated-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-populated init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-populated install playwright >/dev/null 2>&1
+          cd /tmp/nolu-populated && npx playwright install --with-deps chromium >/dev/null
+      - name: Start site
+        run: |
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-populated-http.log 2>&1 &
+          for i in {1..20}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0; sleep .25; done
+          exit 1
+      - name: Verify populated timetable on iPhone width
+        env:
+          NODE_PATH: /tmp/nolu-populated/node_modules
+        run: |
+          mkdir -p ui-populated
+          cat >/tmp/nolu-populated/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const sample=[
+            {id:'c1',name:'統計學(一)',day:2,start:3,end:4,teacher:'陳武林',room:'主顧303（PH303）',color:'violet'},
+            {id:'c2',name:'職場簡報技巧',day:3,start:6,end:7,teacher:'張藝寶',room:'伯鐸413（SP413）',color:'blue'},
+            {id:'c3',name:'資料庫系統實作',day:4,start:3,end:4,teacher:'鄭婉淑',room:'任垣5C310（計310）',color:'mint'},
+            {id:'c4',name:'旅遊英語與文化',day:4,start:5,end:6,teacher:'周書左',room:'任垣303（AK303）',color:'orange'},
+            {id:'c5',name:'資訊管理專題',day:5,start:3,end:4,teacher:'測試老師',room:'主顧410',color:'pink'},
+            {id:'c6',name:'人工智慧導論',day:5,start:7,end:8,teacher:'測試老師',room:'主顧411',color:'lime'},
+            {id:'c7',name:'藝術經典與美學素養（永續與在地）',day:5,start:9,end:10,teacher:'測試老師',room:'任垣443（AK443）',color:'gray'}
+          ];
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true,serviceWorkers:'block'});
+              const page=await context.newPage();
+              await page.addInitScript(sample=>{
+                localStorage.setItem('puplan_guest','1');
+                localStorage.setItem('puplan_courses',JSON.stringify(sample));
+                localStorage.setItem('puplan_schedule_mode','week');
+                localStorage.setItem('puplan_schedule_presentation','classic');
+              },sample);
+              await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelector('#count')?.textContent==='7');
+              await page.evaluate(()=>document.querySelector('#authGate')?.classList.add('off'));
+              await page.waitForTimeout(80);
+
+              const viewport=await page.evaluate(()=>innerWidth);
+              const docWidth=await page.evaluate(()=>document.documentElement.scrollWidth);
+              assert(docWidth<=viewport+2,`page overflows horizontally: ${docWidth}/${viewport}`);
+              assert(await page.locator('[data-presentation="classic"]').evaluate(e=>e.classList.contains('on')),'classic presentation not selected');
+              assert(await page.locator('[data-schedule-mode="week"]').evaluate(e=>e.classList.contains('on')),'week mode not selected');
+              assert(await page.locator('.classic-schedule').isVisible(),'classic schedule is hidden');
+              assert(await page.locator('.table-wrap').isVisible(),'week grid wrapper is hidden');
+              assert(await page.locator('#grid .course-slot').count()===7,'week grid did not render all 7 courses');
+              const wrap=await page.locator('.table-wrap').boundingBox();
+              assert(wrap&&wrap.width>300&&wrap.height>400,'week grid wrapper has invalid size');
+              const hero=await page.locator('.hero-main').boundingBox();
+              const greet=await page.locator('#greet').boundingBox();
+              assert(hero&&greet&&greet.x>=hero.x-1&&greet.x+greet.width<=hero.x+hero.width+1,'greeting exceeds hero card');
+              await page.screenshot({path:'ui-populated/classic-week-390x844.png',fullPage:true});
+
+              await page.locator('[data-schedule-mode="day"]').click();
+              await page.locator('[data-day="4"]').click();
+              await page.waitForTimeout(40);
+              assert(await page.locator('.mobile-list').isVisible(),'classic day list is hidden');
+              assert(await page.locator('.mobile-course').count()===2,'Thursday should render 2 courses in day mode');
+              await page.screenshot({path:'ui-populated/classic-day-390x844.png',fullPage:true});
+
+              await page.locator('[data-presentation="human"]').click();
+              await page.locator('[data-schedule-mode="week"]').click();
+              await page.waitForTimeout(40);
+              assert(await page.locator('.human-week').isVisible(),'human week is hidden');
+              assert(await page.locator('.human-day').count()===5,'human week must render five weekdays');
+              assert(await page.locator('.human-course').count()===7,'human week did not render all 7 courses');
+              await page.screenshot({path:'ui-populated/human-week-390x844.png',fullPage:true});
+              await context.close();
+            } finally { await browser.close(); }
+          })().then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-populated/check.cjs
+      - name: Upload populated screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nolu-populated-schedule
+          path: ui-populated/*.png
+          retention-days: 3
