@@ -25,6 +25,10 @@ localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule
 // gives iPhone/PWA launches a second local copy before any cloud bootstrap runs.
 await import('./durable-bridge.js');
 
+// Some older modules still call the original API path directly. Give those
+// requests the same three-path transport failover before resilience captures fetch.
+await import('./transport-bridge.js');
+
 // Install the transport/offline resilience layer before cloud bootstrap. It can
 // fail over between cloud endpoints, serve the signed-in user's own cached data
 // during an outage, and queue safe writes until a cloud backend is healthy again.
