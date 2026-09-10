@@ -21,7 +21,7 @@ concurrency:
 jobs:
   browser-auth:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - name: Install Playwright
@@ -45,10 +45,13 @@ jobs:
               await page.goto('https://miiduoa.github.io/web/',{waitUntil:'domcontentloaded',timeout:45000});
               const result=await page.evaluate(async()=>{
                 const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
+                const ctrl=new AbortController();
+                const timer=setTimeout(()=>ctrl.abort(),12000);
                 try{
-                  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',email:'browser-smoke-does-not-exist@example.invalid',password:'invalid-password-123'})});
+                  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',email:'browser-smoke-does-not-exist@example.invalid',password:'invalid-password-123'}),signal:ctrl.signal,cache:'no-store'});
                   return {ok:true,status:r.status,acao:r.headers.get('access-control-allow-origin'),text:(await r.text()).slice(0,400)};
                 }catch(e){return {ok:false,error:String(e),name:e?.name||''}}
+                finally{clearTimeout(timer)}
               });
               console.log('AUTH_BROWSER_RESULT',JSON.stringify(result));
               if(!result.ok)throw new Error(`browser fetch failed: ${result.name} ${result.error}`);
@@ -57,4 +60,4 @@ jobs:
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          timeout 120s node /tmp/nolu-auth/check.cjs
+          timeout 90s node /tmp/nolu-auth/check.cjs
