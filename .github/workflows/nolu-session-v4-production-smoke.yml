@@ -1,0 +1,131 @@
+name: nolu session v4 production attack smoke
+
+on:
+  push:
+    branches: [main, security/nolu-session-v4-production-smoke-20260911]
+    paths:
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
+      - 'supabase/functions/pu-plan-api/**'
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-session-v4-production-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
+      - 'supabase/functions/pu-plan-api/**'
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-session-v4-production-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-attack-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Probe production auth and CORS boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1'
+          slugs=(pu-plan-api-v6 pu-plan-core-v1 pu-plan-api pu-plan-social pu-plan-admin)
+
+          action_for() {
+            case "$1" in
+              pu-plan-api-v6|pu-plan-core-v1|pu-plan-api) echo bootstrap ;;
+              pu-plan-social) echo me ;;
+              pu-plan-admin) echo whoami ;;
+            esac
+          }
+
+          call() {
+            local slug="$1" method="$2" origin="$3" auth="$4" body="$5" tag="$6"
+            local h="/tmp/${tag}.headers" b="/tmp/${tag}.body"
+            : >"$h"; : >"$b"
+            args=(-sS --max-time 25 -X "$method" -D "$h" -o "$b" -w '%{http_code}')
+            [ -n "$origin" ] && args+=(-H "Origin: $origin")
+            [ -n "$auth" ] && args+=(-H "Authorization: Bearer $auth")
+            if [ "$method" != GET ] && [ "$method" != HEAD ] && [ "$method" != OPTIONS ]; then
+              args+=(-H 'Content-Type: application/json' --data-binary "$body")
+            fi
+            curl "${args[@]}" "$base/$slug"
+          }
+
+          assert_code() {
+            local got="$1" want="$2" tag="$3"
+            if [ "$got" != "$want" ]; then
+              echo "::error::$tag expected HTTP $want, got $got"
+              cat "/tmp/${tag}.body" 2>/dev/null || true
+              exit 1
+            fi
+          }
+
+          b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
+          now=$(date +%s)
+          v3_payload=$(printf '{"v":3,"uid":"00000000-0000-4000-8000-000000000000","iat":%s,"exp":%s}' "$now" "$((now+3600))" | b64url)
+          fake_sig=$(printf 'not-a-real-hmac-signature' | b64url)
+          forged_v3="${v3_payload}.${fake_sig}"
+
+          for slug in "${slugs[@]}"; do
+            action=$(action_for "$slug")
+            echo "=== $slug ==="
+
+            for method in GET PUT PATCH DELETE; do
+              tag="${slug}-${method,,}"
+              code=$(call "$slug" "$method" '' '' '{}' "$tag")
+              assert_code "$code" 405 "$tag"
+            done
+
+            tag="${slug}-unauth"
+            code=$(call "$slug" POST '' '' "{\"action\":\"$action\"}" "$tag")
+            assert_code "$code" 401 "$tag"
+
+            tag="${slug}-forged-v3"
+            code=$(call "$slug" POST '' "$forged_v3" "{\"action\":\"$action\"}" "$tag")
+            assert_code "$code" 401 "$tag"
+
+            tag="${slug}-proto"
+            code=$(call "$slug" POST '' "$forged_v3" '{"action":"bootstrap","__proto__":{"is_admin":true},"constructor":{"prototype":{"role":"admin"}}}' "$tag")
+            assert_code "$code" 401 "$tag"
+
+            tag="${slug}-malformed"
+            code=$(call "$slug" POST '' '' '{not-json' "$tag")
+            assert_code "$code" 401 "$tag"
+
+            tag="${slug}-evil-options"
+            code=$(call "$slug" OPTIONS 'https://evil.example' '' '{}' "$tag")
+            assert_code "$code" 403 "$tag"
+
+            tag="${slug}-good-options"
+            code=$(call "$slug" OPTIONS 'https://miiduoa.github.io' '' '{}' "$tag")
+            assert_code "$code" 200 "$tag"
+            allow=$(awk 'BEGIN{IGNORECASE=1}/^access-control-allow-origin:/{gsub(/\r/,"");sub(/^[^:]+:[[:space:]]*/,"");print;exit}' "/tmp/${tag}.headers")
+            [ "$allow" = 'https://miiduoa.github.io' ] || { echo "::error::$slug wrong allow-origin: $allow"; exit 1; }
+            if grep -Eqi '^access-control-allow-credentials:[[:space:]]*true' "/tmp/${tag}.headers"; then
+              echo "::error::$slug must not use credentialed CORS"
+              exit 1
+            fi
+
+            for file in /tmp/${slug}-*.body /tmp/${slug}-*.headers; do
+              if grep -Eqi 'service[_ -]?role|password_hash|password_salt|recovery_hash|postgres(ql)?://|Deno\.env|stack[[:space:]]*trace' "$file"; then
+                echo "::error::$slug leaked a sensitive implementation detail in $file"
+                cat "$file"
+                exit 1
+              fi
+            done
+          done
+
+          if grep -Eqi '^access-control-allow-origin:[[:space:]]*\*' /tmp/pu-plan-api-good-options.headers; then
+            echo '::error::legacy API wildcard CORS returned in production'
+            exit 1
+          fi
+
+          echo 'production session attack smoke passed'
