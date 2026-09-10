@@ -1,0 +1,49 @@
+name: nolu session v4 security
+
+on:
+  push:
+    branches: [security/nolu-session-v4-20260911, main]
+    paths:
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/functions/_shared/session-v4_test.ts'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
+      - 'supabase/functions/pu-plan-api/**'
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-session-v4-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/nolu-session-v4-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  session-v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check session primitive
+        run: deno check supabase/functions/_shared/session-v4.ts supabase/functions/_shared/session-v4_test.ts
+      - name: Run session security unit tests
+        run: deno test supabase/functions/_shared/session-v4_test.ts
+      - name: Guard session design
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'SESSION_VERSION = 4' supabase/functions/_shared/session-v4.ts
+          grep -q 'SESSION_UPGRADE_REQUIRED' supabase/functions/_shared/session-v4.ts
+          grep -q 'SESSION_REVOKED' supabase/functions/_shared/session-v4.ts
+          grep -q 'nolu-session-v4:' supabase/functions/_shared/session-v4.ts
+          if grep -Eqi 'password_hash|recovery_code|service_role' supabase/functions/_shared/session-v4.ts; then
+            echo 'session payload/helper must not depend on password hashes or recovery secrets'
+            exit 1
+          fi
