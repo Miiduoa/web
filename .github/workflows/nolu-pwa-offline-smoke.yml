@@ -1,0 +1,78 @@
+name: nolu PWA offline shell
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/nolu-pwa-offline-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/nolu-pwa-offline-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-pwa init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-pwa install playwright >/dev/null 2>&1
+          cd /tmp/nolu-pwa && npx playwright install --with-deps chromium >/dev/null
+      - name: Install once, then launch with the network offline
+        env:
+          NODE_PATH: /tmp/nolu-pwa/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-pwa/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const page=await context.newPage();
+              await page.addInitScript(()=>localStorage.setItem('puplan_guest','1'));
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/**',r=>r.fulfill({status:503,contentType:'application/json',body:'{"message":"offline test"}'}));
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'networkidle',timeout:30000});
+              await page.waitForFunction(async()=>{
+                if(!('serviceWorker'in navigator))return false;
+                const reg=await navigator.serviceWorker.ready;
+                return !!reg.active;
+              },{timeout:15000});
+              await page.waitForTimeout(1000);
+              const cached=await page.evaluate(async()=>{
+                const keys=await caches.keys();
+                const cache=await caches.open(keys.find(k=>k.startsWith('nolu-shell-'))||'');
+                const required=['main.js','avatar-guard.js','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js','cloud.js'];
+                const hits={};
+                for(const name of required)hits[name]=!!(await cache.match(new URL(name,location.href).href));
+                return {keys,hits};
+              });
+              console.log('PWA_CACHE',cached);
+              assert(Object.values(cached.hits).every(Boolean),'critical offline modules were not precached');
+              await context.setOffline(true);
+              await page.reload({waitUntil:'domcontentloaded',timeout:20000});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelector('#humanWeek'),{timeout:10000});
+              const result=await page.evaluate(()=>({
+                gateHidden:document.querySelector('#authGate')?.classList.contains('off'),
+                schedule:!!document.querySelector('#humanWeek'),
+                main:!!window.PUPLAN_APP,
+                errors:document.body.innerText.includes('載入失敗')
+              }));
+              console.log('PWA_OFFLINE_RESULT',result);
+              assert(result.main&&result.schedule,'PWA app shell did not start offline');
+              assert(result.gateHidden===true,'guest mode should remain usable offline');
+              assert(result.errors===false,'offline launch exposed a load failure');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 90s node /tmp/nolu-pwa/check.cjs
