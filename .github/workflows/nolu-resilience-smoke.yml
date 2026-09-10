@@ -1,0 +1,83 @@
+name: nolu resilience smoke
+
+on:
+  push:
+    branches: [main, fix/nolu-resilience-v1]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/cloud.js'
+      - '.github/workflows/nolu-resilience-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/cloud.js'
+      - '.github/workflows/nolu-resilience-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-failover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax check
+        run: |
+          node --check pu-plan/resilience.js
+          node --check pu-plan/main.js
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-resilience init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-resilience install playwright >/dev/null 2>&1
+          cd /tmp/nolu-resilience && npx playwright install --with-deps chromium >/dev/null
+      - name: Verify cached account opens and queues writes while cloud is down
+        env:
+          NODE_PATH: /tmp/nolu-resilience/node_modules
+        run: |
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
+          cat >/tmp/nolu-resilience/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              await context.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',route=>route.abort('timedout'));
+              const page=await context.newPage();
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              const uid='11111111-1111-4111-8111-111111111111';
+              const payload=b64(JSON.stringify({v:3,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}));
+              await page.evaluate(({uid,token})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',token);
+                localStorage.setItem('puplan_course_owner',uid);
+                localStorage.setItem('puplan_name','Offline Test');
+                localStorage.setItem('puplan_username','offline_test');
+                localStorage.setItem('puplan_courses',JSON.stringify([{id:'c1',name:'離線課程',day:1,start:1,end:2,teacher:'',room:'A101',color:'violet'}]));
+              },{uid,token:`${payload}.test-signature`});
+              await page.reload({waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.()===true,{timeout:15000});
+              const result=await page.evaluate(()=>({
+                gateOff:document.querySelector('#authGate')?.classList.contains('off'),
+                mode:window.NOLU_RESILIENCE?.getMode?.(),
+                courses:window.PUPLAN_APP?.courses?.(),
+                banner:document.querySelector('#noluResilienceBanner')?.textContent||''
+              }));
+              console.log('OFFLINE_BOOTSTRAP',result);
+              assert(result.gateOff,'auth gate should be hidden for a valid cached account');
+              assert(result.mode==='offline','resilience mode should be offline');
+              assert(result.courses?.[0]?.name==='離線課程','cached schedule should remain available');
+              assert(result.banner.includes('離線保護模式'),'offline banner should be visible');
+              await page.evaluate(()=>window.PUPLAN_APP.setCoursesFromUser([{id:'c2',name:'新離線課程',day:2,start:3,end:4,teacher:'',room:'B202',color:'blue'}]));
+              const queued=await page.evaluate(uid=>JSON.parse(localStorage.getItem(`nolu_pending_mutations_v1:${uid}`)||'{}'),uid);
+              console.log('QUEUED_WRITE',queued);
+              assert(queued.schedule?.courses?.[0]?.name==='新離線課程','schedule edit should be queued locally');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 70s node /tmp/nolu-resilience/check.cjs
