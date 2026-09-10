@@ -1,4 +1,4 @@
-const SOCIAL_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social-v16';
+const SOCIAL_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const SUPABASE_URL='https://hrrmkrayvrgnwcroyttp.supabase.co';
 const SUPABASE_KEY='sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -182,11 +182,10 @@ function startReplyEditor(button){
     const body=ta.value.trim();if(!body)return app?.toast?.('留言不能空白');
     const save=editor.querySelector('[data-save]');save.disabled=true;save.textContent='儲存中…';
     try{
-      const d=await request('edit_reply',{reply_id:id,body});
-      const saved=d.reply?.body||body,updated=d.reply?.updated_at||new Date().toISOString();
-      for(const post of feedData){const reply=(post.replies||[]).find(r=>String(r.id)===id);if(reply){reply.body=saved;reply.updated_at=updated}}
-      text.textContent=saved;const meta=copy.querySelector('small');if(meta&&!meta.textContent.includes('已編輯'))meta.textContent+=' · 已編輯';
-      close();app?.toast?.('留言已更新');
+      await request('edit_reply',{reply_id:id,body});
+      close();
+      await loadFeed(true);
+      app?.toast?.('留言已更新');
     }catch(e){save.disabled=false;save.textContent='儲存';app?.toast?.(e.message)}
   };
   ta.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close()}if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();editor.querySelector('[data-save]').click()}};
