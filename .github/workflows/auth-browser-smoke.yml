@@ -6,8 +6,10 @@ on:
     paths:
       - 'pu-plan/cloud.js'
       - 'pu-plan/auth.js'
+      - 'pu-plan/guest-privacy.js'
       - 'pu-plan/index.html'
       - 'pu-plan/sw.js'
+      - '.github/tests/guest-privacy.cjs'
       - '.github/workflows/auth-browser-smoke.yml'
   workflow_dispatch:
 
@@ -24,6 +26,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+      - name: Check guest data isolation
+        run: node .github/tests/guest-privacy.cjs
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-auth init -y >/dev/null 2>&1
