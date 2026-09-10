@@ -22,6 +22,8 @@ on:
 permissions:
   contents: read
 
+# All current custom-session API paths are checked here. Historical duplicate
+# endpoints are separately required to stay HTTP 410 by nolu-retired-edge-smoke.
 jobs:
   session-v4:
     runs-on: ubuntu-latest
