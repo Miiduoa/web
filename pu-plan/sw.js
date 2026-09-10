@@ -1,15 +1,35 @@
-const CACHE='nolu-shell-20260910-2205';
+const CACHE='nolu-shell-20260910-2245';
 const ROOT=new URL('./',self.registration.scope).href;
-const SHELL=['./','./index.html','./manifest.webmanifest','./nolu-icon.svg'].map(path=>new URL(path,ROOT).href);
+const PATHS=[
+  './','./index.html','./manifest.webmanifest','./nolu-icon.svg',
+  './main.js','./app.js','./guest-privacy.js','./durable-store.js','./durable-bridge.js','./resilience.js','./cloud.js','./auth.js','./social-ui.js','./import.js','./semesters.js','./community.js','./discover.js','./pwa.js','./admin.js','./privacy.js',
+  './core/state.js','./features/analysis.js','./features/friends.js','./features/navigation.js','./features/planner.js','./features/schedule.js','./features/settings.js','./features/share.js',
+  './views/assistant.js','./views/auth.js','./views/dialogs.js','./views/friends.js','./views/schedule.js','./views/settings.js','./views/shell.js',
+  './styles/base.css','./styles/auth.css','./styles/layout.css','./styles/schedule.css','./styles/assistant.css','./styles/dialogs.css','./styles/schedule-ownership.css','./friends.css','./community.css','./discover.css','./admin.css','./pwa.css'
+];
+const SHELL=PATHS.map(path=>new URL(path,ROOT).href);
+
+async function seed(cache){
+  const keys=(await caches.keys()).filter(key=>key.startsWith('nolu-shell-')&&key!==CACHE);
+  for(const key of keys){
+    const old=await caches.open(key),requests=await old.keys();
+    for(const request of requests){
+      const hit=await old.match(request);if(hit)await cache.put(request,hit).catch(()=>{});
+    }
+  }
+  await Promise.all(SHELL.map(async url=>{
+    try{const response=await fetch(url,{cache:'no-store'});if(response.ok)await cache.put(url,response)}catch{}
+  }));
+}
 
 self.addEventListener('install',event=>{
-  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(seed).then(()=>self.skipWaiting()));
 });
 
 self.addEventListener('activate',event=>{
   event.waitUntil((async()=>{
     const keys=await caches.keys();
-    await Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)));
+    await Promise.all(keys.filter(key=>key.startsWith('nolu-shell-')&&key!==CACHE).map(key=>caches.delete(key)));
     await self.clients.claim();
   })());
 });
@@ -26,7 +46,7 @@ self.addEventListener('fetch',event=>{
         if(response.ok){const cache=await caches.open(CACHE);cache.put(event.request,response.clone()).catch(()=>{})}
         return response;
       }catch{
-        return (await caches.match(event.request))||(await caches.match(new URL('./index.html',ROOT).href))||Response.error();
+        return (await caches.match(event.request))||(await caches.match(url.href.split('?')[0]))||(await caches.match(new URL('./index.html',ROOT).href))||Response.error();
       }
     })());
     return;
