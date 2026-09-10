@@ -2,7 +2,12 @@ name: nolu resilience write race smoke
 
 on:
   push:
-    branches: [audit/nolu-resilience-write-race-20260910]
+    branches: [main, audit/nolu-resilience-write-race-20260910]
+    paths:
+      - 'pu-plan/resilience.js'
+      - '.github/workflows/nolu-resilience-race-smoke.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'pu-plan/resilience.js'
       - '.github/workflows/nolu-resilience-race-smoke.yml'
@@ -22,7 +27,7 @@ jobs:
           npm --prefix /tmp/nolu-race init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-race install playwright >/dev/null 2>&1
           cd /tmp/nolu-race && npx playwright install --with-deps chromium >/dev/null
-      - name: Newer offline edit must survive older success response
+      - name: Newer offline edit must survive stale responses and background flushes
         env:
           NODE_PATH: /tmp/nolu-race/node_modules
         run: |
@@ -52,7 +57,7 @@ jobs:
               await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
                 let body={};try{body=JSON.parse(route.request().postData()||'{}')}catch{}
                 const name=body?.courses?.[0]?.name;
-                if(body.action==='save_schedule'&&name==='OLD'){
+                if(body.action==='save_schedule'&&(name==='OLD'||name==='FLUSH_OLD')){
                   await new Promise(r=>setTimeout(r,800));
                   return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true}'});
                 }
@@ -63,7 +68,8 @@ jobs:
               });
               await page.goto('http://127.0.0.1:4173/__resilience_race_test.html',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE);
-              const result=await page.evaluate(async ({API,UID})=>{
+
+              const responseRace=await page.evaluate(async ({API,UID})=>{
                 const old=[{id:'old',name:'OLD',day:1,start:1,end:1}];
                 const newer=[{id:'new',name:'NEW',day:2,start:2,end:2}];
                 document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:old}));
@@ -81,10 +87,28 @@ jobs:
                   mode:window.NOLU_RESILIENCE.getMode()
                 };
               },{API,UID});
-              console.log('RACE_RESULT',result);
-              assert(result.queued,'newer failed write was not queued');
-              assert(result.pending&&result.pending.includes('NEW'),'older success deleted the newer queued schedule');
-              assert(result.mode==='offline','older delayed success incorrectly overrode newer offline state');
+              console.log('RESPONSE_RACE_RESULT',responseRace);
+              assert(responseRace.queued,'newer failed write was not queued');
+              assert(responseRace.pending&&responseRace.pending.includes('NEW'),'older success deleted the newer queued schedule');
+              assert(responseRace.mode==='offline','older delayed success incorrectly overrode newer offline state');
+
+              const flushRace=await page.evaluate(async ({API,UID})=>{
+                const old=[{id:'flush-old',name:'FLUSH_OLD',day:3,start:3,end:3}];
+                const newer=[{id:'flush-new',name:'FLUSH_NEW',day:4,start:4,end:4}];
+                document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:old}));
+                const flushing=window.NOLU_RESILIENCE.flushPending(API);
+                await new Promise(r=>setTimeout(r,80));
+                localStorage.setItem('puplan_courses',JSON.stringify(newer));
+                document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:newer}));
+                const complete=await flushing;
+                return {
+                  complete,
+                  pending:localStorage.getItem(`nolu_pending_mutations_v1:${UID}`)
+                };
+              },{API,UID});
+              console.log('FLUSH_RACE_RESULT',flushRace);
+              assert(flushRace.complete===false,'flush incorrectly reported complete while a newer edit remained');
+              assert(flushRace.pending&&flushRace.pending.includes('FLUSH_NEW'),'background flush deleted a newer queued schedule');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
