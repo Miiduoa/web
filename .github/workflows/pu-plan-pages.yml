@@ -84,19 +84,17 @@ jobs:
           assert not missing, f'missing production files: {missing}'
 
           assert '<div id="app"></div>' in index, 'index must only mount the app shell'
-          assert 'src="./main.js"' in index or 'src="main.js"' in index, 'main.js entrypoint missing'
+          assert re.search(r'''src=["'](?:\./)?main\.js(?:\?[^"']*)?["']''',index), 'main.js entrypoint missing'
           assert index.count('<script')==1, 'production must have exactly one script entrypoint'
           for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css']:
               assert css in index, f'index missing {css}'
 
-          # Make broken local ESM imports fail deployment before users see them.
           for js in root.rglob('*.js'):
               text=js.read_text(encoding='utf-8')
               for spec in re.findall(r'''(?:from\s*|import\s*\()\s*['"](\.{1,2}/[^'"]+)['"]''',text):
                   candidate=(js.parent/spec).resolve()
                   assert candidate.is_file(), f'{js.relative_to(root)} imports missing {spec}'
 
-          # Old generation files stay deleted instead of being hidden by a newer override.
           obsolete_files=[
               'style.css','boot.js','security.js','planner.js','styles/mobile.css',
               'boot-v9.js','import-v10.js','social-v6.css','community-v12.css','admin-v14.css','discovery-v16.css','pwa-v8.css','ai.js'
@@ -108,7 +106,6 @@ jobs:
           for item in obsolete_files:
               assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
 
-          # main.js is the only startup path; no hidden bootstrap file.
           assert "import('./features/planner.js')" in main, 'planner must load from features/'
           assert "import('./auth.js')" in main and "import('./community.js')" in main, 'runtime modules must be explicit in main.js'
           assert 'boot.js' not in main, 'legacy bootstrap reference returned'
