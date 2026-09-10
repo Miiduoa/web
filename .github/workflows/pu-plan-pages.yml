@@ -106,8 +106,8 @@ jobs:
           for item in obsolete_files:
               assert item not in index and item not in sw, f'obsolete asset referenced: {item}'
 
-          assert "import('./features/planner.js')" in main, 'planner must load from features/'
-          assert "import('./auth.js')" in main and "import('./community.js')" in main, 'runtime modules must be explicit in main.js'
+          for module in ['./features/planner.js','./auth.js','./community.js','./discover.js','./pwa.js']:
+              assert module in main, f'main.js missing runtime module {module}'
           assert 'boot.js' not in main, 'legacy bootstrap reference returned'
 
           assert manifest.get('name')=='nolu'
