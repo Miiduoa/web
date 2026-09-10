@@ -32,8 +32,8 @@ function clearPrivateRuntime(uid=''){
   clearPrivateCaches(uid||ownerBefore);
   // Runtime state is storage-backed. Re-render after the purge so data that was
   // already painted before an authoritative 401 cannot remain visible.
-  window.PUPLAN_APP?.setSelectedFriend?.(null);
-  window.PUPLAN_APP?.render?.();
+  globalThis.window?.PUPLAN_APP?.setSelectedFriend?.(null);
+  globalThis.window?.PUPLAN_APP?.render?.();
 }
 function clearPrivateAccountState(uid=''){
   localStorage.removeItem(SESSION_KEY);
