@@ -21,6 +21,10 @@ const scheduleUI=await import('./features/schedule.js');
 // saved classic timetable back to the old human presentation while it loads.
 localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule_presentation')||'human');
 
+// Restore the signed-in account's durable IndexedDB snapshot/outbox first. This
+// gives iPhone/PWA launches a second local copy before any cloud bootstrap runs.
+await import('./durable-bridge.js');
+
 // Install the transport/offline resilience layer before cloud bootstrap. It can
 // fail over between cloud endpoints, serve the signed-in user's own cached data
 // during an outage, and queue safe writes until a cloud backend is healthy again.
