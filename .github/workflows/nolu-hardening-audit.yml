@@ -82,7 +82,7 @@ jobs:
               await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
               await page.waitForSelector('#authGate');
-              await page.getByRole('button',{name:/訪客|Guest/}).click();
+              await page.locator('#guestMode').click();
               await page.waitForTimeout(100);
               const leaked=await page.evaluate(keys=>({
                 values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),
