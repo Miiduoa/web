@@ -23,7 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1'
+          primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1'
+          standby='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1'
           retired=(
             pu-plan-social-v12
             pu-plan-social-v13
@@ -41,14 +42,19 @@ jobs:
             campus-member-profile
           )
           failed=0
-          for slug in "${retired[@]}"; do
-            body="/tmp/${slug}.body"
-            code=$(curl -sS --max-time 25 -o "$body" -w '%{http_code}' "$base/$slug" || true)
-            echo "$slug HTTP=$code"
+          check_disabled() {
+            local base="$1" slug="$2" tag="$3"
+            local body="/tmp/${tag}-${slug}.body"
+            local code
+            code=$(curl -sS --max-time 15 -o "$body" -w '%{http_code}' "$base/$slug" || true)
+            echo "$tag/$slug HTTP=$code"
             if [ "$code" != '410' ] || ! grep -q 'DISABLED' "$body"; then
-              echo "ERROR: $slug must remain HTTP 410 DISABLED"
+              echo "ERROR: $tag/$slug must remain HTTP 410 DISABLED"
               cat "$body" 2>/dev/null || true
               failed=1
             fi
-          done
+          }
+          for slug in "${retired[@]}"; do check_disabled "$primary" "$slug" primary; done
+          check_disabled "$standby" pu-plan-api-v7 standby
+          check_disabled "$standby" pu-plan-sync-v1 standby
           [ "$failed" = '0' ]
