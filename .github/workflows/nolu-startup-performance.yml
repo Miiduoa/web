@@ -27,7 +27,7 @@ jobs:
           npm --prefix /tmp/nolu-startup init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-startup install playwright >/dev/null 2>&1
           cd /tmp/nolu-startup && npx playwright install --with-deps chromium >/dev/null
-      - name: Feature modules must fan out instead of loading serially
+      - name: Feature modules must fan out and finish cleanly
         env:
           NODE_PATH: /tmp/nolu-startup/node_modules
         run: |
@@ -47,13 +47,18 @@ jobs:
             try{
               const context=await browser.newContext({serviceWorkers:'block'});
               const page=await context.newPage();
-              const starts=[];
+              const starts=[],moduleErrors=[];
               page.on('request',req=>{
                 try{
                   const path=new URL(req.url()).pathname;
                   if(targetSet.has(path))starts.push({path,t:Date.now()});
                 }catch{}
               });
+              page.on('console',msg=>{
+                const text=msg.text();
+                if(text.includes('nolu module failed:'))moduleErrors.push(text);
+              });
+              page.on('pageerror',err=>moduleErrors.push(`pageerror: ${err.message}`));
               await page.route('http://127.0.0.1:4173/**',async route=>{
                 const path=new URL(route.request().url()).pathname;
                 if(targetSet.has(path))await new Promise(r=>setTimeout(r,DELAY_MS));
@@ -76,13 +81,33 @@ jobs:
               const missing=targets.filter(x=>!firstByPath.has(x));
               assert(!missing.length,`feature modules were not all requested: ${missing.join(', ')}`);
               const values=[...firstByPath.values()];
-              const spread=Math.max(...values)-Math.min(...values);
-              console.log('STARTUP_MODULE_FIRST_REQUESTS',Object.fromEntries([...firstByPath].map(([p,t])=>[p,t-Math.min(...values)])));
+              const origin=Math.min(...values),spread=Math.max(...values)-origin;
+              console.log('STARTUP_MODULE_FIRST_REQUESTS',Object.fromEntries([...firstByPath].map(([p,t])=>[p,t-origin])));
               console.log('STARTUP_MODULE_SPREAD_MS',spread);
               // auth.js may intentionally load first. The remaining feature modules should
               // then fan out together. With a controlled 120 ms delay, a serial waterfall
               // spans ~1 second; the safe parallel design stays comfortably below 500 ms.
               assert(spread<500,`serial feature-module waterfall detected (${spread} ms)`);
+
+              await page.waitForFunction(()=>
+                window.PUPLAN_CLOUD &&
+                window.PUPLAN_COMMUNITY &&
+                window.CAMPUS_DISCOVERY &&
+                document.querySelector('#admin') &&
+                document.querySelector('#adminAccessCard') &&
+                document.querySelector('[data-community-open]')
+              ,{timeout:10000});
+              await page.waitForTimeout(100);
+              const ui=await page.evaluate(()=>({
+                gateHidden:document.querySelector('#authGate')?.classList.contains('off'),
+                scheduleExists:!!document.querySelector('#humanWeek'),
+                adminExists:!!document.querySelector('#admin'),
+                communityExists:!!document.querySelector('#community')
+              }));
+              console.log('STARTUP_UI_RESULT',ui);
+              assert(ui.gateHidden===true,'guest startup gate was not hidden after modules completed');
+              assert(ui.scheduleExists&&ui.adminExists&&ui.communityExists,'parallel startup left required UI modules uninstalled');
+              assert(moduleErrors.length===0,`parallel startup module errors: ${moduleErrors.join(' | ')}`);
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
