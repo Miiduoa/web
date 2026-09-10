@@ -16,6 +16,7 @@ await import('./app.js');
 await import('./cloud.js');
 
 for(const path of [
+  './auth.js',
   './social-ui.js',
   './import.js',
   './semesters.js',
