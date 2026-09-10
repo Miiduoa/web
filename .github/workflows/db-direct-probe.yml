@@ -1,0 +1,23 @@
+name: nolu direct database recovery probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/db-direct-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Probe direct Postgres edge route
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 12 -D /tmp/h -o /tmp/b -w 'HTTP %{http_code}\n' \
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-db-probe'
+          cat /tmp/b
