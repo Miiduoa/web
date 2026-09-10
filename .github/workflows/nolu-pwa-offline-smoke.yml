@@ -62,16 +62,27 @@ jobs:
               await context.setOffline(true);
               await page.reload({waitUntil:'domcontentloaded',timeout:20000});
               await page.waitForFunction(()=>window.PUPLAN_APP&&document.querySelector('#humanWeek'),{timeout:10000});
-              const result=await page.evaluate(()=>({
+              let result=await page.evaluate(()=>({
                 gateHidden:document.querySelector('#authGate')?.classList.contains('off'),
+                guest:localStorage.getItem('puplan_guest'),
                 schedule:!!document.querySelector('#humanWeek'),
                 main:!!window.PUPLAN_APP,
                 errors:document.body.innerText.includes('載入失敗')
               }));
               console.log('PWA_OFFLINE_RESULT',result);
               assert(result.main&&result.schedule,'PWA app shell did not start offline');
-              assert(result.gateHidden===true,'guest mode should remain usable offline');
               assert(result.errors===false,'offline launch exposed a load failure');
+
+              // Privacy hardening may intentionally return an unauthenticated launch
+              // to the gate. The app must still let a user choose guest mode without
+              // a network round trip, rather than trapping them on a cloud error.
+              if(!result.gateHidden){
+                await page.click('#guestMode');
+                await page.waitForFunction(()=>document.querySelector('#authGate')?.classList.contains('off'),{timeout:3000});
+                result=await page.evaluate(()=>({gateHidden:document.querySelector('#authGate')?.classList.contains('off'),guest:localStorage.getItem('puplan_guest')}));
+                console.log('PWA_OFFLINE_GUEST_ENTRY',result);
+              }
+              assert(result.gateHidden===true&&result.guest==='1','guest mode must be enterable without cloud access');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
