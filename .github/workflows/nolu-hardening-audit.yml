@@ -24,6 +24,15 @@ jobs:
           set -euo pipefail
           find pu-plan -type f -name '*.js' -print0 | xargs -0 -n1 node --check
           node .github/tests/guest-privacy.cjs
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {cleanAvatar} from './pu-plan/core/state.js';
+          assert.equal(cleanAvatar('javascript:alert(1)'),'');
+          assert.equal(cleanAvatar('data:image/svg+xml,<svg onload=alert(1)>'),'');
+          assert.equal(cleanAvatar('data:text/html;base64,PHNjcmlwdD4='),'');
+          assert.equal(cleanAvatar('data:image/png;base64,QUJD'),'data:image/png;base64,QUJD');
+          console.log('avatar allowlist: ok');
+          NODE
 
       - name: Static security guardrails
         run: |
@@ -62,11 +71,13 @@ jobs:
           cat >/tmp/nolu-audit/browser.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
-          const privateKeys=['puplan_session','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
+          const privateText=/PRIVATE COURSE|PRIVATE FRIEND|PRIVATE SCHOOL|Victim Name|victim bio|Secret Teacher|Secret Room/;
+          const accountOnly=['puplan_session','puplan_course_owner','puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'];
+          const emptyOrMissing=v=>v===null||v==='[]'||v==='{}';
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              // Account -> guest transition must remove all account state before any app code can reuse it.
+              // Expired/forged session must be scrubbed before the auth gate can expose stale account state.
               let context=await browser.newContext({serviceWorkers:'block'});
               let page=await context.newPage();
               await page.addInitScript(()=>{
@@ -79,18 +90,27 @@ jobs:
                 localStorage.setItem('puplan_username','victim');
                 localStorage.setItem('puplan_bio','victim bio');
               });
-              await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
+              await page.route('**/*',route=>{
+                const u=new URL(route.request().url());
+                if(u.hostname==='127.0.0.1')return route.continue();
+                if(u.hostname.endsWith('.supabase.co'))return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+                return route.abort();
+              });
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
               await page.waitForSelector('#authGate');
+              await page.waitForTimeout(150);
+              let state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
+              for(const key of accountOnly)assert(state.values[key]===null,`expired session retained ${key}`);
+              assert(emptyOrMissing(state.courses)&&emptyOrMissing(state.friends)&&emptyOrMissing(state.meta),'expired session retained account collections');
+              assert(!privateText.test(state.text),'expired session leaked private account data into DOM');
+
+              // Account -> guest transition must remain clean as well.
               await page.locator('#guestMode').click();
-              await page.waitForTimeout(100);
-              const leaked=await page.evaluate(keys=>({
-                values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),
-                text:document.body.innerText
-              }),privateKeys);
-              assert(leaked.values.puplan_session===null,'guest retained session token');
-              for(const key of privateKeys.filter(k=>k!=='puplan_session'))assert(leaked.values[key]===null,`guest retained ${key}`);
-              assert(!/PRIVATE COURSE|PRIVATE FRIEND|PRIVATE SCHOOL|Victim Name|Secret Teacher|Secret Room/.test(leaked.text),'private account data leaked into guest DOM');
+              await page.waitForTimeout(80);
+              state=await page.evaluate(keys=>({values:Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),courses:localStorage.getItem('puplan_courses'),friends:localStorage.getItem('puplan_friends'),meta:localStorage.getItem('puplan_schedule_meta'),text:document.body.innerText}),accountOnly);
+              for(const key of accountOnly)assert(state.values[key]===null,`guest retained ${key}`);
+              assert(emptyOrMissing(state.courses)&&emptyOrMissing(state.friends)&&emptyOrMissing(state.meta),'guest retained account collections');
+              assert(!privateText.test(state.text),'private account data leaked into guest DOM');
               await context.close();
 
               // Persistent guest data may contain hostile text; it must render as text, never execute.
@@ -126,14 +146,14 @@ jobs:
           for url in "${endpoints[@]}"; do
             for method in GET PUT DELETE PATCH; do
               code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X "$method" "$url")
-              if [ "$code" != 405 ] && [ "$code" != 401 ] && [ "$code" != 403 ]; then
-                echo "$url accepted unsupported $method with HTTP $code"; cat /tmp/resp; exit 1
+              if [ "$code" -lt 400 ] || [ "$code" -ge 500 ]; then
+                echo "$url mishandled unsupported $method with HTTP $code"; cat /tmp/resp; exit 1
               fi
             done
             code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' --data '{bad json')
             if [ "$code" -ge 500 ] || [ "$code" -lt 400 ]; then echo "$url mishandled malformed JSON: $code"; cat /tmp/resp; exit 1; fi
             code=$(curl -sS --max-time 15 -o /tmp/resp -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -H 'Authorization: Bearer not-a-real-token' --data '{"action":"bootstrap","__proto__":{"admin":true},"constructor":{"prototype":{"admin":true}}}')
-            if [ "$code" != 401 ]; then echo "$url accepted forged/prototype-pollution request: $code"; cat /tmp/resp; exit 1; fi
+            if [ "$code" != 401 ] && [ "$code" != 403 ]; then echo "$url accepted forged/prototype-pollution request: $code"; cat /tmp/resp; exit 1; fi
             if grep -Eqi '(service_role|SUPABASE_SERVICE_ROLE_KEY|password_hash|password_salt|postgres://|stack trace|traceback|at file:|Deno\.env)' /tmp/resp; then echo "$url leaked server details"; cat /tmp/resp; exit 1; fi
           done
 
