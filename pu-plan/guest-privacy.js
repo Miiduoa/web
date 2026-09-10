@@ -20,6 +20,9 @@ function clearAssistantSession(){
 function clearResilienceFor(uid=''){
   const id=String(uid||'').trim();if(!id)return;
   for(const prefix of RESILIENCE_PREFIXES)localStorage.removeItem(`${prefix}${id}`);
+  // durable-bridge.js listens for this once it is loaded. The event is deliberately
+  // data-only and carries only the local account partition id.
+  document.dispatchEvent(new CustomEvent('nolu:purge-account',{detail:{uid:id}}));
 }
 function clearPrivateCaches(uid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
