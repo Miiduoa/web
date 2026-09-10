@@ -7,20 +7,22 @@ window.CAMPUS_SOCIAL_ENDPOINT='https://hrrmkrayvrgnwcroyttp.supabase.co/function
 const root=document.querySelector('#app');
 root.innerHTML=authView()+shellView()+dialogsView();
 
-function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error(`無法載入 ${src}`));document.head.appendChild(s)})}
+async function startModule(path){
+  try{return await import(path)}
+  catch(error){console.error(`nolu module failed: ${path}`,error);return null}
+}
 
 await import('./app.js');
 await import('./cloud.js');
-await import('./social-ui.js');
-try{
-  if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js');
-  await import('./import.js');
-}catch(e){console.error('課表辨識載入失敗',e)}
-await import('./auth.js');
-await import('./semesters.js');
-await import('./community.js');
-await import('./discover.js');
-await import('./pwa.js');
-await import('./features/planner.js');
-await import('./admin.js');
-await import('./privacy.js');
+
+for(const path of [
+  './social-ui.js',
+  './import.js',
+  './semesters.js',
+  './community.js',
+  './discover.js',
+  './pwa.js',
+  './features/planner.js',
+  './admin.js',
+  './privacy.js'
+])await startModule(path);
