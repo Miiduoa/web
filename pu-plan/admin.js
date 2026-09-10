@@ -1,3 +1,4 @@
+import {cleanAvatar} from './core/state.js';
 const ADMIN_API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
@@ -13,7 +14,7 @@ async function request(action,payload={}){
   return data;
 }
 function notice(text,type=''){return `<div class="admin-message ${type}">${esc(text)}</div>`}
-function avatar(u){return u?.avatar_data?`<span class="admin-avatar"><img src="${esc(u.avatar_data)}" alt=""></span>`:`<span class="admin-avatar">${esc((u?.display_name||'?')[0])}</span>`}
+function avatar(u){const src=cleanAvatar(u?.avatar_data||'');return src?`<span class="admin-avatar"><img src="${esc(src)}" alt=""></span>`:`<span class="admin-avatar">${esc((u?.display_name||'?')[0])}</span>`}
 function confirmAction(text){return window.confirm(text)}
 
 function install(){

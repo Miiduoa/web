@@ -1,0 +1,191 @@
+name: nolu avatar rendering security smoke
+
+on:
+  push:
+    branches: [main, security/nolu-avatar-rendering-20260910]
+    paths:
+      - 'pu-plan/social-ui.js'
+      - 'pu-plan/community.js'
+      - 'pu-plan/admin.js'
+      - 'pu-plan/core/state.js'
+      - '.github/workflows/nolu-avatar-security-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/social-ui.js'
+      - 'pu-plan/community.js'
+      - 'pu-plan/admin.js'
+      - 'pu-plan/core/state.js'
+      - '.github/workflows/nolu-avatar-security-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  avatar-injection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax and source guardrails
+        run: |
+          node --check pu-plan/social-ui.js
+          node --check pu-plan/community.js
+          node --check pu-plan/admin.js
+          python3 - <<'PY'
+          from pathlib import Path
+          social = Path('pu-plan/social-ui.js').read_text()
+          community = Path('pu-plan/community.js').read_text()
+          admin = Path('pu-plan/admin.js').read_text()
+          assert "import {cleanAvatar} from './core/state.js';" in social
+          assert "cleanAvatar(person?.avatar||person?.avatar_data||'')" in social
+          assert "import {cleanAvatar} from './core/state.js';" in community
+          assert "cleanAvatar(p?.avatar_data||'')" in community
+          assert "cleanAvatar(f.avatar||f.avatar_data||'')" in community
+          assert "import {cleanAvatar} from './core/state.js';" in admin
+          assert "cleanAvatar(u?.avatar_data||'')" in admin
+          assert "const src=person?.avatar||person?.avatar_data||''" not in social
+          assert 'src="${esc(f.avatar)}"' not in community
+          print('avatar source guardrails passed')
+          PY
+
+      - name: Verify strict avatar allowlist
+        run: |
+          node --input-type=module <<'NODE'
+          import {cleanAvatar} from './pu-plan/core/state.js';
+          const bad=[
+            'javascript:alert(1)',
+            'x" onerror="globalThis.__NOLU_XSS__=1',
+            'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+            'data:image/svg+xml,<svg onload=alert(1)>',
+            'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+',
+            'https://evil.example/avatar.png'
+          ];
+          for(const value of bad){
+            if(cleanAvatar(value)!=='')throw new Error(`unsafe avatar accepted: ${value}`);
+          }
+          const good=[
+            'data:image/png;base64,iVBORw0KGgo=',
+            'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+            'data:image/webp;base64,UklGRg=='
+          ];
+          for(const value of good){
+            if(cleanAvatar(value)!==value)throw new Error(`valid avatar rejected: ${value}`);
+          }
+          console.log('strict avatar allowlist passed');
+          NODE
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-avatar init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-avatar install playwright >/dev/null 2>&1
+          cd /tmp/nolu-avatar && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Remote avatar payloads must not reach social, community or admin DOM
+        env:
+          NODE_PATH: /tmp/nolu-avatar/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-avatar-http.log 2>&1 &
+          cat >/tmp/nolu-avatar/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const evil=[
+            {id:'evil-1',name:'Injected One',display_name:'Injected One',username:'evil1',avatar:'x" onerror="window.__NOLU_XSS__=1',avatar_data:'x" onerror="window.__NOLU_XSS__=1',courses:[],meta:{},cloud:true},
+            {id:'evil-2',name:'Injected Two',display_name:'Injected Two',username:'evil2',avatar:'javascript:alert(1)',avatar_data:'javascript:alert(1)',courses:[],meta:{},cloud:true},
+            {id:'evil-3',name:'Injected Three',display_name:'Injected Three',username:'evil3',avatar:'data:image/svg+xml,<svg onload=alert(1)>',avatar_data:'data:image/svg+xml,<svg onload=alert(1)>',courses:[],meta:{},cloud:true},
+            {id:'good-1',name:'Safe PNG',display_name:'Safe PNG',username:'safe',avatar:'data:image/png;base64,iVBORw0KGgo=',avatar_data:'data:image/png;base64,iVBORw0KGgo=',courses:[],meta:{},cloud:true}
+          ];
+          const bundle=()=>({
+            token:'test-token',
+            profile:{id:'user-1',email:'user@example.invalid',display_name:'Test User',username:'tester',bio:'',discoverable:true,avatar_data:''},
+            courses:[],
+            social:{relationships:[],profiles:evil.map(x=>({id:x.id,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,bio:''})),friends:evil,meetups:[]},
+            social_summary:{}
+          });
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              const errors=[];
+              page.on('pageerror',e=>errors.push(e.message));
+              page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/**',async route=>{
+                const url=route.request().url();
+                let body={};
+                try{body=route.request().postDataJSON()||{}}catch{}
+                const action=body.action||'';
+                const respond=data=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
+                if(url.includes('/functions/v1/pu-plan-admin')){
+                  if(action==='whoami')return respond({is_admin:true,profile:{id:'user-1',email:'admin@example.invalid',display_name:'Admin',username:'admin',role:'admin'}});
+                  if(action==='overview')return respond({stats:{users:4,posts:0,replies:0,messages:0,conversations:0,friendships:0,semesters:0,media:0}});
+                  if(action==='users')return respond({users:evil.map(x=>({id:x.id,email:`${x.username}@example.invalid`,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,role:'user',profile_visibility:'public',discoverable:true})),total:evil.length});
+                  return route.fulfill({status:400,contentType:'application/json',body:'{"message":"unsupported test action"}'});
+                }
+                if(url.includes('/functions/v1/pu-plan-api-v6')||url.includes('/functions/v1/pu-plan-core-v1')){
+                  if(action==='login')return respond(bundle());
+                  if(action==='social')return respond({social:bundle().social});
+                }
+                if(url.includes('/functions/v1/pu-plan-social')){
+                  if(action==='inbox')return respond({conversations:[]});
+                  return respond({});
+                }
+                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+              });
+              await page.addInitScript(()=>{
+                localStorage.clear();sessionStorage.clear();
+                window.__NOLU_XSS__=0;
+              });
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD,null,{timeout:10000});
+              await page.locator('[data-auth-tab="login"]').click();
+              await page.locator('#loginEmail').fill('test@example.invalid');
+              await page.locator('#loginPassword').fill('test-password');
+              await page.locator('#loginForm').evaluate(form=>form.requestSubmit());
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.(),null,{timeout:10000});
+
+              const sanitized=await page.evaluate(()=>window.PUPLAN_APP.friends().map(f=>({id:f.id,avatar:f.avatar})));
+              const byId=Object.fromEntries(sanitized.map(x=>[x.id,x.avatar]));
+              assert(byId['evil-1']===''&&byId['evil-2']===''&&byId['evil-3']==='','unsafe remote friend avatars survived state sanitation');
+              assert(byId['good-1']==='data:image/png;base64,iVBORw0KGgo=','valid PNG friend avatar was removed');
+
+              await page.locator('[data-view="friends"]').first().click();
+              await page.waitForTimeout(200);
+
+              await page.waitForFunction(()=>document.querySelector('[data-community-open]'),null,{timeout:5000});
+              await page.locator('[data-community-open]').first().click();
+              await page.locator('[data-community-tab="chat"]').click();
+              await page.waitForFunction(()=>document.querySelector('#newChat'),null,{timeout:5000});
+              await page.locator('#newChat').click();
+              await page.waitForFunction(()=>document.querySelectorAll('#newChatDialog .friend-pick').length===4,null,{timeout:5000});
+              const pickerSrc=await page.evaluate(()=>[...document.querySelectorAll('#newChatDialog .avatar img')].map(i=>i.getAttribute('src')));
+              assert(pickerSrc.length===1&&pickerSrc[0]==='data:image/png;base64,iVBORw0KGgo=','community chat picker exposed an unsafe raw avatar');
+              await page.locator('#newChatDialog .x').click();
+
+              await page.waitForFunction(()=>window.PUPLAN_ADMIN,null,{timeout:5000});
+              await page.waitForFunction(()=>document.querySelector('#admin'),null,{timeout:5000});
+              await page.evaluate(()=>window.PUPLAN_ADMIN.open());
+              await page.locator('[data-admin-tab="users"]').click();
+              await page.waitForFunction(()=>document.querySelectorAll('.admin-user-row').length===4,null,{timeout:5000});
+
+              const dom=await page.evaluate(()=>({
+                xss:window.__NOLU_XSS__,
+                onerror:document.querySelectorAll('[onerror]').length,
+                javascript:[...document.images].filter(i=>i.getAttribute('src')?.toLowerCase().startsWith('javascript:')).length,
+                svg:[...document.images].filter(i=>i.getAttribute('src')?.toLowerCase().startsWith('data:image/svg')).length,
+                adminImageSrc:[...document.querySelectorAll('.admin-avatar img')].map(i=>i.getAttribute('src'))
+              }));
+              console.log('AVATAR_DOM_RESULT',dom);
+              assert(dom.xss===0,'avatar payload executed');
+              assert(dom.onerror===0,'avatar payload injected an onerror attribute');
+              assert(dom.javascript===0,'javascript: avatar reached an image src');
+              assert(dom.svg===0,'SVG data avatar reached an image src');
+              assert(dom.adminImageSrc.length===1&&dom.adminImageSrc[0]==='data:image/png;base64,iVBORw0KGgo=','admin renderer did not reduce unsafe avatars to text fallbacks');
+              assert(!errors.some(x=>x.includes('__NOLU_XSS__')),'avatar payload caused a script error');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 80s node /tmp/nolu-avatar/check.cjs

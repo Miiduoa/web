@@ -1,3 +1,4 @@
+import {cleanAvatar} from './core/state.js';
 const SOCIAL_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const SUPABASE_URL='https://hrrmkrayvrgnwcroyttp.supabase.co';
 const SUPABASE_KEY='sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN';
@@ -17,7 +18,8 @@ async function request(action,payload={}){
   return data;
 }
 function avatar(p,cls='avatar'){
-  return p?.avatar_data?`<div class="${cls}"><img src="${esc(p.avatar_data)}" alt=""></div>`:`<div class="${cls}">${esc((p?.display_name||'?').slice(0,1))}</div>`;
+  const src=cleanAvatar(p?.avatar_data||'');
+  return src?`<div class="${cls}"><img src="${esc(src)}" alt=""></div>`:`<div class="${cls}">${esc((p?.display_name||'?').slice(0,1))}</div>`;
 }
 function timeAgo(v){
   const d=new Date(v),m=Math.floor((Date.now()-d.getTime())/60000);
@@ -240,7 +242,7 @@ async function openNewChat(){
   await window.PUPLAN_CLOUD?.loadSocial?.().catch(()=>{});const friends=(window.PUPLAN_CLOUD?.getSocial?.().friends||[]).filter(f=>f.cloud);
   if(!friends.length)return app?.toast?.('先加一位好友，才能開始聊天');
   let d=$('#newChatDialog');if(!d){d=document.createElement('dialog');d.id='newChatDialog';d.className='new-chat-dialog';document.body.append(d)}
-  d.innerHTML=`<div class="modal-head"><h2>開始對話</h2><button class="x" type="button">×</button></div><label class="label">群聊名稱（多人時可填）<input class="field" id="groupTitle" maxlength="80" placeholder="例如：期末專案組"></label><div class="friend-picker">${friends.map(f=>`<label class="friend-pick"><input type="checkbox" value="${esc(f.id)}">${f.avatar?`<div class="avatar"><img src="${esc(f.avatar)}" alt=""></div>`:`<div class="avatar">${esc((f.name||'?').slice(0,1))}</div>`}<span>${esc(f.name)}<small>@${esc(f.username||'')}</small></span></label>`).join('')}</div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="createConversation">建立對話</button></div>`;
+  d.innerHTML=`<div class="modal-head"><h2>開始對話</h2><button class="x" type="button">×</button></div><label class="label">群聊名稱（多人時可填）<input class="field" id="groupTitle" maxlength="80" placeholder="例如：期末專案組"></label><div class="friend-picker">${friends.map(f=>{const src=cleanAvatar(f.avatar||f.avatar_data||'');return `<label class="friend-pick"><input type="checkbox" value="${esc(f.id)}">${src?`<div class="avatar"><img src="${esc(src)}" alt=""></div>`:`<div class="avatar">${esc((f.name||'?').slice(0,1))}</div>`}<span>${esc(f.name)}<small>@${esc(f.username||'')}</small></span></label>`}).join('')}</div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="createConversation">建立對話</button></div>`;
   d.querySelector('.x').onclick=()=>d.close();$('#createConversation').onclick=async()=>{const ids=[...d.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);if(!ids.length)return app?.toast?.('請選至少一位好友');try{const data=await request('create_chat',{user_ids:ids,title:$('#groupTitle').value.trim()});d.close();await loadInbox();await openConversation(data.conversation.id)}catch(e){app?.toast?.(e.message)}};d.showModal();
 }
 function startPolling(){
