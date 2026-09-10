@@ -126,8 +126,19 @@ jobs:
           REST: https://hrrmkrayvrgnwcroyttp.supabase.co/rest/v1/puplan_app_users?select=id&limit=1
           PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
         run: |
-          set -euo pipefail
+          set -u
+          rm -f /tmp/rest
           code=$(curl -sS --max-time 15 -o /tmp/rest -w '%{http_code}' "$REST" -H "apikey: $PUBLISHABLE_KEY")
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 28 ] || [ "$code" = '000' ]; then
+              echo '::warning::Database gateway is unavailable, so anonymous REST exposure is inconclusive in this run. Availability is enforced separately by the nolu database recovery probe.'
+              exit 0
+            fi
+            echo "REST security probe failed unexpectedly (curl rc=$rc HTTP=$code)"
+            cat /tmp/rest 2>/dev/null || true
+            exit 1
+          fi
           if [ "$code" -lt 400 ]; then
             echo "Direct anonymous access to puplan_app_users was not blocked (HTTP $code)"
             cat /tmp/rest
