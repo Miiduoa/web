@@ -1,0 +1,143 @@
+name: nolu admin audit security smoke
+
+on:
+  push:
+    branches: [main, security/nolu-admin-audit-20260910]
+    paths:
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-admin-audit-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-admin-audit-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  admin-audit-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check admin Edge Function
+        run: deno check supabase/functions/pu-plan-admin/index.ts
+
+      - name: Verify audit coverage and safe metadata
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path('supabase/functions/pu-plan-admin/index.ts').read_text()
+          assert "event: 'nolu.admin.audit'" in text, 'structured admin audit event missing'
+          assert re.search(r'async function audit\([\s\S]*?console\.info\(', text), 'audit() is empty or does not emit a log'
+
+          required = [
+              'overview', 'users', 'user_detail', 'set_user_privacy', 'posts',
+              'moderate_post', 'conversations', 'conversation_detail',
+              'rename_conversation', 'remove_message'
+          ]
+          for action in required:
+              marker = f"if (action === '{action}')"
+              start = text.find(marker)
+              assert start >= 0, f'missing admin action: {action}'
+              later = [text.find(f"if (action === '{x}')", start + len(marker)) for x in required]
+              later = [x for x in later if x >= 0]
+              end = min(later) if later else text.find("throw new ApiError(400", start)
+              block = text[start:end]
+              assert 'await audit(' in block, f'admin action lacks audit: {action}'
+
+          meta_start = text.index('const AUDIT_METADATA_KEYS')
+          meta_end = text.index(']);', meta_start)
+          meta = text[meta_start:meta_end].lower()
+          for forbidden in ['email', 'password', 'token', 'body', 'recovery', 'display_name']:
+              assert forbidden not in meta, f'sensitive field allowed in audit metadata: {forbidden}'
+
+          audit_start = text.index('async function audit(')
+          audit_end = text.index('async function count(', audit_start)
+          audit_code = '\n'.join(
+              line for line in text[audit_start:audit_end].splitlines()
+              if not line.lstrip().startswith('//')
+          ).lower()
+          for forbidden in ['admin.email', 'password', 'session token', 'post body', 'chat body']:
+              assert forbidden not in audit_code, f'audit logger may expose sensitive value: {forbidden}'
+          print('admin audit static checks passed')
+          PY
+
+      - name: Attack-smoke admin endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" = 'refs/heads/main' ] && [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            endpoint='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin'
+            echo 'Testing production admin endpoint'
+          else
+            endpoint='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin-audit-test'
+            echo 'Testing isolated admin audit preview endpoint'
+          fi
+
+          call() {
+            local method="$1" origin="$2" auth="$3" body="$4" prefix="$5"
+            : >"/tmp/${prefix}.headers"
+            : >"/tmp/${prefix}.body"
+            args=(-sS --max-time 30 -X "$method" -D "/tmp/${prefix}.headers" -o "/tmp/${prefix}.body" -w '%{http_code}')
+            if [ -n "$origin" ]; then args+=(-H "Origin: $origin"); fi
+            if [ -n "$auth" ]; then args+=(-H "Authorization: Bearer $auth"); fi
+            if [ "$method" != 'GET' ] && [ "$method" != 'HEAD' ]; then
+              args+=(-H 'Content-Type: application/json' --data-binary "$body")
+            fi
+            curl "${args[@]}" "$endpoint"
+          }
+
+          assert_code() {
+            local got="$1" want="$2" label="$3"
+            if [ "$got" != "$want" ]; then
+              echo "$label expected HTTP $want, got $got"
+              cat "/tmp/${label}.body" 2>/dev/null || true
+              exit 1
+            fi
+          }
+
+          for method in GET PUT PATCH DELETE; do
+            label="method-${method,,}"
+            code=$(call "$method" '' '' '{}' "$label")
+            assert_code "$code" 405 "$label"
+          done
+
+          code=$(call POST '' '' '{}' unauth)
+          assert_code "$code" 401 unauth
+
+          code=$(call POST '' 'abc.def' '{"action":"overview"}' forged)
+          assert_code "$code" 401 forged
+
+          fake_payload=$(printf '%s' '{"uid":"00000000-0000-0000-0000-000000000000","exp":4102444800}' | base64 -w0 | tr '+/' '-_' | tr -d '=')
+          fake_sig=$(printf '%s' 'definitely-not-a-real-signature' | base64 -w0 | tr '+/' '-_' | tr -d '=')
+          code=$(call POST '' "$fake_payload.$fake_sig" '{"action":"users","query":"x"}' forged-payload)
+          assert_code "$code" 401 forged-payload
+
+          code=$(call OPTIONS 'https://evil.example' '' '{}' evil-options)
+          assert_code "$code" 403 evil-options
+
+          code=$(call OPTIONS 'https://miiduoa.github.io' '' '{}' good-options)
+          assert_code "$code" 200 good-options
+          grep -qi '^access-control-allow-origin: https://miiduoa.github.io' /tmp/good-options.headers
+          grep -qi '^access-control-allow-methods: POST, OPTIONS' /tmp/good-options.headers
+
+          for f in /tmp/unauth.body /tmp/forged.body /tmp/forged-payload.body /tmp/method-*.body; do
+            [ -f "$f" ] || continue
+            if grep -Eqi 'SUPABASE_SERVICE_ROLE_KEY|service_role|Deno\.env|postgres(ql)?://|stack trace|password_hash|password_salt' "$f"; then
+              echo "sensitive server detail leaked in $f"
+              cat "$f"
+              exit 1
+            fi
+          done
+
+          echo 'admin endpoint attack smoke passed'
