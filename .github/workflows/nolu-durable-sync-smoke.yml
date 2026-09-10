@@ -6,6 +6,7 @@ on:
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/transport-bridge.js'
       - 'pu-plan/resilience.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
@@ -28,6 +29,7 @@ jobs:
         run: |
           node --check pu-plan/durable-store.js
           node --check pu-plan/durable-bridge.js
+          node --check pu-plan/transport-bridge.js
           node --check pu-plan/resilience.js
           node --check pu-plan/main.js
           node --check pu-plan/sw.js
@@ -89,3 +91,39 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
           timeout 90s node /tmp/nolu-durable/check.cjs
+      - name: Verify three-path legacy API failover
+        env:
+          NODE_PATH: /tmp/nolu-durable/node_modules
+        run: |
+          cat >/tmp/nolu-durable/failover.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const attempts=[];
+              await context.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
+                const path=new URL(route.request().url()).pathname;attempts.push(path);
+                if(path.endsWith('/pu-plan-api-v6')||path.endsWith('/pu-plan-core-v1'))return route.fulfill({status:503,contentType:'application/json',body:'{"message":"simulated unavailable"}'});
+                if(path.endsWith('/pu-plan-api'))return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-third-path"}'});
+                return route.abort('failed');
+              });
+              const page=await context.newPage();
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>window.NOLU_TRANSPORT?.candidates?.length===3,{timeout:10000});
+              attempts.length=0;
+              const result=await page.evaluate(async()=>{
+                const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
+                const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'semesters'})});
+                return {status:res.status,data:await res.json()};
+              });
+              console.log('FAILOVER_RESULT',result,'ATTEMPTS',attempts);
+              assert(result.status===200&&result.data?.via==='legacy-third-path','legacy request should reach the third path');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'primary path should be attempted');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'secondary path should be attempted');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-api')),'third path should be attempted');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 45s node /tmp/nolu-durable/failover.cjs
