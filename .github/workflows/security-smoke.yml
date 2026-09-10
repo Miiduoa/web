@@ -128,8 +128,8 @@ jobs:
         run: |
           set -u
           rm -f /tmp/rest
-          code=$(curl -sS --max-time 15 -o /tmp/rest -w '%{http_code}' "$REST" -H "apikey: $PUBLISHABLE_KEY")
-          rc=$?
+          rc=0
+          code=$(curl -sS --max-time 15 -o /tmp/rest -w '%{http_code}' "$REST" -H "apikey: $PUBLISHABLE_KEY") || rc=$?
           if [ "$rc" -ne 0 ]; then
             if [ "$rc" -eq 28 ] || [ "$code" = '000' ]; then
               echo '::warning::Database gateway is unavailable, so anonymous REST exposure is inconclusive in this run. Availability is enforced separately by the nolu database recovery probe.'
