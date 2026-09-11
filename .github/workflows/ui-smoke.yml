@@ -46,13 +46,14 @@ jobs:
           async function screenshot(page,name){await page.screenshot({path:`ui-smoke/${name}.png`,fullPage:true})}
           async function inspect(browser,w,h,label){
             const context=await browser.newContext({viewport:{width:w,height:h},deviceScaleFactor:1,isMobile:true,hasTouch:true,serviceWorkers:'block'});
-            const page=await context.newPage();page.setDefaultTimeout(3000);page.setDefaultNavigationTimeout(5000);
+            const page=await context.newPage();page.setDefaultTimeout(5000);page.setDefaultNavigationTimeout(8000);
             await page.addInitScript(()=>localStorage.setItem('puplan_guest','1'));
             await page.route('**/*',route=>{const u=new URL(route.request().url());u.hostname==='127.0.0.1'?route.continue():route.abort()});
             await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
             await page.waitForSelector('#authGate');
+            await page.waitForFunction(()=>!!window.PUPLAN_CLOUD?.showGate,{timeout:10000});
 
-            await page.evaluate(()=>{localStorage.removeItem('puplan_guest');document.querySelector('#authGate')?.classList.remove('off')});
+            await page.evaluate(()=>{localStorage.removeItem('puplan_guest');window.PUPLAN_CLOUD.showGate('register')});
             await overflow(page,label,'login');
             const brand=await within(page,'.auth-brand',`${label} login`),title=await within(page,'.auth-copy h1',`${label} login`),copy=await within(page,'.auth-copy p',`${label} login`),card=await within(page,'.auth-card',`${label} login`);
             assert(!intersects(brand,title)&&!intersects(brand,copy)&&!intersects(title,copy),`${label}: login hero overlaps`);

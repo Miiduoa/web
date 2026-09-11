@@ -35,37 +35,31 @@ jobs:
           npm --prefix /tmp/nolu-mesh install playwright >/dev/null 2>&1
           cd /tmp/nolu-mesh && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify Neon Data API plus second independent mirror and quorum recovery
+      - name: Verify production Neon and Netlify quorum recovery
         env:
           NODE_PATH: /tmp/nolu-mesh/node_modules
         run: |
+          rm -rf /tmp/nolu-provider-app
           cp -R pu-plan /tmp/nolu-provider-app
           python3 - <<'PY'
           from pathlib import Path
-          import re
-
           p=Path('/tmp/nolu-provider-app/provider-config.js')
           s=p.read_text()
           s=s.replace(
               "https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1",
               "https://neon.test/rest/v1"
+          ).replace(
+              "https://nolu-mirror.netlify.app/mirror",
+              "https://netlify.test/mirror"
           )
-          s,n=re.subn(
-              r"(id:'render-singapore',\s*provider:'render',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false",
-              r"\1'https://render.test/mirror'\2true",
-              s,
-              count=1
-          )
-          if n != 1:
-              raise SystemExit('Render candidate fixture could not be enabled')
+          if "provider:'neon'" not in s or "provider:'netlify'" not in s or s.count('enabled:true') < 2:
+              raise SystemExit('verified production mirrors are not enabled')
           p.write_text(s)
           Path('/tmp/nolu-provider-app/mesh-test.html').write_text('''<!doctype html><html><body><script>
           window.__localSnapshot=null;
-          window.NOLU_DURABLE={
-            getSnapshot:async()=>window.__localSnapshot,
-            bindCurrentSession:async()=>true
-          };
-          window.NOLU_RESILIENCE={state:{mode:'online',activeApi:'https://example.supabase.co/functions/v1/pu-plan-api-v7'}};
+          window.NOLU_DURABLE={getSnapshot:async()=>window.__localSnapshot,bindCurrentSession:async()=>true};
+          window.PUPLAN_CLOUD={isSignedIn:()=>true};
+          window.NOLU_RESILIENCE={state:{mode:'online',activeApi:'https://example.supabase.co/functions/v1/pu-plan-api-v8'}};
           </script><script type="module" src="./provider-mesh.js"></script></body></html>''')
           PY
           python3 -m http.server 4175 --directory /tmp/nolu-provider-app >/tmp/nolu-provider-http.log 2>&1 &
@@ -77,66 +71,59 @@ jobs:
           const uid='33333333-3333-4333-8333-333333333333';
           const now=Math.floor(Date.now()/1000);
           const session=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'mesh-test'}))}.test-signature`;
-          const portable=`${b64(JSON.stringify({alg:'ES256',typ:'NOLU',kid:'test'}))}.${b64(JSON.stringify({v:1,sub:uid,cv:'mesh-test',iat:now,exp:now+3600,iss:'nolu',aud:'nolu-provider-mesh'}))}.test-signature`;
+          const portable=`${b64(JSON.stringify({alg:'ES256',typ:'NOLU',kid:'test'}))}.${b64(JSON.stringify({v:1,sub:uid,cv:'mesh-test',role:'authenticated',iat:now,exp:now+3600,iss:'nolu',aud:'nolu-provider-mesh'}))}.test-signature`;
           const fp=crypto.createHash('sha256').update(session).digest('hex');
-          const baseSnapshot={
-            uid,
-            profile:{id:uid,display_name:'Mesh Test',username:'mesh_test',bio:'',avatar_data:'',discoverable:true,role:'user',profile_visibility:'public'},
-            courses:[{id:'remote',name:'遠端雙副本課程',day:3,start:2,end:3,teacher:'',room:'C303',color:'green'}],
-            meta:{},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp
-          };
+          const baseSnapshot={uid,profile:{id:uid,display_name:'Mesh Test',username:'mesh_test',bio:'',avatar_data:'',discoverable:true,role:'user',profile_visibility:'public'},courses:[{id:'remote',name:'遠端雙副本課程',day:3,start:2,end:3,teacher:'',room:'C303',color:'green'}],meta:{},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp};
+
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              const context=await browser.newContext();
-              const writes={neon:[],render:[]};
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const writes={neon:[],netlify:[]};
               await context.route('https://neon.test/**',async route=>{
                 const req=route.request();
                 if(req.method()==='POST'){
-                  const body=JSON.parse(req.postData()||'{}');
-                  writes.neon.push(body.snapshot);
+                  const body=JSON.parse(req.postData()||'{}');writes.neon.push(body.snapshot);
                   return route.fulfill({status:201,contentType:'application/json',body:JSON.stringify([body])});
                 }
-                if(req.method()==='GET'){
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{uid,revision:baseSnapshot.revision,digest:'',snapshot:baseSnapshot}])});
-                }
+                if(req.method()==='GET')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{uid,revision:baseSnapshot.revision,digest:'',snapshot:baseSnapshot}])});
                 return route.fulfill({status:405,contentType:'application/json',body:'{}'});
               });
-              await context.route('https://render.test/mirror',async route=>{
+              await context.route('https://netlify.test/mirror',async route=>{
                 const body=JSON.parse(route.request().postData()||'{}');
                 if(body.action==='put_snapshot'){
-                  writes.render.push(body.snapshot);
+                  writes.netlify.push(body.snapshot);
                   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,stored:true})});
                 }
-                if(body.action==='get_snapshot'){
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot:baseSnapshot})});
-                }
-                return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'bad action'})});
+                if(body.action==='get_snapshot')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot:baseSnapshot})});
+                return route.fulfill({status:400,contentType:'application/json',body:'{}'});
               });
               const page=await context.newPage();
-              await page.addInitScript(({session,portable,uid})=>{
+              await page.goto('http://127.0.0.1:4175/mesh-test.html',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
+              await page.evaluate(({session,portable,uid})=>{
                 localStorage.setItem('puplan_session',session);
                 localStorage.setItem('puplan_portable_session_v1',portable);
                 localStorage.setItem('puplan_course_owner',uid);
               },{session,portable,uid});
-              await page.goto('http://127.0.0.1:4175/mesh-test.html',{waitUntil:'domcontentloaded'});
-              await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
 
               const configured=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.configuredProviders);
-              assert(configured.includes('supabase')&&configured.includes('neon')&&configured.includes('render'),'three remote failure domains must be registered');
+              assert(configured.includes('supabase')&&configured.includes('neon')&&configured.includes('netlify'),'Supabase + Neon + Netlify must be registered');
+              assert(!configured.includes('render')&&!configured.includes('railway'),'unverified candidates must stay out of production quorum');
 
               const recovered=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.recover('ci'));
-              assert(recovered===true,'two matching independent mirrors should recover a missing local snapshot');
+              assert(recovered===true,'two matching independent external mirrors should recover a missing local snapshot');
               const stored=await page.evaluate(async uid=>{const m=await import('./durable-store.js');return m.getSnapshot(uid)},uid);
               assert(stored?.courses?.[0]?.name==='遠端雙副本課程','quorum recovery should persist the agreed remote snapshot');
 
               await page.evaluate(snap=>{window.__localSnapshot=snap},baseSnapshot);
               const synced=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.sync('ci',true));
-              assert(synced===true,'mirror fan-out should succeed when at least one independent provider acknowledges');
-              assert(writes.neon.length>=1,'Neon Data API mirror should receive the snapshot');
-              assert(writes.render.length>=1,'Render mirror should receive the snapshot');
-              assert(writes.neon.at(-1)?.uid===uid&&writes.render.at(-1)?.uid===uid,'both mirrors must receive only the current account snapshot');
-              console.log('PROVIDER_MESH_OK',{configured,writes:{neon:writes.neon.length,render:writes.render.length}});
+              assert(synced===true,'mirror fan-out should succeed');
+              assert(writes.neon.length>=1&&writes.netlify.length>=1,'both verified external mirrors must receive the snapshot');
+              assert(writes.neon.at(-1)?.uid===uid&&writes.netlify.at(-1)?.uid===uid,'both mirrors must receive only the current account snapshot');
+              const healthy=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.healthyProviders);
+              assert(healthy.includes('supabase')&&healthy.includes('neon')&&healthy.includes('netlify'),'all three configured failure domains should be healthy in the fixture');
+              console.log('PROVIDER_MESH_OK',{configured,healthy,writes:{neon:writes.neon.length,netlify:writes.netlify.length}});
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE

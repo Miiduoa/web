@@ -54,14 +54,20 @@ jobs:
               "https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1",
               "https://neon.test/rest/v1"
           )
-          replacements = [
-              (r"(id:'render-singapore',\s*provider:'render',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false", r"\1'https://render.test/mirror'\2true", 'render'),
-              (r"(id:'netlify-blobs',\s*provider:'netlify',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false", r"\1'https://netlify.test/mirror'\2true", 'netlify'),
-          ]
-          for pattern,repl,name in replacements:
-              s,n=re.subn(pattern,repl,s,count=1)
-              if n != 1:
-                  raise SystemExit(f'{name} candidate fixture could not be enabled')
+          s=s.replace(
+              "https://nolu-mirror.netlify.app/mirror",
+              "https://netlify.test/mirror"
+          )
+          s,n=re.subn(
+              r"(id:'render-singapore',\s*provider:'render',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false",
+              r"\1'https://render.test/mirror'\2true",
+              s,
+              count=1
+          )
+          if n != 1:
+              raise SystemExit('Render candidate fixture could not be enabled')
+          if "https://netlify.test/mirror" not in s or "provider:'netlify'" not in s:
+              raise SystemExit('Netlify production fixture could not be redirected')
           p.write_text(s)
           Path('/tmp/nolu-matrix-app/matrix-test.html').write_text('''<!doctype html><html><body><script>
           window.__localSnapshot=null;
@@ -69,6 +75,7 @@ jobs:
             getSnapshot:async()=>window.__localSnapshot,
             bindCurrentSession:async()=>true
           };
+          window.PUPLAN_CLOUD={isSignedIn:()=>true};
           window.NOLU_RESILIENCE={state:{mode:'online',activeApi:'https://example.supabase.co/functions/v1/pu-plan-api-v8'}};
           </script><script type="module" src="./provider-mesh.js"></script></body></html>''')
           PY
@@ -82,7 +89,7 @@ jobs:
           const uid='44444444-4444-4444-8444-444444444444';
           const now=Math.floor(Date.now()/1000);
           const session=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'matrix-test'}))}.test-signature`;
-          const portable=`${b64(JSON.stringify({alg:'ES256',typ:'NOLU',kid:'test'}))}.${b64(JSON.stringify({v:1,sub:uid,cv:'matrix-test',iat:now,exp:now+3600,iss:'nolu',aud:'nolu-provider-mesh'}))}.test-signature`;
+          const portable=`${b64(JSON.stringify({alg:'ES256',typ:'NOLU',kid:'test'}))}.${b64(JSON.stringify({v:1,sub:uid,cv:'matrix-test',role:'authenticated',iat:now,exp:now+3600,iss:'nolu',aud:'nolu-provider-mesh'}))}.test-signature`;
           const fp=crypto.createHash('sha256').update(session).digest('hex');
           const snapshot={
             uid,
@@ -94,7 +101,7 @@ jobs:
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              const context=await browser.newContext();
+              const context=await browser.newContext({serviceWorkers:'block'});
               const writes={neon:0,netlify:0,render:0};
 
               await context.route('https://neon.test/**',async route=>{
@@ -104,9 +111,7 @@ jobs:
                   const body=JSON.parse(req.postData()||'{}');
                   return route.fulfill({status:201,contentType:'application/json',body:JSON.stringify([body])});
                 }
-                if(req.method()==='GET'){
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{uid,revision:snapshot.revision,digest:'',snapshot}])});
-                }
+                if(req.method()==='GET')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{uid,revision:snapshot.revision,digest:'',snapshot}])});
                 return route.fulfill({status:405,body:'{}'});
               });
 
@@ -116,13 +121,10 @@ jobs:
                   writes.netlify++;
                   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,stored:true})});
                 }
-                if(body.action==='get_snapshot'){
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot})});
-                }
+                if(body.action==='get_snapshot')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot})});
                 return route.fulfill({status:400,contentType:'application/json',body:'{}'});
               });
 
-              // Simulate a complete Render outage. No request may succeed here.
               await context.route('https://render.test/mirror',async route=>{
                 writes.render++;
                 return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,message:'simulated provider outage'})});
@@ -138,9 +140,7 @@ jobs:
               await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
 
               const configured=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.configuredProviders);
-              for(const provider of ['supabase','neon','render','netlify']){
-                assert(configured.includes(provider),`${provider} failure domain must be registered in the matrix`);
-              }
+              for(const provider of ['supabase','neon','render','netlify'])assert(configured.includes(provider),`${provider} failure domain must be registered in the matrix`);
 
               const recovered=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.recover('one-provider-down'));
               assert(recovered===true,'two matching independent mirrors must recover data while the third mirror is down');
