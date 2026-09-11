@@ -1,1 +1,44 @@
 name: nolu replica v2 live smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nolu-replica-v2-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify both replica v2 endpoints fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN='https://miiduoa.github.io'
+          for REF in hrrmkrayvrgnwcroyttp ltfurqaspqsvswmebyzw; do
+            URL="https://${REF}.supabase.co/functions/v1/pu-plan-replica-v2"
+            tmp=$(mktemp)
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"health"}')
+            echo "[$REF health] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 200
+            grep -q '"protocol":"replica-v2"' "$tmp"
+
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"sync_and_prewarm"}')
+            echo "[$REF unauth sync] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 401
+            grep -Eq 'UNAUTHORIZED|SESSION_' "$tmp"
+
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"ingest","envelope":"not.a.valid.envelope"}')
+            echo "[$REF forged ingest] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 401
+            grep -q 'REPLICA_SIGNATURE_INVALID' "$tmp"
+
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+            echo "[$REF evil origin] HTTP $code"
+            test "$code" = 403
+          done
