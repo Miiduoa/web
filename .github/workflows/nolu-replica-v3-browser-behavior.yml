@@ -2,7 +2,7 @@ name: nolu replica v3 browser behavior
 
 on:
   push:
-    branches: [main, test/nolu-replica-v3-browser-behavior-20260911]
+    branches: [main, fix/nolu-replica-v3-failback-guard-20260911]
     paths:
       - 'pu-plan/cloud-replication.js'
       - '.github/workflows/nolu-replica-v3-browser-behavior.yml'
@@ -28,7 +28,7 @@ jobs:
           npm --prefix /tmp/nolu-replica-v3-browser init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-replica-v3-browser install playwright >/dev/null 2>&1
           cd /tmp/nolu-replica-v3-browser && npx playwright install --with-deps chromium >/dev/null
-      - name: Verify primary enrollment, peer-token validation, and reverse-sync fail-closed
+      - name: Verify enrollment, peer-token validation, and dirty failback guard
         env:
           NODE_PATH: /tmp/nolu-replica-v3-browser/node_modules
         run: |
@@ -75,12 +75,12 @@ jobs:
                 window.PUPLAN_CLOUD={isSignedIn:()=>true};
               },{UID,PRIMARY,A});
               await page.goto('http://127.0.0.1:4173/__replica_v3_browser_test.html',{waitUntil:'domcontentloaded'});
-              await page.evaluate(()=>import('./cloud-replication.js?browser-ci=1'));
+              await page.evaluate(()=>import('./cloud-replication.js?browser-ci=2'));
               await page.waitForFunction(()=>!!window.NOLU_REPLICATION);
 
               const first=await page.evaluate(async()=>{
                 const ok=await window.NOLU_REPLICATION.sync('ci-primary',true);
-                return {ok,canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1'),seeded:localStorage.getItem(`nolu_standby_seeded_v3:${window.NOLU_REPLICATION.state.peerSessionReady?'88888888-8888-4888-8888-888888888888':''}`),state:{...window.NOLU_REPLICATION.state}};
+                return {ok,canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1'),seeded:localStorage.getItem('nolu_standby_seeded_v3:88888888-8888-4888-8888-888888888888'),state:{...window.NOLU_REPLICATION.state}};
               });
               assert(first.ok===true,'primary replica-v3 enrollment did not succeed');
               assert(first.canonical===PRIMARY&&first.primary===PRIMARY,'primary enrollment altered the canonical/primary session');
@@ -100,19 +100,40 @@ jobs:
               assert(second.state.peerSynced===false,'invalid peer token incorrectly marked replication healthy');
               assert(replicaCalls===2,'invalid-peer scenario did not reach replica-v3 exactly once');
 
-              const beforeReverse=replicaCalls;
-              const reverse=await page.evaluate(async({B})=>{
+              const beforeStandby=replicaCalls;
+              const idleStandby=await page.evaluate(async({B,UID})=>{
                 window.NOLU_RESILIENCE.state.activeApi=`https://${B}.supabase.co/functions/v1/pu-plan-api-v8`;
                 localStorage.setItem('nolu_preferred_cloud_v1','standby');
-                const primary=localStorage.getItem('puplan_session_primary_v1'),standby=localStorage.getItem('puplan_session_standby_v1');
-                const ok=await window.NOLU_REPLICATION.sync('ci-reverse',true);
-                return {ok,primary,standby,primaryAfter:localStorage.getItem('puplan_session_primary_v1'),standbyAfter:localStorage.getItem('puplan_session_standby_v1'),dirty:localStorage.getItem('nolu_standby_dirty_v3:88888888-8888-4888-8888-888888888888'),error:window.NOLU_REPLICATION.state.lastError,tier:window.NOLU_REPLICATION.state.lastTier};
-              },{B});
-              assert(reverse.ok===false,'standby reverse sync must fail closed');
-              assert(replicaCalls===beforeReverse,'standby reverse sync sent a network request');
-              assert(reverse.primaryAfter===reverse.primary&&reverse.standbyAfter===reverse.standby,'standby reverse sync changed regional sessions');
-              assert(reverse.dirty==='1','standby reverse sync did not preserve the dirty marker');
-              assert(reverse.tier==='standby'&&reverse.error.includes('reverse replication is intentionally disabled'),'standby reverse-sync state was not explicit');
+                localStorage.removeItem(`nolu_standby_dirty_v3:${UID}`);
+                const ok=await window.NOLU_REPLICATION.sync('ci-standby-idle',true);
+                return {ok,dirty:localStorage.getItem(`nolu_standby_dirty_v3:${UID}`),manual:window.NOLU_REPLICATION.state.manualReconcileRequired,error:window.NOLU_REPLICATION.state.lastError};
+              },{B,UID});
+              assert(idleStandby.ok===false,'standby reverse sync must fail closed');
+              assert(replicaCalls===beforeStandby,'idle standby attempted a replica network request');
+              assert(idleStandby.dirty===null,'idle standby manufactured a dirty marker without a write');
+
+              const dirtyStandby=await page.evaluate(async({UID})=>{
+                const marked=window.NOLU_REPLICATION.markStandbyDirty();
+                const ok=await window.NOLU_REPLICATION.sync('ci-standby-dirty',true);
+                return {marked,ok,dirty:localStorage.getItem(`nolu_standby_dirty_v3:${UID}`),manual:window.NOLU_REPLICATION.state.manualReconcileRequired,error:window.NOLU_REPLICATION.state.lastError};
+              },{UID});
+              assert(dirtyStandby.marked===true&&dirtyStandby.ok===false,'standby write was not held for reconciliation');
+              assert(replicaCalls===beforeStandby,'dirty standby attempted reverse replication');
+              assert(dirtyStandby.dirty==='1'&&dirtyStandby.manual===true,'standby dirty state did not require reconciliation');
+              assert(dirtyStandby.error.includes('manual reconciliation required'),'dirty standby state was not explicit');
+
+              const failback=await page.evaluate(async({A,UID})=>{
+                window.NOLU_RESILIENCE.state.activeApi=`https://${A}.supabase.co/functions/v1/pu-plan-api-v8`;
+                localStorage.setItem('nolu_preferred_cloud_v1','primary');
+                const before=localStorage.getItem(`nolu_standby_dirty_v3:${UID}`);
+                const ok=await window.NOLU_REPLICATION.sync('ci-primary-failback',true);
+                return {ok,before,after:localStorage.getItem(`nolu_standby_dirty_v3:${UID}`),manual:window.NOLU_REPLICATION.state.manualReconcileRequired,error:window.NOLU_REPLICATION.state.lastError};
+              },{A,UID});
+              assert(failback.ok===false,'dirty failback was allowed to overwrite standby state');
+              assert(replicaCalls===beforeStandby,'dirty primary failback sent a replica request');
+              assert(failback.before==='1'&&failback.after==='1','dirty marker was cleared without reconciliation');
+              assert(failback.manual===true&&failback.error.includes('manual reconciliation required'),'failback did not remain fail-closed');
+
               console.log('REPLICA_V3_BROWSER_BEHAVIOR_OK',{replicaCalls,requests:requests.map(x=>({host:x.host,path:x.path,auth:x.auth?'bearer-present':'none'}))});
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
