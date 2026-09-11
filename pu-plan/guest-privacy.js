@@ -1,6 +1,7 @@
 const SESSION_KEY='puplan_session';
 const GUEST_KEY='puplan_guest';
 const GUEST_SCOPE_MARKER='nolu_guest_scope_v1';
+const GUEST_DURABLE_PURGE_KEY='nolu_guest_durable_purge_uid_v1';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SESSION_SECONDS=45*24*60*60;
 const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
@@ -26,6 +27,10 @@ function clearAssistantSession(){
     const key=sessionStorage.key(i)||'';
     if(key.startsWith('puplan_assistant_')||key==='puplan_assistant_history')sessionStorage.removeItem(key);
   }
+}
+function rememberDurablePurge(uid=''){
+  const id=String(uid||'').trim();
+  if(UUID.test(id))sessionStorage.setItem(GUEST_DURABLE_PURGE_KEY,id);
 }
 function clearResilienceFor(uid=''){
   const id=String(uid||'').trim();if(!id)return;
@@ -54,9 +59,11 @@ function clearPrivateRuntime(uid=''){
   globalThis.window?.PUPLAN_APP?.setSelectedFriend?.(null);
   globalThis.window?.PUPLAN_APP?.render?.();
 }
-function clearPrivateAccountState(uid=''){
+function clearPrivateAccountState(uid='',{purgeDurable=false}={}){
+  const targetUid=String(uid||trackedAccountUid||localStorage.getItem('puplan_course_owner')||'');
+  if(purgeDurable)rememberDurablePurge(targetUid);
   localStorage.removeItem(SESSION_KEY);
-  clearPrivateRuntime(uid);
+  clearPrivateRuntime(targetUid);
 }
 
 function decodeBase64UrlAscii(raw=''){
@@ -93,7 +100,7 @@ const owner=localStorage.getItem('puplan_course_owner')||'';
 
 if(isGuest){
   if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner||hasSession){
-    clearPrivateAccountState(owner||sessionUid(rawSession));
+    clearPrivateAccountState(owner||sessionUid(rawSession),{purgeDurable:true});
     localStorage.setItem(GUEST_KEY,'1');
     localStorage.setItem(GUEST_SCOPE_MARKER,'1');
   }
@@ -119,9 +126,10 @@ if(isGuest){
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
   const uid=localStorage.getItem('puplan_course_owner')||trackedAccountUid||sessionUid(localStorage.getItem(SESSION_KEY)||'');
-  clearPrivateAccountState(uid);
+  clearPrivateAccountState(uid,{purgeDurable:true});
   localStorage.setItem(GUEST_KEY,'1');
   localStorage.setItem(GUEST_SCOPE_MARKER,'1');
+  if(typeof CustomEvent==='function'&&UUID.test(String(uid||'')))document.dispatchEvent(new CustomEvent('nolu:guest-durable-purge',{detail:{uid:String(uid)}}));
 },true);
 
 document.addEventListener('puplan:profile-changed',event=>{
