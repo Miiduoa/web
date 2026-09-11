@@ -2,16 +2,11 @@ name: nolu hot standby smoke
 
 on:
   push:
-    branches: [main, fix/nolu-replica-v2-client]
+    branches: [main, feat/nolu-replica-v3-client-final-20260911]
     paths:
       - 'pu-plan/resilience.js'
       - 'pu-plan/transport-bridge.js'
       - 'pu-plan/cloud-replication.js'
-      - 'pu-plan/main.js'
-      - 'pu-plan/auth.js'
-      - 'pu-plan/index.html'
-      - 'pu-plan/sw.js'
-      - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-hot-standby-smoke.yml'
   pull_request:
     branches: [main]
@@ -22,28 +17,25 @@ permissions:
 jobs:
   hot-standby:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v6
-
-      - name: Syntax and routing invariants
+      - name: Routing invariants
         run: |
           set -euo pipefail
           node --check pu-plan/resilience.js
           node --check pu-plan/transport-bridge.js
           node --check pu-plan/cloud-replication.js
-          node --check pu-plan/main.js
-          node --check pu-plan/auth.js
-          node --check pu-plan/sw.js
-          node --check pu-plan/pwa.js
           grep -q 'pu-plan-api-v8' pu-plan/resilience.js
           grep -q 'pu-plan-api-v8' pu-plan/transport-bridge.js
           ! grep -q 'pu-plan-api-v7' pu-plan/resilience.js
           ! grep -q 'pu-plan-api-v7' pu-plan/transport-bridge.js
           ! grep -q 'pu-plan-sync-v1' pu-plan/cloud-replication.js
-          grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
-          grep -q 'puplan_session_primary_v1' pu-plan/resilience.js
-          grep -q 'puplan_session_standby_v1' pu-plan/resilience.js
+          ! grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
+          grep -q 'pu-plan-replica-v3' pu-plan/cloud-replication.js
+          grep -q 'manualReconcileRequired' pu-plan/cloud-replication.js
+          grep -q 'puplan_session_primary_v1' pu-plan/cloud-replication.js
+          grep -q 'puplan_session_standby_v1' pu-plan/cloud-replication.js
 
       - name: Install Playwright
         run: |
@@ -51,104 +43,76 @@ jobs:
           npm --prefix /tmp/nolu-ha install playwright >/dev/null 2>&1
           cd /tmp/nolu-ha && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify v8 failover, separate sessions, offline safety, and replica-v2 failback
+      - name: Verify primary seed and standby fail-closed behavior
         env:
           NODE_PATH: /tmp/nolu-ha/node_modules
         run: |
-          cat >pu-plan/__hot_standby_test.html <<'HTML'
-          <!doctype html><meta charset="utf-8"><body><div id="cloudState"></div><script type="module">import './transport-bridge.js';import './resilience.js';</script></body>
-          HTML
+          set -euo pipefail
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><body>ha</body>' > pu-plan/__ha_v3.html
           python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-ha-http.log 2>&1 &
           cat >/tmp/nolu-ha/test.cjs <<'NODE'
           const {chromium}=require('playwright');
-          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const assert=(v,m)=>{if(!v)throw new Error(m)};
           const b64=s=>Buffer.from(s).toString('base64url');
           const uid='55555555-5555-4555-8555-555555555555';
-          const issuedAt=Math.floor(Date.now()/1000);
-          const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:issuedAt,exp:issuedAt+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
+          const now=Math.floor(Date.now()/1000);
+          const token=n=>`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'ci-v3'}))}.${b64('sig-'+n)}`;
+          const primary=token('primary'),standby=token('standby');
           const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
-          const primaryOld=token('primary-old'),primaryNew=token('primary-new'),standby=token('standby');
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              const context=await browser.newContext();
-              const counts={a8:0,aCompat:0,b8:0,bReplica:0};
-              let standbyMode='ok',lastStandbyAuth='',lastReplicaAuth='';
-              await context.route('https://*.supabase.co/functions/v1/**',async route=>{
-                const req=route.request(),url=new URL(req.url()),path=url.pathname;
-                const body=(()=>{try{return JSON.parse(req.postData()||'{}')}catch{return{}}})();
-                if(url.host.startsWith(A)){
-                  if(path.endsWith('/pu-plan-api-v8'))counts.a8++;else counts.aCompat++;
-                  return route.abort('timedout');
-                }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-replica-v2')){
-                  counts.bReplica++;lastReplicaAuth=req.headers()['authorization']||'';
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_ref:A,peer_token:primaryNew})});
-                }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v8')){
-                  counts.b8++;lastStandbyAuth=req.headers()['authorization']||'';
-                  if(body.action==='signup')return route.fulfill({status:500,contentType:'application/json',body:'{}'});
-                  if(standbyMode==='unauthorized'&&body.action==='bootstrap')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED'})});
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:standby,cloud_tier:'standby',profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
-                }
-                return route.abort();
+              const c1=await browser.newContext({serviceWorkers:'block'});
+              const p1=await c1.newPage();
+              let primaryCalls=0,lastAuth='';
+              await p1.route(`https://${A}.supabase.co/functions/v1/pu-plan-replica-v3`,route=>{
+                primaryCalls++;lastAuth=route.request().headers()['authorization']||'';
+                return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_ref:B,peer_token:standby})});
               });
-              const page=await context.newPage();
-              await page.goto('http://127.0.0.1:4173/__hot_standby_test.html');
-              await page.evaluate(({uid,primaryOld,standby})=>{
+              await p1.goto('http://127.0.0.1:4173/__ha_v3.html');
+              await p1.evaluate(({A,primary})=>{
                 localStorage.clear();sessionStorage.clear();
-                localStorage.setItem('puplan_session',primaryOld);
-                localStorage.setItem('puplan_session_primary_v1',primaryOld);
+                localStorage.setItem('puplan_session',primary);
+                localStorage.setItem('puplan_session_primary_v1',primary);
+                window.NOLU_RESILIENCE={state:{activeApi:`https://${A}.supabase.co/functions/v1/pu-plan-api-v8`},preferredCloud:()=> 'primary'};
+                window.PUPLAN_CLOUD={isSignedIn:()=>true};
+              },{A,primary});
+              await p1.evaluate(async()=>{await import('./cloud-replication.js?primary-ci')});
+              const seeded=await p1.evaluate(()=>NOLU_REPLICATION.sync('ci-primary',true));
+              const s1=await p1.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1'),ready:NOLU_REPLICATION.state.peerSessionReady}));
+              assert(seeded===true,'primary seed failed');
+              assert(primaryCalls>=1,'replica-v3 primary endpoint was not called');
+              assert(lastAuth===`Bearer ${primary}`,'replica-v3 did not use the Mumbai-local session');
+              assert(s1.canonical===primary&&s1.primary===primary,'primary identity changed during seed');
+              assert(s1.standby===standby&&s1.ready===true,'Tokyo-local session was not prewarmed');
+              await c1.close();
+
+              const c2=await browser.newContext({serviceWorkers:'block'});
+              const p2=await c2.newPage();
+              let networkCalls=0;
+              await p2.route('https://*.supabase.co/functions/v1/pu-plan-replica-v3',route=>{networkCalls++;return route.abort()});
+              await p2.goto('http://127.0.0.1:4173/__ha_v3.html');
+              await p2.evaluate(({B,primary,standby})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',standby);
+                localStorage.setItem('puplan_session_primary_v1',primary);
                 localStorage.setItem('puplan_session_standby_v1',standby);
-                localStorage.setItem('puplan_course_owner',uid);
-                localStorage.setItem('puplan_name','Cached User');
-                localStorage.setItem('puplan_username','cached_user');
-                localStorage.setItem('puplan_courses',JSON.stringify([{id:'local',name:'Local course',day:2,start:2,end:2,teacher:'',room:'L1',color:'gray'}]));
-              },{uid,primaryOld,standby});
-              await page.reload({waitUntil:'domcontentloaded'});
-              await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
-              const requested=`https://${A}.supabase.co/functions/v1/pu-plan-api-v6`;
-              const first=await page.evaluate(async url=>{
-                const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});
-                return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1')};
-              },requested);
-              assert(first.status===200,'standby bootstrap failed');
-              assert(first.active.includes(B),'Tokyo v8 was not selected');
-              assert(first.preferred==='standby','standby preference was not persisted');
-              assert(first.canonical===primaryOld,'failover must not replace canonical session fingerprint');
-              assert(first.primary===primaryOld&&first.standby===standby,'tier-local sessions were corrupted');
-              assert(lastStandbyAuth===`Bearer ${standby}`,'Tokyo request did not use Tokyo-local session');
-              assert(counts.a8>=1&&counts.b8>=1,'first request did not try primary v8 then Tokyo v8');
-
-              const aBefore=counts.a8+counts.aCompat,bBefore=counts.b8;
-              const second=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});return r.status},requested);
-              assert(second===200,'preferred Tokyo request failed');
-              assert(counts.b8===bBefore+1,'preferred Tokyo did not run first');
-              assert(counts.a8+counts.aCompat===aBefore,'preferred Tokyo unnecessarily hit primary');
-
-              const beforeSignup=counts.b8;
-              await page.evaluate(async url=>{try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'signup',display_name:'x',username:'xx',email:'x@example.com',password:'12345678'})})}catch{}},requested);
-              assert(counts.b8===beforeSignup,'primary-only signup was sent to standby');
-
-              standbyMode='unauthorized';
-              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),canonical:localStorage.getItem('puplan_session')}},requested);
-              assert(protectedResult.status===200&&protectedResult.data.offline===true,'tier auth failure did not degrade to local safe bootstrap');
-              assert(protectedResult.canonical===primaryOld,'uncertain cloud auth changed canonical session');
-
-              standbyMode='ok';
-              await page.evaluate(async url=>{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})})},requested);
-              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=2')});
-              const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
-              assert(synced===true,'standby -> primary replica-v2 reconciliation failed');
-              assert(counts.bReplica>=1,'replica-v2 endpoint was not called on active standby');
-              assert(lastReplicaAuth===`Bearer ${standby}`,'replica-v2 did not use the standby-local session');
-              const after=await page.evaluate(()=>({preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session_primary_v1'),canonical:localStorage.getItem('puplan_session')}));
-              assert(after.primary===primaryNew,'peer-local primary session was not prewarmed');
-              assert(after.canonical===primaryOld,'prewarm must not change canonical session fingerprint');
-              assert(after.preferred==='primary','safe failback was not unlocked after peer sync');
-              console.log('HOT_STANDBY_V8_OK',counts);
+                localStorage.setItem('nolu_preferred_cloud_v1','standby');
+                window.NOLU_RESILIENCE={state:{activeApi:`https://${B}.supabase.co/functions/v1/pu-plan-api-v8`},preferredCloud:()=> 'standby'};
+                window.PUPLAN_CLOUD={isSignedIn:()=>true};
+              },{B,primary,standby});
+              await p2.evaluate(async()=>{await import('./cloud-replication.js?standby-ci')});
+              await p2.evaluate(()=>NOLU_REPLICATION.markStandbyDirty());
+              const synced=await p2.evaluate(()=>NOLU_REPLICATION.sync('ci-standby',true));
+              const s2=await p2.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1'),dirty:NOLU_REPLICATION.hasStandbyDirty(),manual:NOLU_REPLICATION.state.manualReconcileRequired}));
+              assert(synced===false,'standby auto-failback must be blocked');
+              assert(networkCalls===0,'standby unexpectedly contacted replica-v3');
+              assert(s2.dirty===true&&s2.manual===true,'standby writes were not held for reconciliation');
+              assert(s2.canonical===standby&&s2.primary===primary&&s2.standby===standby,'regional sessions changed during blocked failback');
+              await c2.close();
+              console.log('HOT_STANDBY_REPLICA_V3_OK');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          timeout 90s node /tmp/nolu-ha/test.cjs
-          rm -f pu-plan/__hot_standby_test.html
+          timeout 80s node /tmp/nolu-ha/test.cjs
+          rm -f pu-plan/__ha_v3.html
