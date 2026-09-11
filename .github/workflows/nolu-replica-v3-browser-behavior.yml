@@ -1,0 +1,121 @@
+name: nolu replica v3 browser behavior
+
+on:
+  push:
+    branches: [main, test/nolu-replica-v3-browser-behavior-20260911]
+    paths:
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-replica-v3-browser-behavior.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-replica-v3-browser-behavior.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  replica-v3-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax check
+        run: node --check pu-plan/cloud-replication.js
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-replica-v3-browser init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-replica-v3-browser install playwright >/dev/null 2>&1
+          cd /tmp/nolu-replica-v3-browser && npx playwright install --with-deps chromium >/dev/null
+      - name: Verify primary enrollment, peer-token validation, and reverse-sync fail-closed
+        env:
+          NODE_PATH: /tmp/nolu-replica-v3-browser/node_modules
+        run: |
+          set -euo pipefail
+          cat >pu-plan/__replica_v3_browser_test.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><body></body>
+          HTML
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-replica-v3-browser-http.log 2>&1 &
+          cat >/tmp/nolu-replica-v3-browser/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const makeToken=(uid,nonce)=>`${b64(JSON.stringify({v:4,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:`cv-${nonce}`}))}.${b64(`sig-${nonce}`)}`;
+          const UID='88888888-8888-4888-8888-888888888888';
+          const OTHER='99999999-9999-4999-8999-999999999999';
+          const PRIMARY=makeToken(UID,'primary');
+          const STANDBY=makeToken(UID,'standby');
+          const WRONG=makeToken(OTHER,'wrong-peer');
+          const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              let replicaCalls=0;
+              const requests=[];
+              await context.route('https://*.supabase.co/functions/v1/**',async route=>{
+                const req=route.request(),url=new URL(req.url());
+                requests.push({host:url.host,path:url.pathname,auth:req.headers()['authorization']||'',body:req.postData()||''});
+                if(url.host.startsWith(A)&&url.pathname.endsWith('/pu-plan-replica-v3')){
+                  replicaCalls++;
+                  const peer=replicaCalls===1?STANDBY:WRONG;
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_token:peer})});
+                }
+                return route.fulfill({status:503,contentType:'application/json',body:'{"error":"UNEXPECTED_NETWORK"}'});
+              });
+              const page=await context.newPage();
+              await page.addInitScript(({UID,PRIMARY,A})=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session',PRIMARY);
+                localStorage.setItem('puplan_session_primary_v1',PRIMARY);
+                localStorage.setItem('puplan_course_owner',UID);
+                localStorage.setItem('nolu_preferred_cloud_v1','primary');
+                window.NOLU_RESILIENCE={state:{activeApi:`https://${A}.supabase.co/functions/v1/pu-plan-api-v8`},preferredCloud:()=>localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?'standby':'primary'};
+                window.PUPLAN_CLOUD={isSignedIn:()=>true};
+              },{UID,PRIMARY,A});
+              await page.goto('http://127.0.0.1:4173/__replica_v3_browser_test.html',{waitUntil:'domcontentloaded'});
+              await page.evaluate(()=>import('./cloud-replication.js?browser-ci=1'));
+              await page.waitForFunction(()=>!!window.NOLU_REPLICATION);
+
+              const first=await page.evaluate(async()=>{
+                const ok=await window.NOLU_REPLICATION.sync('ci-primary',true);
+                return {ok,canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1'),seeded:localStorage.getItem(`nolu_standby_seeded_v3:${window.NOLU_REPLICATION.state.peerSessionReady?'88888888-8888-4888-8888-888888888888':''}`),state:{...window.NOLU_REPLICATION.state}};
+              });
+              assert(first.ok===true,'primary replica-v3 enrollment did not succeed');
+              assert(first.canonical===PRIMARY&&first.primary===PRIMARY,'primary enrollment altered the canonical/primary session');
+              assert(first.standby===STANDBY,'valid standby peer token was not stored');
+              assert(first.seeded==='1','standby seeded marker was not written');
+              assert(replicaCalls===1,'primary enrollment should issue exactly one replica request');
+              assert(requests[0]?.host.startsWith(A)&&requests[0]?.path.endsWith('/pu-plan-replica-v3'),'replication did not use Mumbai replica-v3');
+              assert(requests[0]?.auth===`Bearer ${PRIMARY}`,'replica-v3 did not use the primary-local session');
+
+              const second=await page.evaluate(async()=>{
+                const before=localStorage.getItem('puplan_session_standby_v1');
+                const ok=await window.NOLU_REPLICATION.sync('ci-wrong-peer',true);
+                return {ok,before,after:localStorage.getItem('puplan_session_standby_v1'),state:{...window.NOLU_REPLICATION.state}};
+              });
+              assert(second.ok===false,'mismatched peer account was accepted');
+              assert(second.after===second.before&&second.after===STANDBY,'invalid peer token overwrote the valid standby session');
+              assert(second.state.peerSynced===false,'invalid peer token incorrectly marked replication healthy');
+              assert(replicaCalls===2,'invalid-peer scenario did not reach replica-v3 exactly once');
+
+              const beforeReverse=replicaCalls;
+              const reverse=await page.evaluate(async({B})=>{
+                window.NOLU_RESILIENCE.state.activeApi=`https://${B}.supabase.co/functions/v1/pu-plan-api-v8`;
+                localStorage.setItem('nolu_preferred_cloud_v1','standby');
+                const primary=localStorage.getItem('puplan_session_primary_v1'),standby=localStorage.getItem('puplan_session_standby_v1');
+                const ok=await window.NOLU_REPLICATION.sync('ci-reverse',true);
+                return {ok,primary,standby,primaryAfter:localStorage.getItem('puplan_session_primary_v1'),standbyAfter:localStorage.getItem('puplan_session_standby_v1'),dirty:localStorage.getItem('nolu_standby_dirty_v3:88888888-8888-4888-8888-888888888888'),error:window.NOLU_REPLICATION.state.lastError,tier:window.NOLU_REPLICATION.state.lastTier};
+              },{B});
+              assert(reverse.ok===false,'standby reverse sync must fail closed');
+              assert(replicaCalls===beforeReverse,'standby reverse sync sent a network request');
+              assert(reverse.primaryAfter===reverse.primary&&reverse.standbyAfter===reverse.standby,'standby reverse sync changed regional sessions');
+              assert(reverse.dirty==='1','standby reverse sync did not preserve the dirty marker');
+              assert(reverse.tier==='standby'&&reverse.error.includes('reverse replication is intentionally disabled'),'standby reverse-sync state was not explicit');
+              console.log('REPLICA_V3_BROWSER_BEHAVIOR_OK',{replicaCalls,requests:requests.map(x=>({host:x.host,path:x.path,auth:x.auth?'bearer-present':'none'}))});
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 90s node /tmp/nolu-replica-v3-browser/check.cjs
+          rm -f pu-plan/__replica_v3_browser_test.html
