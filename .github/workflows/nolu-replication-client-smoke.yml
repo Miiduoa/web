@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-replication-client-smoke.yml'
   push:
     branches: [main]
     paths:
       - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-replication-client-smoke.yml'
   workflow_dispatch:
 
@@ -21,7 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Parse JavaScript
-        run: node --check pu-plan/cloud-replication.js
+        run: |
+          node --check pu-plan/cloud-replication.js
+          node --check pu-plan/sw.js
+          node --check pu-plan/pwa.js
       - name: Require replica v3 and reject retired v2
         run: |
           grep -q "pu-plan-replica-v3" pu-plan/cloud-replication.js
@@ -31,3 +38,8 @@ jobs:
           grep -q "tier!=='primary'" pu-plan/cloud-replication.js
           grep -q "reverse replication is intentionally disabled" pu-plan/cloud-replication.js
           ! grep -q "STANDBY_SYNC" pu-plan/cloud-replication.js
+      - name: Keep installed PWA on replica v3 shell
+        run: |
+          grep -q "nolu-shell-20260911-replica3-mesh3" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260911_replica3" pu-plan/pwa.js
+          grep -q "'./cloud-replication.js'" pu-plan/sw.js
