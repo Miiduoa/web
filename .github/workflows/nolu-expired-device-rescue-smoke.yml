@@ -37,9 +37,9 @@ jobs:
           node --check pu-plan/offline-session-rescue.js
           grep -q "LOCAL_EXPIRED_GRACE_SECONDS=7\*24\*60\*60" pu-plan/session-recovery.js
           grep -q "device-rescue2" pu-plan/session-recovery.js
-          grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260911_login_rescue6" pu-plan/pwa.js
-          grep -q "20260911-login-rescue6" pu-plan/index.html
+          grep -q "nolu-shell-20260911-cloud-reconnect1" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260911_cloud_reconnect1" pu-plan/pwa.js
+          grep -q "20260911-cloud-reconnect1" pu-plan/index.html
       - name: Verify recently expired regional session is local-rescue anchor only
         run: |
           node <<'NODE'
