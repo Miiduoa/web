@@ -41,16 +41,18 @@ jobs:
             local base="$1"
             local origin="$2"
             local code
+            : > "$headers"
             code=$(curl -sS --retry 3 --retry-delay 2 --max-time 20 -D "$headers" -o "$tmp" -w '%{http_code}' \
               -X POST "${base}?target=pu-plan-api-v8" \
               -H "Origin: ${origin}" \
               -H 'Content-Type: application/json' \
               --data '{"action":"health"}')
             echo "[$base][$origin] HTTP $code :: $(cat "$tmp")"
+            tr -d '\r' < "$headers"
             test "$code" = 200
             grep -q '"ok":true' "$tmp"
-            grep -qi "^access-control-allow-origin: ${origin}\r\?$" "$headers"
-            grep -qi '^cache-control: no-store' "$headers"
+            tr -d '\r' < "$headers" | grep -Fqi "access-control-allow-origin: ${origin}"
+            tr -d '\r' < "$headers" | grep -Fqi 'cache-control: no-store'
           }
 
           PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1'
@@ -73,4 +75,4 @@ jobs:
             -H 'Access-Control-Request-Method: POST')
           echo "[evil] HTTP $code :: $(cat "$tmp")"
           test "$code" = 403
-          ! grep -qi '^access-control-allow-origin: https://evil.example' "$headers"
+          ! tr -d '\r' < "$headers" | grep -Fqi 'access-control-allow-origin: https://evil.example'
