@@ -2,7 +2,7 @@ name: nolu avatar rendering security smoke
 
 on:
   push:
-    branches: [main, security/nolu-avatar-rendering-20260910]
+    branches: [main, security/nolu-avatar-rendering-20260910, fix/nolu-avatar-ha-harness-20260911]
     paths:
       - 'pu-plan/social-ui.js'
       - 'pu-plan/community.js'
@@ -92,6 +92,10 @@ jobs:
           cat >/tmp/nolu-avatar/check.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const USER_ID='11111111-1111-4111-8111-111111111111';
+          const now=Math.floor(Date.now()/1000);
+          const payload=Buffer.from(JSON.stringify({v:4,uid:USER_ID,iat:now,exp:now+3600,cv:'avatar-test'})).toString('base64url');
+          const testToken=`${payload}.avatar-test-signature`;
           const evil=[
             {id:'evil-1',name:'Injected One',display_name:'Injected One',username:'evil1',avatar:'x" onerror="window.__NOLU_XSS__=1',avatar_data:'x" onerror="window.__NOLU_XSS__=1',courses:[],meta:{},cloud:true},
             {id:'evil-2',name:'Injected Two',display_name:'Injected Two',username:'evil2',avatar:'javascript:alert(1)',avatar_data:'javascript:alert(1)',courses:[],meta:{},cloud:true},
@@ -99,8 +103,8 @@ jobs:
             {id:'good-1',name:'Safe PNG',display_name:'Safe PNG',username:'safe',avatar:'data:image/png;base64,iVBORw0KGgo=',avatar_data:'data:image/png;base64,iVBORw0KGgo=',courses:[],meta:{},cloud:true}
           ];
           const bundle=()=>({
-            token:'test-token',
-            profile:{id:'user-1',email:'user@example.invalid',display_name:'Test User',username:'tester',bio:'',discoverable:true,avatar_data:''},
+            token:testToken,
+            profile:{id:USER_ID,email:'user@example.invalid',display_name:'Test User',username:'tester',bio:'',discoverable:true,avatar_data:''},
             courses:[],
             social:{relationships:[],profiles:evil.map(x=>({id:x.id,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,bio:''})),friends:evil,meetups:[]},
             social_summary:{}
@@ -111,36 +115,52 @@ jobs:
               const context=await browser.newContext({serviceWorkers:'block'});
               const page=await context.newPage();
               const errors=[];
-              page.on('pageerror',e=>errors.push(e.message));
-              page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
-              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/**',async route=>{
+              const failed=[];
+              page.on('pageerror',e=>errors.push(`pageerror: ${e.message}`));
+              page.on('console',m=>{if(m.type()==='error')errors.push(`console: ${m.text()}`)});
+              page.on('requestfailed',r=>failed.push(`${r.url()} :: ${r.failure()?.errorText||''}`));
+              await page.route('https://*.supabase.co/**',async route=>{
                 const url=route.request().url();
+                const parsed=new URL(url);
                 let body={};
                 try{body=route.request().postDataJSON()||{}}catch{}
                 const action=body.action||'';
-                const respond=data=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
-                if(url.includes('/functions/v1/pu-plan-admin')){
-                  if(action==='whoami')return respond({is_admin:true,profile:{id:'user-1',email:'admin@example.invalid',display_name:'Admin',username:'admin',role:'admin'}});
+                const respond=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
+
+                // Production currently keeps v7 retired. Exercise the same 410 ->
+                // compatibility fallback path deterministically on both regions.
+                if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v7'))return respond({error:'DISABLED'},410);
+
+                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&url.includes('/functions/v1/pu-plan-admin')){
+                  if(action==='whoami')return respond({is_admin:true,profile:{id:USER_ID,email:'admin@example.invalid',display_name:'Admin',username:'admin',role:'admin'}});
                   if(action==='overview')return respond({stats:{users:4,posts:0,replies:0,messages:0,conversations:0,friendships:0,semesters:0,media:0}});
                   if(action==='users')return respond({users:evil.map(x=>({id:x.id,email:`${x.username}@example.invalid`,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,role:'user',profile_visibility:'public',discoverable:true})),total:evil.length});
-                  return route.fulfill({status:400,contentType:'application/json',body:'{"message":"unsupported test action"}'});
+                  return respond({message:'unsupported test action'},400);
                 }
-                if(url.includes('/functions/v1/pu-plan-api-v6')||url.includes('/functions/v1/pu-plan-core-v1')){
+                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&(url.includes('/functions/v1/pu-plan-api-v6')||url.includes('/functions/v1/pu-plan-core-v1'))){
                   if(action==='login')return respond(bundle());
                   if(action==='social')return respond({social:bundle().social});
+                  if(action==='bootstrap')return respond(bundle());
                 }
-                if(url.includes('/functions/v1/pu-plan-social')){
+                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&url.includes('/functions/v1/pu-plan-social')){
                   if(action==='inbox')return respond({conversations:[]});
                   return respond({});
                 }
-                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+                // Never let the frontend security test reach a real Supabase region.
+                return respond({message:'test endpoint not mocked'},401);
               });
               await page.addInitScript(()=>{
                 localStorage.clear();sessionStorage.clear();
                 window.__NOLU_XSS__=0;
               });
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
-              await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD,null,{timeout:10000});
+              try{
+                await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD,null,{timeout:15000});
+              }catch(error){
+                const startup=await page.evaluate(()=>({app:!!window.PUPLAN_APP,durable:!!window.NOLU_DURABLE,transport:!!window.NOLU_TRANSPORT,resilience:!!window.NOLU_RESILIENCE,offlineRescue:!!window.NOLU_OFFLINE_RESCUE,cloud:!!window.PUPLAN_CLOUD,replication:!!window.NOLU_REPLICATION,readyState:document.readyState}));
+                console.error('AVATAR_STARTUP_STATE',startup,'ERRORS',errors,'FAILED',failed);
+                throw error;
+              }
               await page.locator('[data-auth-tab="login"]').click();
               await page.locator('#loginEmail').fill('test@example.invalid');
               await page.locator('#loginPassword').fill('test-password');
@@ -154,7 +174,6 @@ jobs:
 
               await page.locator('[data-view="friends"]').first().click();
               await page.waitForTimeout(200);
-
               await page.waitForFunction(()=>document.querySelector('[data-community-open]'),null,{timeout:5000});
               await page.locator('[data-community-open]').first().click();
               await page.locator('[data-community-tab="chat"]').click();
@@ -188,4 +207,4 @@ jobs:
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          timeout 80s node /tmp/nolu-avatar/check.cjs
+          timeout 90s node /tmp/nolu-avatar/check.cjs
