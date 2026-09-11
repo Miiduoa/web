@@ -3,7 +3,10 @@ const vm=require('vm');
 const assert=require('assert');
 
 const source=fs.readFileSync('pu-plan/guest-privacy.js','utf8');
-const tokenFor=(uid,exp=Math.floor(Date.now()/1000)+3600)=>`${Buffer.from(JSON.stringify({v:3,uid,iat:Math.floor(Date.now()/1000),exp})).toString('base64url')}.test-signature`;
+const UID_A='11111111-1111-4111-8111-111111111111';
+const UID_B='22222222-2222-4222-8222-222222222222';
+const now=()=>Math.floor(Date.now()/1000);
+const tokenFor=(uid,exp=now()+3600,version=4)=>`${Buffer.from(JSON.stringify({v:version,uid,iat:now(),exp,cv:'cv-test'})).toString('base64url')}.test-signature`;
 
 function makeStorage(seed={}){
   const map=new Map(Object.entries(seed));
@@ -17,12 +20,13 @@ function makeStorage(seed={}){
   };
 }
 
-function boot(localSeed,sessionSeed={}){
+function boot(localSeed,sessionSeed={},recovery=null){
   const localStorage=makeStorage(localSeed);
   const sessionStorage=makeStorage(sessionSeed);
   const listeners={};
   const document={addEventListener(type,fn,capture){listeners[type]={fn,capture}}};
-  vm.runInNewContext(source,{localStorage,sessionStorage,document,Date});
+  const window=recovery?{NOLU_SESSION_RECOVERY:{result:recovery}}:{};
+  vm.runInNewContext(source,{localStorage,sessionStorage,document,window,Date});
   return {localStorage,sessionStorage,listeners};
 }
 
@@ -35,10 +39,10 @@ const privateSeed={
   puplan_courses:'[{"name":"Private class"}]',
   puplan_friends:'[{"name":"Bob"}]',
   puplan_schedule_meta:'{"school":"Private"}',
-  puplan_course_owner:'user-a'
+  puplan_course_owner:UID_A
 };
 
-// Legacy guest sessions created before the privacy guard are scrubbed once.
+// Legacy guest sessions are scrubbed before anything account-scoped can render.
 {
   const x=boot({...privateSeed,puplan_guest:'1'},{puplan_assistant_history:'private chat'});
   const data=x.localStorage.dump();
@@ -54,51 +58,90 @@ const privateSeed={
   assert.equal(x.localStorage.getItem('puplan_courses'),'[{"name":"Guest class"}]');
 }
 
-// Signed-in users keep cache only when its owner matches the session UID.
+// Guest mode remains authoritative even if an older/interrupted flow left a token.
 {
-  const x=boot({...privateSeed,puplan_session:tokenFor('user-a')});
-  assert.equal(x.localStorage.getItem('puplan_name'),'Alice');
-  assert.equal(x.localStorage.getItem('puplan_courses'),'[{"name":"Private class"}]');
-  assert.equal(x.localStorage.getItem('puplan_course_owner'),'user-a');
+  const x=boot({...privateSeed,puplan_guest:'1',nolu_guest_scope_v1:'1',puplan_session:tokenFor(UID_A)});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_guest,'1');
+  assert.equal(data.puplan_session,undefined);
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`guest/token conflict leaked ${key}`);
 }
 
-// A new account session must scrub the previous account before any UI can render it.
+// A well-formed session envelope is retained for later verification, but ordinary
+// renderable account cache is quarantined until durable/cloud trust is established.
 {
-  const newToken=tokenFor('user-b');
-  const x=boot({...privateSeed,puplan_session:newToken},{puplan_assistant_history:'private chat'});
+  const session=tokenFor(UID_A);
+  const x=boot({
+    ...privateSeed,
+    puplan_session:session,
+    puplan_session_primary_v1:session,
+    [`nolu_account_snapshot_v1:${UID_A}`]:'{"trusted":"later"}'
+  },{puplan_assistant_history:'private chat'});
   const data=x.localStorage.dump();
-  assert.equal(data.puplan_session,newToken,'new account session should remain available for server bootstrap');
+  assert.equal(data.puplan_session,session,'canonical session must remain available for verification');
+  assert.equal(data.puplan_session_primary_v1,session,'same-account regional recovery credential should survive quarantine');
+  assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],'{"trusted":"later"}','same-account recovery material should survive quarantine');
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`pre-render cache survived quarantine: ${key}`);
+  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+}
+
+// Account switches remove the previous account cache and recovery material while
+// leaving the new canonical session available for the server bootstrap.
+{
+  const oldRegional=tokenFor(UID_A),newToken=tokenFor(UID_B);
+  const x=boot({
+    ...privateSeed,
+    puplan_session:newToken,
+    puplan_session_primary_v1:oldRegional,
+    [`nolu_account_snapshot_v1:${UID_A}`]:'{"old":true}',
+    [`nolu_pending_mutations_v1:${UID_A}`]:'{"old":true}'
+  },{puplan_assistant_history:'private chat'});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_session,newToken);
+  assert.equal(data.puplan_session_primary_v1,undefined);
+  assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],undefined);
+  assert.equal(data[`nolu_pending_mutations_v1:${UID_A}`],undefined);
   for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`account switch leaked ${key}`);
-  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
 }
 
-// Expired or malformed sessions must never expose account-scoped local data.
+// Recently expired credentials are retained only when session-recovery explicitly
+// marked the same Session v4 identity for local grace; visible cache remains empty.
 {
-  const expired=tokenFor('user-a',Math.floor(Date.now()/1000)-1);
+  const expired=tokenFor(UID_A,now()-1);
+  const x=boot({...privateSeed,puplan_session:expired},{puplan_assistant_history:'private chat'},{status:'local-grace',uid:UID_A});
+  const data=x.localStorage.dump();
+  assert.equal(data.puplan_session,expired);
+  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`local grace exposed ${key}`);
+}
+
+// Expired credentials without the recovery decision, malformed credentials, and
+// obsolete session formats fail closed and are removed.
+{
+  const expired=tokenFor(UID_A,now()-1);
   const x=boot({...privateSeed,puplan_session:expired},{puplan_assistant_history:'private chat'});
-  const data=x.localStorage.dump();
-  assert.equal(data.puplan_session,undefined);
-  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`expired session leaked ${key}`);
-  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+  assert.equal(x.localStorage.getItem('puplan_session'),null);
 }
 {
-  const x=boot({...privateSeed,puplan_session:'malformed-token'},{puplan_assistant_history:'private chat'});
-  const data=x.localStorage.dump();
-  assert.equal(data.puplan_session,undefined);
-  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`malformed session leaked ${key}`);
+  const x=boot({...privateSeed,puplan_session:tokenFor(UID_A,now()+3600,3)});
+  assert.equal(x.localStorage.getItem('puplan_session'),null);
+}
+{
+  const x=boot({...privateSeed,puplan_session:'malformed-token'});
+  assert.equal(x.localStorage.getItem('puplan_session'),null);
 }
 
-// Entering guest mode clears account data before cloud.js' click handler runs.
+// Entering guest mode clears credentials and recovery state before later handlers.
 {
-  const x=boot({...privateSeed,puplan_session:tokenFor('user-a')},{puplan_assistant_history:'private chat'});
+  const session=tokenFor(UID_A);
+  const x=boot({...privateSeed,puplan_session:session,puplan_session_primary_v1:session,[`nolu_account_snapshot_v1:${UID_A}`]:'{}'});
   const target={closest(selector){return selector==='#guestMode'?{}:null}};
   x.listeners.click.fn({target});
   const data=x.localStorage.dump();
   assert.equal(data.puplan_guest,'1');
   assert.equal(data.nolu_guest_scope_v1,'1');
   assert.equal(data.puplan_session,undefined);
-  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`guest transition leaked ${key}`);
-  assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+  assert.equal(data.puplan_session_primary_v1,undefined);
+  assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],undefined);
 }
 
 console.log('guest privacy isolation: ok');
