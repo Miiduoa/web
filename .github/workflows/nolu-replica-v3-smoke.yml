@@ -1,0 +1,46 @@
+name: nolu replica v3 smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/nolu-replica-v3-smoke.yml'
+      - 'supabase/functions/pu-plan-replica-v3/**'
+      - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/sw.js'
+  pull_request:
+    paths:
+      - '.github/workflows/nolu-replica-v3-smoke.yml'
+      - 'supabase/functions/pu-plan-replica-v3/**'
+      - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/sw.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Bootstrap derived public keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          for spec in \
+            'hrrmkrayvrgnwcroyttp primary' \
+            'ltfurqaspqsvswmebyzw standby'
+          do
+            set -- $spec
+            ref="$1"; role="$2"
+            body="$(curl -fsS --max-time 12 "https://${ref}.supabase.co/functions/v1/pu-plan-replica-v3")"
+            node - "$body" "$ref" <<'NODE'
+          const [raw, ref] = process.argv.slice(2);
+          const data = JSON.parse(raw);
+          if (data.ok !== true || data.project_ref !== ref || data.alg !== 'Ed25519' || data.protocol !== 'replica-v3-key-bootstrap') process.exit(1);
+          if (!/^rv3-[A-Za-z0-9_-]{16}$/.test(data.kid || '')) process.exit(1);
+          if (!/^[A-Za-z0-9_-]{43}$/.test(data.public_key || '')) process.exit(1);
+          console.log(`${ref} ${data.kid} ${data.public_key}`);
+          NODE
+          done
