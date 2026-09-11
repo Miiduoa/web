@@ -71,3 +71,24 @@ jobs:
           grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
           grep -Fq 'nolu-shell-20260911-outage-mesh5' pu-plan/sw.js
           grep -Fq 'nolu_shell_reload_20260911_outage_mesh5' pu-plan/pwa.js
+      - name: Verify live portable v2 endpoints
+        run: |
+          set -euo pipefail
+          ORIGIN='https://miiduoa.github.io'
+          for spec in 'hrrmkrayvrgnwcroyttp:mesh-mumbai-20260911-5' 'ltfurqaspqsvswmebyzw:mesh-tokyo-20260911-5'; do
+            REF=${spec%%:*}; KID=${spec#*:}; URL="https://${REF}.supabase.co/functions/v1/pu-plan-portable-v2"
+            tmp=$(mktemp)
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' "$URL" -H "Origin: $ORIGIN")
+            echo "[$REF jwk] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 200
+            grep -Fq "\"kid\":\"$KID\"" "$tmp"
+            grep -Fq '"outage_grace_seconds":604800' "$tmp"
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{}')
+            echo "[$REF unauth] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 401
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+            echo "[$REF evil origin] HTTP $code"
+            test "$code" = 403
+          done
+          grep -Fq 'mesh-mumbai-20260911-5' pu-plan/nolu-mesh-jwks.json
+          grep -Fq 'mesh-tokyo-20260911-5' pu-plan/nolu-mesh-jwks.json
