@@ -1,0 +1,59 @@
+name: nolu portable provider safehold
+
+on:
+  push:
+    branches: [main, security/nolu-portable-safehold-v2-20260911]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-portable-safehold.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-portable-safehold.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safehold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify local fail-closed configuration
+        run: |
+          set -euo pipefail
+          node --check pu-plan/provider-config.js
+          node --check pu-plan/provider-mesh.js
+          node --check pu-plan/sw.js
+          grep -Fq "PORTABLE_MINT_ENDPOINTS=Object.freeze([])" pu-plan/provider-config.js
+          grep -Fq "nolu-shell-20260911-portable-safehold1" pu-plan/sw.js
+          if grep -Eq "enabled:[[:space:]]*true" pu-plan/provider-config.js; then
+            echo 'A remote provider was enabled while portable auth is in safehold.' >&2
+            exit 1
+          fi
+          if git grep -n -E 'PRIVATE_JWK|BEGIN (EC |RSA )?PRIVATE KEY' -- .; then
+            echo 'Private signing key material or an embedded private-key implementation is present in the repository.' >&2
+            exit 1
+          fi
+
+      - name: Verify both production mint endpoints remain disabled
+        run: |
+          set -euo pipefail
+          for url in \
+            https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1 \
+            https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1
+          do
+            code="$(curl --connect-timeout 5 --max-time 12 -sS -o /tmp/nolu-portable-response -w '%{http_code}' "$url")"
+            body="$(cat /tmp/nolu-portable-response)"
+            echo "$url -> HTTP $code"
+            test "$code" = '410'
+            printf '%s' "$body" | grep -Fq '"error":"DISABLED"'
+          done

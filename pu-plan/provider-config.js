@@ -1,22 +1,25 @@
-// Public, non-secret endpoints only. Authentication is carried with Nolu's
-// portable ES256 session token; never put database credentials in this file.
+// Public, non-secret endpoints only. Authentication for independent mirrors must
+// use a portable session whose signing key is secret-managed and whose credential
+// version is revalidated at mint time. Until that design is deployed and rotated,
+// every remote provider that depends on portable auth stays fail-closed.
 //
 // Provider identity is a failure-domain label, not a hostname. Multiple Supabase
 // projects still count as ONE provider because a provider-wide incident can affect
-// them together. The production target is at least three independent remote
+// them together. The production target remains at least three independent remote
 // providers, plus IndexedDB on the user's device as an additional durable local copy.
 //
 // A candidate MUST stay disabled until its storage plane, authenticated read/write
-// path, health check, and recovery semantics have all been verified live.
+// path, health check, recovery semantics, key management, and revocation semantics
+// have all been verified live.
 
-export const PROVIDER_MESH_VERSION='20260911-mesh3';
+export const PROVIDER_MESH_VERSION='20260911-mesh3-safehold1';
 export const REQUIRED_REMOTE_PROVIDERS=3;
 export const MIRROR_READ_QUORUM=2;
 
-export const PORTABLE_MINT_ENDPOINTS=Object.freeze([
-  'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1',
-  'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1'
-]);
+// Safehold: both Supabase mint endpoints intentionally return HTTP 410. Do not
+// repopulate this list until the portable signing key has been rotated into secret
+// storage and minting verifies the user's current credential version server-side.
+export const PORTABLE_MINT_ENDPOINTS=Object.freeze([]);
 
 export const PROVIDER_MIRRORS=Object.freeze([
   Object.freeze({
@@ -24,10 +27,8 @@ export const PROVIDER_MIRRORS=Object.freeze([
     provider:'neon',
     kind:'postgrest',
     endpoint:'https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1',
-    enabled:true
+    enabled:false
   }),
-  // Render service is deployed, but it remains excluded from quorum until its
-  // independent Render Postgres DATABASE_URL is safely bound and live R/W passes.
   Object.freeze({
     id:'render-singapore',
     provider:'render',
@@ -35,11 +36,7 @@ export const PROVIDER_MIRRORS=Object.freeze([
     endpoint:'https://nolu-render-mirror.onrender.com/mirror',
     enabled:false
   }),
-  // Railway is the preferred next independent provider because its app and DB can
-  // be bound privately. It stays inert until the account connection and live tests exist.
   Object.freeze({id:'railway-mirror',provider:'railway',kind:'action-api',endpoint:'',enabled:false}),
-  // Netlify Blobs is independently hosted and registered, but remains excluded from
-  // quorum until the deployed Function passes authenticated production read/write.
   Object.freeze({
     id:'netlify-blobs',
     provider:'netlify',
