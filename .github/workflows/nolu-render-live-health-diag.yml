@@ -14,8 +14,27 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
+      - name: Probe primary login database path
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload='{"action":"login","email":"nolu-health-probe-20260911@invalid.example","password":"not-a-real-password-9f12"}'
+          for endpoint in \
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6' \
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1'
+          do
+            out="/tmp/$(echo "$endpoint" | tr '/:' '__').json"
+            start=$(date +%s)
+            code=$(curl --connect-timeout 8 --max-time 18 -sS -o "$out" -w '%{http_code}' \
+              -X POST "$endpoint" -H 'Content-Type: application/json' --data "$payload" || true)
+            elapsed=$(( $(date +%s) - start ))
+            echo "$endpoint -> HTTP ${code:-curl-error} in ${elapsed}s"
+            head -c 600 "$out" 2>/dev/null || true
+            echo
+          done
+
       - name: Probe Render mirror health without failing diagnostic
         shell: bash
         run: |
@@ -40,7 +59,6 @@ jobs:
           data=json.load(open('/tmp/netlify-health.json'))
           print('provider=',data.get('provider'))
           print('storage=',data.get('storage'))
-          print('configured=',data.get('configured'))
           print('ok=',data.get('ok'))
           print('status=',data.get('status'))
           if data.get('ok') is not True:
