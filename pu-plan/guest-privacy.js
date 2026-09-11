@@ -4,6 +4,7 @@ const GUEST_SCOPE_MARKER='nolu_guest_scope_v1';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SESSION_SECONDS=45*24*60*60;
 const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
+let trackedAccountUid='';
 
 const ACCOUNT_DATA_KEYS=[
   'puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner'
@@ -47,7 +48,9 @@ function quarantineRenderableCache(candidateUid=''){
 }
 function clearPrivateRuntime(uid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
-  clearPrivateCaches(uid||ownerBefore);
+  const targetUid=String(uid||trackedAccountUid||ownerBefore||'');
+  clearPrivateCaches(targetUid);
+  trackedAccountUid='';
   globalThis.window?.PUPLAN_APP?.setSelectedFriend?.(null);
   globalThis.window?.PUPLAN_APP?.render?.();
 }
@@ -104,6 +107,7 @@ if(isGuest){
     clearPrivateAccountState(owner);
     localStorage.removeItem(GUEST_SCOPE_MARKER);
   }else{
+    trackedAccountUid=candidate.uid;
     quarantineRenderableCache(candidate.uid);
     localStorage.removeItem(GUEST_SCOPE_MARKER);
   }
@@ -114,14 +118,18 @@ if(isGuest){
 
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
-  const uid=localStorage.getItem('puplan_course_owner')||sessionUid(localStorage.getItem(SESSION_KEY)||'');
+  const uid=localStorage.getItem('puplan_course_owner')||trackedAccountUid||sessionUid(localStorage.getItem(SESSION_KEY)||'');
   clearPrivateAccountState(uid);
   localStorage.setItem(GUEST_KEY,'1');
   localStorage.setItem(GUEST_SCOPE_MARKER,'1');
 },true);
 
 document.addEventListener('puplan:profile-changed',event=>{
-  if(event.detail)return;
+  if(event.detail){
+    const uid=String(event.detail?.id||'');
+    if(UUID.test(uid))trackedAccountUid=uid;
+    return;
+  }
   if(localStorage.getItem(SESSION_KEY)||localStorage.getItem(GUEST_KEY)==='1')return;
   clearPrivateRuntime();
 });
