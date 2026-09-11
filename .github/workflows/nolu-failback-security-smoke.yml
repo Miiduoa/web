@@ -1,0 +1,104 @@
+name: nolu failback security smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-failback-v1/**'
+      - 'supabase/functions/pu-plan-failback-ingest-v1/**'
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/standby/**'
+      - '.github/workflows/nolu-failback-security-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-failback-v1/**'
+      - 'supabase/functions/pu-plan-failback-ingest-v1/**'
+      - 'supabase/functions/_shared/session-v4.ts'
+      - 'supabase/standby/**'
+      - '.github/workflows/nolu-failback-security-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  failback-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PRIMARY: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-failback-ingest-v1
+      STANDBY: https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-failback-v1
+      GOOD_ORIGIN: https://miiduoa.github.io
+      EVIL_ORIGIN: https://evil.example
+    steps:
+      - uses: actions/checkout@v6
+      - name: Source security invariants
+        run: |
+          set -euo pipefail
+          standby=supabase/functions/pu-plan-failback-v1/index.ts
+          primary=supabase/functions/pu-plan-failback-ingest-v1/index.ts
+          grep -Fq "verifySignedSessionV4(auth.slice(7), KEY)" "$standby"
+          grep -Fq "await assertCredentialCurrent(session, data.password_salt)" "$standby"
+          grep -Fq "await rateLimit(req, uid)" "$standby"
+          grep -Fq ".eq('action', 'failback')" "$standby"
+          grep -Fq "if ((count || 0) >= 8)" "$standby"
+          grep -Fq "payload.iat > nowSeconds + 300" supabase/functions/_shared/session-v4.ts
+          grep -Fq "const MAX_BODY = 900_000" "$primary"
+          grep -Fq "req.body.getReader()" "$primary"
+          grep -Fq "size > MAX_BODY" "$primary"
+          grep -Fq "payload.bundle?.user?.id" "$primary"
+          grep -Fq "if (req.headers.get('origin')) return json(403" "$primary"
+          grep -Fq "puplan_failback_nonces" "$primary"
+          grep -Fq "puplan_apply_failback_snapshot" "$primary"
+          ! grep -Eq "console\.log\(.*(KEY|token|envelope|payload)" "$standby" "$primary"
+
+      - name: Live failback endpoints keep public boundaries closed
+        run: |
+          set -euo pipefail
+          retry_code(){
+            local method="$1" url="$2" outfile="$3"; shift 3
+            local code='' rc=1
+            for attempt in 1 2 3; do
+              set +e
+              code=$(curl -sS --connect-timeout 4 --max-time 10 -o "$outfile" -w '%{http_code}' -X "$method" "$url" "$@")
+              rc=$?
+              set -e
+              [ "$rc" -eq 0 ] && break
+              sleep "$attempt"
+            done
+            [ "$rc" -eq 0 ] || { echo "transport inconclusive for $url"; return 2; }
+            printf '%s' "$code"
+          }
+
+          code=$(retry_code GET "$STANDBY" /tmp/standby-get) || exit $?
+          test "$code" = 200
+          grep -q '"role":"standby"' /tmp/standby-get
+
+          code=$(retry_code GET "$PRIMARY" /tmp/primary-get) || exit $?
+          test "$code" = 200
+          grep -q '"role":"primary"' /tmp/primary-get
+
+          code=$(retry_code OPTIONS "$STANDBY" /tmp/standby-evil -H "Origin: $EVIL_ORIGIN" -H 'Access-Control-Request-Method: POST') || exit $?
+          test "$code" = 403
+
+          code=$(retry_code POST "$STANDBY" /tmp/standby-anon -H "Origin: $GOOD_ORIGIN" -H 'Content-Type: application/json' --data '{}') || exit $?
+          test "$code" = 401
+
+          code=$(retry_code POST "$PRIMARY" /tmp/primary-origin -H "Origin: $EVIL_ORIGIN" -H 'Content-Type: application/json' --data '{}') || exit $?
+          test "$code" = 403
+
+          code=$(retry_code POST "$PRIMARY" /tmp/primary-forged -H 'Content-Type: application/json' --data '{"envelope":"forged.envelope"}') || exit $?
+          test "$code" = 401
+
+      - name: Primary ingest rejects oversized bodies before signature work
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >/tmp/oversized.json
+          import json
+          print(json.dumps({'envelope':'x'*910000}))
+          PY
+          code=$(curl -sS --connect-timeout 4 --max-time 12 -o /tmp/oversized-body -w '%{http_code}' \
+            -X POST "$PRIMARY" -H 'Content-Type: application/json' --data-binary @/tmp/oversized.json)
+          test "$code" = 413
+          grep -q 'PAYLOAD_TOO_LARGE' /tmp/oversized-body
