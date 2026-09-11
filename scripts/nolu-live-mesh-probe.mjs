@@ -19,24 +19,40 @@ async function jsonFetch(url,options={}){
 function assert(condition,message){if(!condition) throw new Error(message)}
 function decodePart(part){try{return JSON.parse(Buffer.from(part,'base64url').toString('utf8'))}catch{return null}}
 
-const standby='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
-const mint='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1';
+const authDomains=[
+  {
+    id:'tokyo',
+    login:'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8',
+    mint:'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1'
+  },
+  {
+    id:'mumbai',
+    login:'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',
+    mint:'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1'
+  }
+];
 const netlify='https://nolu-mirror.netlify.app/mirror';
 const neon='https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1/nolu_snapshots';
-const jwksUrl='https://miiduoa.github.io/web/pu-plan/nolu-mesh-jwks.json';
+const jwksUrl='https://miiduoa.github.io/web/nolu-mesh-jwks.json';
 
-const login=await jsonFetch(standby,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',email,password})});
-console.log('standby login',login.res.status);
-assert(login.res.ok&&typeof login.data.token==='string','standby login failed');
+let login=null,authDomain=null;
+for(const candidate of authDomains){
+  try{
+    const result=await jsonFetch(candidate.login,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',email,password})});
+    console.log(`${candidate.id} login`,result.res.status);
+    if(result.res.ok&&typeof result.data.token==='string'){login=result;authDomain=candidate;break}
+  }catch(error){console.log(`${candidate.id} login network error`,String(error?.name||'error'))}
+}
+assert(login&&authDomain,'all auth domains failed');
 
-const minted=await jsonFetch(mint,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${login.data.token}`},body:'{}'});
-console.log('portable mint',minted.res.status);
+const minted=await jsonFetch(authDomain.mint,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${login.data.token}`},body:'{}'});
+console.log('portable mint',minted.res.status,authDomain.id);
 if(!minted.res.ok) console.log('portable mint body',minted.text.slice(0,300));
 assert(minted.res.ok&&typeof minted.data.portable_token==='string','portable mint failed');
 const token=minted.data.portable_token;
 const [tokenHeaderPart,tokenPayloadPart]=token.split('.');
 const tokenHeader=decodePart(tokenHeaderPart),tokenPayload=decodePart(tokenPayloadPart);
-console.log('portable token meta',JSON.stringify({kid:tokenHeader?.kid,alg:tokenHeader?.alg,typ:tokenHeader?.typ,aud:tokenPayload?.aud,iss:tokenPayload?.iss,subMatches:tokenPayload?.sub===uid}));
+console.log('portable token meta',JSON.stringify({kid:tokenHeader?.kid,alg:tokenHeader?.alg,typ:tokenHeader?.typ,aud:tokenPayload?.aud,role:tokenPayload?.role,iss:tokenPayload?.iss,subMatches:tokenPayload?.sub===uid}));
 const jwks=await jsonFetch(jwksUrl);
 console.log('jwks',jwks.res.status,JSON.stringify({kids:Array.isArray(jwks.data?.keys)?jwks.data.keys.map(k=>k?.kid):[]}));
 
