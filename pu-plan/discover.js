@@ -1,6 +1,6 @@
 const SOCIAL=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
-const token=()=>localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session')||'';
+const token=()=>localStorage.getItem('puplan_session_primary_v1')||'';
 const esc=s=>window.PUPLAN_APP?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const profileCache=new Map();
 

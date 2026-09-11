@@ -31,20 +31,23 @@ function activeTier(){
 }
 function sessionKey(tier){return tier==='standby'?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY}
 function sameAccount(raw,id=uid()){return !!id&&String(decodeV4(raw)?.uid||'')===id}
+function legacyPrimarySession(){
+  const id=uid(),current=canonicalToken();if(!id||!sameAccount(current,id)||localStorage.getItem('nolu_preferred_cloud_v1')==='standby')return'';
+  const primary=localStorage.getItem(PRIMARY_SESSION_KEY)||'',standby=localStorage.getItem(STANDBY_SESSION_KEY)||'';
+  if(sameAccount(primary,id))return primary;
+  if(sameAccount(standby,id)||primary||standby)return'';
+  return current;
+}
 function sessionFor(tier){
   const id=uid(),specific=localStorage.getItem(sessionKey(tier))||'';
   if(sameAccount(specific,id))return specific;
-  const current=canonicalToken();
-  // Historical installations only had puplan_session, which was the Mumbai token.
-  // It may be used as a one-time fallback while the primary-specific slot is
-  // bootstrapped, but it must never overwrite the Tokyo-local peer token.
-  return tier==='primary'&&sameAccount(current,id)?current:'';
+  return tier==='primary'?legacyPrimarySession():'';
 }
 function seedPrimarySessionFromCanonical(){
-  const current=canonicalToken(),data=decodeV4(current);if(!data)return false;
-  const existing=localStorage.getItem(PRIMARY_SESSION_KEY)||'';
-  if(!sameAccount(existing,String(data.uid)))localStorage.setItem(PRIMARY_SESSION_KEY,current);
-  return true;
+  const id=uid();if(!id)return false;
+  const existing=localStorage.getItem(PRIMARY_SESSION_KEY)||'';if(sameAccount(existing,id))return true;
+  const legacy=legacyPrimarySession();if(!legacy)return false;
+  localStorage.setItem(PRIMARY_SESSION_KEY,legacy);return true;
 }
 function storePeerToken(sourceTier,raw){
   const currentUid=uid(),data=decodeV4(raw);if(!currentUid||!data||String(data.uid)!==currentUid)return false;

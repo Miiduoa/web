@@ -88,10 +88,20 @@ function earliestProbe(requested,action=''){const all=allApiCandidates(requested
 function requestBody(options){if(typeof options?.body!=='string')return null;return safeJson(options.body,null)}
 function isCoreUrl(url){return CORE_APIS.includes(String(url))||(Array.isArray(window.NOLU_SECONDARY_APIS)&&window.NOLU_SECONDARY_APIS.includes(String(url)))}
 function hasAuthorization(options){try{return new Headers(options?.headers||{}).has('Authorization')}catch{return false}}
+function legacyPrimarySession(){
+  const current=token(),uid=parseTokenUid(current);if(!uid||preferredCloud()==='standby')return'';
+  const primary=localStorage.getItem(PRIMARY_SESSION_KEY)||'',standby=localStorage.getItem(STANDBY_SESSION_KEY)||'';
+  if(parseTokenUid(primary)===uid)return primary;
+  // A same-account Tokyo credential proves the canonical anchor is not safe to
+  // infer as Mumbai. Invalid/stale tier slots also fail closed instead of guessing.
+  if(parseTokenUid(standby)===uid||primary||standby)return'';
+  localStorage.setItem(PRIMARY_SESSION_KEY,current);return current;
+}
 function tierSession(api){
-  const current=token(),uid=parseTokenUid(current),key=api===STANDBY?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,specific=localStorage.getItem(key)||'';
-  if(uid&&parseTokenUid(specific)===uid)return specific;
-  return current;
+  const uid=parseTokenUid(token());if(!uid)return'';
+  const key=api===STANDBY?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,specific=localStorage.getItem(key)||'';
+  if(parseTokenUid(specific)===uid)return specific;
+  return api===STANDBY?'':legacyPrimarySession();
 }
 function authTokenFor(api){return api===STANDBY?tierSession(STANDBY):api===PRIMARY||api===COMPAT_V6||api===COMPAT_CORE?tierSession(PRIMARY):token()}
 function freshOptions(api,options={}){
@@ -134,6 +144,7 @@ window.fetch=async function noluResilientFetch(input,options={}){
   const candidates=apiCandidates(String(url),{action});if(!candidates.length){state.lastError='all cloud circuits are temporarily open';const local=offlineResponse(action,body,sequence);if(local)return local;throw new TypeError('Nolu cloud temporarily unavailable')}
   for(const api of candidates){
     if(options?.signal?.aborted)break;
+    if(hasAuthorization(options)&&!authTokenFor(api))continue;
     try{
       const res=await timedFetch(api,options,1800);lastResponse=res;
       if((api===PRIMARY||api===STANDBY)&&res.status===401&&hasAuthorization(options)){tierAuth401=res;lastError=new Error('tier-local authorization unavailable');continue}
@@ -147,7 +158,9 @@ window.fetch=async function noluResilientFetch(input,options={}){
 };
 
 async function directJson(api,action,payload={},auth=true,ms=3600){
-  const headers={'Content-Type':'application/json'};if(auth&&authTokenFor(api))headers.Authorization=`Bearer ${authTokenFor(api)}`;
+  const headers={'Content-Type':'application/json'},regional=auth?authTokenFor(api):'';
+  if(auth&&!regional)return {res:new Response(JSON.stringify({error:'REGIONAL_SESSION_UNAVAILABLE'}),{status:503,headers:{'Content-Type':'application/json'}}),data:{error:'REGIONAL_SESSION_UNAVAILABLE'}};
+  if(regional)headers.Authorization=`Bearer ${regional}`;
   try{const res=await timedFetch(api,{method:'POST',headers,body:JSON.stringify({action,...payload}),cache:'no-store'},ms);if(res.status<500)markSuccess(api);else markFailure(api,new Error(`HTTP ${res.status}`));const data=await res.json().catch(()=>({}));if(res.ok)storeResponseTokens(data,api);return {res,data}}catch(error){markFailure(api,error);throw error}
 }
 async function flushPending(api){
