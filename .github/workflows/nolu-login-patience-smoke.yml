@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/main.js'
       - 'pu-plan/index.html'
       - 'pu-plan/sw.js'
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/main.js'
       - 'pu-plan/index.html'
       - 'pu-plan/sw.js'
@@ -27,23 +29,31 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v6
-      - name: Verify bounded primary login patience
+      - name: Verify bounded regional login patience
         run: |
           set -euo pipefail
           node --check pu-plan/login-transport-patience.js
+          node --check pu-plan/login-failover-budget.js
           node --experimental-default-type=module --check pu-plan/main.js
-          grep -Fq "PRIMARY_LOGIN_TIMEOUT_MS=5500" pu-plan/login-transport-patience.js
-          grep -Fq "url.hostname!==PRIMARY_HOST" pu-plan/login-transport-patience.js
+          grep -Fq "hrrmkrayvrgnwcroyttp.supabase.co" pu-plan/login-transport-patience.js
+          grep -Fq "ltfurqaspqsvswmebyzw.supabase.co" pu-plan/login-transport-patience.js
+          grep -Fq "primaryLoginTimeoutMs:5000" pu-plan/login-transport-patience.js
+          grep -Fq "standbyLoginTimeoutMs:6500" pu-plan/login-transport-patience.js
+          grep -Fq "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
           grep -Fq "actionOf(options)!=='login'" pu-plan/login-transport-patience.js
           grep -Fq "const {signal:_ignored,...rest}=options||{}" pu-plan/login-transport-patience.js
-          ! grep -Eq "password|password_hash|recovery_hash|service_role" pu-plan/login-transport-patience.js
+          ! grep -Eq "password_hash|recovery_hash|service_role|PRIVATE KEY" pu-plan/login-transport-patience.js pu-plan/login-failover-budget.js
           test "$(grep -o '<script' pu-plan/index.html | wc -l)" -eq 1
           grep -Fq "import './login-transport-patience.js';" pu-plan/main.js
+          grep -Fq "await import('./login-failover-budget.js');" pu-plan/main.js
           grep -Fq "'./login-transport-patience.js'" pu-plan/sw.js
+          grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
           node <<'NODE'
           const fs=require('node:fs');
-          const src=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
-          if((src.match(/baseFetch\(/g)||[]).length<2)throw Error('wrapper must delegate untouched traffic and bounded login traffic');
-          if(/setInterval|while\s*\(|for\s*\(/.test(src))throw Error('login patience must not retry or loop');
-          console.log('NOLU_LOGIN_PATIENCE_OK');
+          const patience=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
+          const budget=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+          if((patience.match(/baseFetch\(/g)||[]).length<2)throw Error('patience wrapper must delegate ordinary and login traffic');
+          if(/setInterval|while\s*\(/.test(patience))throw Error('login patience must not retry or loop');
+          if(!budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'))throw Error('missing bounded whole-login failover budget');
+          console.log('NOLU_REGIONAL_LOGIN_PATIENCE_OK');
           NODE
