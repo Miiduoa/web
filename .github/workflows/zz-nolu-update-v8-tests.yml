@@ -1,0 +1,73 @@
+name: nolu update v8 tests
+
+on:
+  push:
+    branches: [fix/nolu-replica-v2-client]
+    paths:
+      - '.github/workflows/zz-nolu-update-v8-tests.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-replica-v2-client
+      - name: Update stale v7 test fixtures to active v8
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for name in [
+            '.github/workflows/nolu-durable-sync-smoke.yml',
+            '.github/workflows/nolu-resilience-race-smoke.yml',
+            '.github/workflows/nolu-resilience-v3-smoke.yml',
+          ]:
+            p=Path(name); s=p.read_text()
+            if 'pu-plan-api-v7' not in s:
+              raise SystemExit(f'expected v7 fixture missing: {name}')
+            p.write_text(s.replace('pu-plan-api-v7','pu-plan-api-v8').replace('Mumbai v7 should be attempted','Mumbai v8 should be attempted'))
+
+          p=Path('.github/workflows/nolu-avatar-security-smoke.yml')
+          s=p.read_text()
+          old="""      // Production currently keeps v7 retired. Exercise the same 410 ->
+      // compatibility fallback path deterministically on both regions.
+      if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v7'))return respond({error:'DISABLED'},410);
+"""
+          new="""      // v8 is the active regional API. Exercise Mumbai v8 directly and keep
+      // Tokyo unavailable in this avatar-focused test so no real cloud is reached.
+      if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v8')){
+        if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'){
+          if(action==='login'||action==='bootstrap')return respond(bundle());
+          if(action==='social')return respond({social:bundle().social});
+        }
+        return respond({message:'standby not seeded in avatar test'},503);
+      }
+"""
+          if old not in s:
+            raise SystemExit('avatar v7 fixture anchor missing')
+          p.write_text(s.replace(old,new))
+          PY
+
+          grep -q 'pu-plan-api-v8' .github/workflows/nolu-durable-sync-smoke.yml
+          grep -q 'pu-plan-api-v8' .github/workflows/nolu-resilience-race-smoke.yml
+          grep -q 'pu-plan-api-v8' .github/workflows/nolu-resilience-v3-smoke.yml
+          grep -q "pathname.endsWith('/functions/v1/pu-plan-api-v8')" .github/workflows/nolu-avatar-security-smoke.yml
+          ! grep -q 'pu-plan-api-v7' .github/workflows/nolu-durable-sync-smoke.yml
+          ! grep -q 'pu-plan-api-v7' .github/workflows/nolu-resilience-race-smoke.yml
+          ! grep -q 'pu-plan-api-v7' .github/workflows/nolu-resilience-v3-smoke.yml
+          ! grep -q 'pu-plan-api-v7' .github/workflows/nolu-avatar-security-smoke.yml
+      - name: Commit updated tests and remove one-shot workflow
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/zz-nolu-update-v8-tests.yml
+          git add .github/workflows/nolu-durable-sync-smoke.yml .github/workflows/nolu-resilience-race-smoke.yml .github/workflows/nolu-resilience-v3-smoke.yml .github/workflows/nolu-avatar-security-smoke.yml
+          git commit -m 'test(nolu): align HA fixtures with v8 routing'
+          git push origin HEAD:fix/nolu-replica-v2-client
