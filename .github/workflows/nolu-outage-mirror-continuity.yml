@@ -69,8 +69,9 @@ jobs:
           ! grep -Fq 'pu-plan-portable-v1' pu-plan/provider-config.js
           grep -Fq "await import('./outage-mirror-bridge.js')" pu-plan/main.js
           grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
-          grep -Fq 'nolu-shell-20260911-login-rescue6' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260911_login_rescue6' pu-plan/pwa.js
+          grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
+          grep -Fq 'nolu-shell-20260911-login-failover2' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260911_login_failover2' pu-plan/pwa.js
       - name: Verify live portable v2 endpoints
         run: |
           set -euo pipefail
