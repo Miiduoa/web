@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260911-replica2-mesh3';
+const CACHE='nolu-shell-20260911-replica3-mesh3';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
