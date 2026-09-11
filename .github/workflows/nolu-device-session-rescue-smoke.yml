@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/guest-privacy.js'
       - 'pu-plan/durable-bridge.js'
       - 'pu-plan/offline-session-rescue.js'
       - 'pu-plan/main.js'
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/guest-privacy.js'
       - 'pu-plan/durable-bridge.js'
       - 'pu-plan/offline-session-rescue.js'
       - 'pu-plan/main.js'
@@ -39,15 +41,27 @@ jobs:
         run: |
           set -euo pipefail
           node --check pu-plan/session-recovery.js
+          node --check pu-plan/guest-privacy.js
           node --check pu-plan/durable-bridge.js
           node --check pu-plan/offline-session-rescue.js
           node --check pu-plan/main.js
           node --check pu-plan/sw.js
           node --check pu-plan/pwa.js
-          grep -q "await import('./session-recovery.js')" pu-plan/main.js
           grep -q "'./session-recovery.js'" pu-plan/sw.js
           grep -q "owner&&owner!==id" pu-plan/durable-bridge.js
           grep -q "sessionFingerprint===fp" pu-plan/offline-session-rescue.js
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=fs.readFileSync('pu-plan/main.js','utf8');
+          const positions={
+            session:s.indexOf("await import('./session-recovery.js')"),
+            privacy:s.indexOf("await import('./guest-privacy.js')"),
+            durable:s.indexOf("await import('./durable-bridge.js')"),
+            app:s.indexOf("await import('./app.js')")
+          };
+          for(const [name,pos] of Object.entries(positions))if(pos<0)throw new Error(`missing startup stage: ${name}`);
+          if(!(positions.session<positions.privacy&&positions.privacy<positions.durable&&positions.durable<positions.app))throw new Error(`unsafe startup order: ${JSON.stringify(positions)}`);
+          NODE
 
       - name: Install Playwright
         run: |
@@ -123,8 +137,21 @@ jobs:
                 await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_guest','1');localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
                 await page.evaluate(()=>import('./session-recovery.js?case=guest'));
                 const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),result:NOLU_SESSION_RECOVERY.result}));
-                assert(!state.canonical,'explicit guest mode was silently authenticated');
+                assert(!state.canonical,'explicit guest mode restored a regional session');
                 assert(state.result.status==='guest','guest recovery state is wrong');
+                await context.close();
+              }
+
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(primary=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_guest','1');localStorage.setItem('nolu_guest_scope_v1','1');localStorage.setItem('puplan_session',primary);localStorage.setItem('puplan_course_owner','55555555-5555-4555-8555-555555555555');localStorage.setItem('puplan_courses','[{"name":"private"}]')},primary);
+                await page.evaluate(()=>import('./session-recovery.js?case=guest-canonical'));
+                await page.evaluate(()=>import('./guest-privacy.js?case=guest-canonical'));
+                const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),guest:localStorage.getItem('puplan_guest'),owner:localStorage.getItem('puplan_course_owner'),courses:localStorage.getItem('puplan_courses'),result:NOLU_SESSION_RECOVERY.result}));
+                assert(state.result.status==='guest','guest did not take precedence over canonical session');
+                assert(!state.canonical&&!state.owner&&!state.courses,'guest/canonical conflict retained account state');
+                assert(state.guest==='1','guest mode was not preserved');
                 await context.close();
               }
 
@@ -142,10 +169,13 @@ jobs:
               {
                 const context=await browser.newContext(),page=await context.newPage();
                 await page.goto(url);
-                await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
+                await page.evaluate(({primary,uid})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary);localStorage.setItem('puplan_course_owner',uid);localStorage.setItem('puplan_name','stale-visible');localStorage.setItem('puplan_courses','[{"name":"stale-visible"}]')},{primary,uid});
                 const fp=await fingerprint(page,primary);
                 await putSnapshot(page,{uid,profile:{id:uid,display_name:'Recovered User',username:'recovered',avatar_data:'',bio:'saved',discoverable:true},courses:[{id:'c1',name:'Recovered Course',day:1,start:1,end:1}],meta:{source:'durable'},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp});
                 await page.evaluate(()=>import('./session-recovery.js?case=durable'));
+                await page.evaluate(()=>import('./guest-privacy.js?case=durable'));
+                const quarantined=await page.evaluate(()=>({owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:localStorage.getItem('puplan_courses')}));
+                assert(!quarantined.owner&&!quarantined.name&&!quarantined.courses,'renderable cache was not quarantined before durable bind');
                 await page.evaluate(()=>import('./durable-bridge.js?case=durable'));
                 const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:JSON.parse(localStorage.getItem('puplan_courses')||'[]'),bound:NOLU_DURABLE.state.bound}));
                 assert(state.canonical===primary,'canonical session was not restored before durable bridge');
@@ -162,6 +192,7 @@ jobs:
                 await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
                 await putSnapshot(page,{uid,profile:{id:uid,display_name:'Must Stay',username:'must_stay'},courses:[{id:'safe',name:'Must Stay'}],savedAt:Date.now(),revision:Date.now(),sessionFingerprint:'wrong-fingerprint'});
                 await page.evaluate(()=>import('./session-recovery.js?case=mismatch'));
+                await page.evaluate(()=>import('./guest-privacy.js?case=mismatch'));
                 await page.evaluate(()=>import('./durable-bridge.js?case=mismatch'));
                 const state=await page.evaluate(async uid=>{
                   const snap=await NOLU_DURABLE.getSnapshot(uid);
