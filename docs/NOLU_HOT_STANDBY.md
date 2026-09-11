@@ -24,9 +24,18 @@ Browser login is not part of this replication path. Existing users are backfille
 
 ## Operations
 
-Primary schema is versioned in `supabase/migrations/20260911_nolu_server_hot_standby_primary.sql`. Tokyo's role-specific schema is intentionally stored outside the normal primary migration stream at `supabase/standby/20260911_nolu_server_hot_standby.sql` so it cannot accidentally install primary triggers on the standby.
+The Mumbai schema is split into three ordered primary migrations:
 
-Active transport functions are `pu-plan-replica-relay-v2`, `pu-plan-replica-ingest-v3`, and `pu-plan-replica-worker-v1`. The worker is only an authenticated manual kick for the SQL sweep; it does not implement a second replication protocol.
+- `supabase/migrations/20260911_nolu_hot_standby_primary_tables.sql`
+- `supabase/migrations/20260911_nolu_hot_standby_primary_transport.sql`
+- `supabase/migrations/20260911_nolu_hot_standby_primary_runtime.sql`
+
+Tokyo's role-specific schema is deliberately kept outside the normal primary migration stream so primary triggers cannot be installed on the standby by accident:
+
+- `supabase/standby/20260911_nolu_hot_standby_tables.sql`
+- `supabase/standby/20260911_nolu_hot_standby_apply.sql`
+
+Active transport functions are `pu-plan-replica-relay-v2`, `pu-plan-replica-ingest-v3`, and `pu-plan-replica-worker-v1`. The worker is only an authenticated manual kick for the canonical SQL sweep; it does not implement a second replication protocol. Earlier ingest/relay generations are retired with HTTP 410.
 
 Health is healthy when the primary outbox is empty, `puplan_replication_health.pending_count = 0`, and Tokyo's `puplan_replica_server_state.last_revision` reaches the latest primary revision for each user.
 
