@@ -2,7 +2,7 @@ name: nolu resilience v3 smoke
 
 on:
   push:
-    branches: [main, fix/nolu-resilience-v3, feat/nolu-hot-standby-v1]
+    branches: [main, fix/nolu-resilience-v3, fix/nolu-retired-ha-endpoint-compat]
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
@@ -101,7 +101,7 @@ jobs:
           timeout 70s node /tmp/nolu-v3/session.cjs
           rm -f pu-plan/__durable_v3_test.html
 
-      - name: Verify cloud and legacy circuit breakers fail fast after dual-region outage
+      - name: Verify audited cloud and legacy circuit breakers fail fast
         env:
           NODE_PATH: /tmp/nolu-v3/node_modules
         run: |
@@ -113,7 +113,6 @@ jobs:
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const b64=s=>Buffer.from(s).toString('base64url');
           const MUMBAI='hrrmkrayvrgnwcroyttp';
-          const TOKYO='ltfurqaspqsvswmebyzw';
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
@@ -121,7 +120,7 @@ jobs:
               let requests=0;const seen=[];
               await context.route('https://*.supabase.co/functions/v1/**',route=>{
                 const host=new URL(route.request().url()).host;
-                if(host.startsWith(MUMBAI)||host.startsWith(TOKYO)){requests++;seen.push(route.request().url())}
+                if(host.startsWith(MUMBAI)){requests++;seen.push(route.request().url())}
                 route.abort('timedout');
               });
               const page=await context.newPage();
@@ -137,15 +136,16 @@ jobs:
               await page.goto('http://127.0.0.1:4173/__circuit_v3_test.html',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
               requests=0;seen.length=0;
-              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
+              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
               const opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bootstrap'})};
               const first=await page.evaluate(async({primary,opts})=>{const t=performance.now();const r=await fetch(primary,opts);return {ms:performance.now()-t,data:await r.json()}},{primary,opts});
               const afterFirst=requests,firstSeen=[...seen];
               const second=await page.evaluate(async({primary,opts})=>{const t=performance.now();const r=await fetch(primary,opts);return {ms:performance.now()-t,data:await r.json()}},{primary,opts});
               const afterSecond=requests;
               assert(first.data?.offline===true&&second.data?.offline===true,'safe bootstrap did not fall back offline');
-              assert(firstSeen.some(u=>u.includes(MUMBAI)),'first outage request did not attempt Mumbai');
-              assert(firstSeen.some(u=>u.includes(TOKYO)),'first outage request did not attempt Tokyo standby');
+              assert(firstSeen.some(u=>u.endsWith('/pu-plan-api-v6')),'first outage request did not attempt v6');
+              assert(firstSeen.some(u=>u.endsWith('/pu-plan-core-v1')),'first outage request did not attempt core');
+              assert(firstSeen.every(u=>!u.endsWith('/pu-plan-api-v7')),'retired v7 was contacted by core resilience');
               assert(afterSecond===afterFirst,'second outage request ignored open cloud circuits');
               assert(second.ms<500,`second cloud request did not fail fast: ${second.ms}ms`);
 
@@ -157,6 +157,7 @@ jobs:
               const afterLegacyFirst=requests;
               const legacySecond=await page.evaluate(async({legacy,legacyOpts})=>{const t=performance.now();try{await fetch(legacy,legacyOpts)}catch{}return performance.now()-t},{legacy,legacyOpts});
               const afterLegacySecond=requests;
+              assert(expectedLegacy===3,'legacy transport should contain only v6/core/legacy');
               assert(afterLegacyFirst-beforeLegacy===expectedLegacy,`legacy transport attempted ${afterLegacyFirst-beforeLegacy}, expected ${expectedLegacy}`);
               assert(afterLegacySecond===afterLegacyFirst,'legacy transport ignored its open circuits');
               assert(legacySecond<500,`legacy circuit did not fail fast: ${legacySecond}ms`);
