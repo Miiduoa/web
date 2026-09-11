@@ -1,0 +1,45 @@
+name: nolu discovery cache isolation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/discover.js'
+      - '.github/workflows/nolu-discovery-cache-isolation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/discover.js'
+      - '.github/workflows/nolu-discovery-cache-isolation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify viewer-scoped discovery cache
+        run: |
+          set -euo pipefail
+          node --check pu-plan/discover.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/discover.js').read_text()
+          required=[
+            "let profileCacheSession=''",
+            "if(current!==profileCacheSession){profileCache.clear();profileCacheSession=current}",
+            "function dropCachedProfile(username)",
+            "async function getProfile(username,force=false){syncProfileCache();",
+            "document.addEventListener('puplan:profile-changed',()=>syncProfileCache())",
+            "if(event.key==='puplan_session_primary_v1')syncProfileCache()",
+          ]
+          for needle in required:
+            assert needle in s, f'missing cache isolation guard: {needle}'
+          assert "profileCache.delete(username)" not in s, 'unscoped cache invalidation survived'
+          assert "if(!force&&profileCache.has(username))" not in s, 'cache lookup is still username-only without session synchronization'
+          print('discovery cache isolation guardrails passed')
+          PY
