@@ -369,7 +369,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (PRIMARY_ONLY_ACTIONS.has(action)) return forwardPrimary(req, body);
+    if (PRIMARY_ONLY_ACTIONS.has(action)) return await forwardPrimary(req, body);
 
     const user = await requireUser(req);
     if (action === 'bootstrap') {
@@ -487,10 +487,10 @@ Deno.serve(async (req: Request) => {
       if (IS_STANDBY) {
         return ok(req, { social: { relationships: [], profiles: [], friends: [], meetups: [], deferred: true } });
       }
-      return forwardPrimary(req, body);
+      return await forwardPrimary(req, body);
     }
 
-    if (!IS_STANDBY) return forwardPrimary(req, body);
+    if (!IS_STANDBY) return await forwardPrimary(req, body);
     throw new ApiError(503, '備援雲端目前只提供登入、個人資料與課表核心功能', 'STANDBY_CORE_ONLY');
   } catch (error) {
     console.error(error);
