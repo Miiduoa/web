@@ -6,6 +6,7 @@
   ]);
   const LOGIN_PATH=/\/functions\/v1\/(?:nolu-browser-gateway-v1|pu-plan-api|pu-plan-api-v8|pu-plan-api-v6|pu-plan-core-v1)$/;
   const OVERALL_LOGIN_TIMEOUT_MS=14000;
+  const DEADLINE_FIELD='__noluLoginDeadline';
 
   function requestUrl(input){
     try{return new URL(typeof input==='string'?input:input?.url||'',location.href)}catch{return null}
@@ -23,21 +24,24 @@
     if(options?.signal?.aborted)throw new DOMException('Aborted','AbortError');
 
     // cloud.js historically gives the complete call about 6.5 seconds. That is
-    // shorter than a bounded Mumbai attempt plus a real Tokyo attempt. Replace
-    // that outer signal only for login so each regional hop gets a fair chance;
-    // lower transport wrappers still cap every individual hop.
+    // shorter than a bounded Mumbai attempt plus a real Tokyo attempt. Give the
+    // complete failover chain 14 seconds and attach the absolute deadline as a
+    // private RequestInit field. The per-hop wrapper consumes and strips that
+    // field before the browser network layer sees it, so it cannot affect CORS.
+    const deadline=Date.now()+OVERALL_LOGIN_TIMEOUT_MS;
     const ctrl=new AbortController();
     const timer=setTimeout(()=>ctrl.abort(),OVERALL_LOGIN_TIMEOUT_MS);
     try{
       const {signal:_ignored,...rest}=options||{};
-      return await baseFetch(input,{...rest,signal:ctrl.signal,cache:'no-store'});
+      return await baseFetch(input,{...rest,signal:ctrl.signal,cache:'no-store',[DEADLINE_FIELD]:deadline});
     }finally{
       clearTimeout(timer);
     }
   };
 
   window.NOLU_LOGIN_FAILOVER_BUDGET={
-    version:'20260911-login-budget2',
-    overallLoginTimeoutMs:OVERALL_LOGIN_TIMEOUT_MS
+    version:'20260911-login-budget3',
+    overallLoginTimeoutMs:OVERALL_LOGIN_TIMEOUT_MS,
+    deadlineField:DEADLINE_FIELD
   };
 })();
