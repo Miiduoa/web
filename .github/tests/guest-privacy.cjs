@@ -6,7 +6,10 @@ const source=fs.readFileSync('pu-plan/guest-privacy.js','utf8');
 const UID_A='11111111-1111-4111-8111-111111111111';
 const UID_B='22222222-2222-4222-8222-222222222222';
 const now=()=>Math.floor(Date.now()/1000);
-const tokenFor=(uid,exp=now()+3600,version=4)=>`${Buffer.from(JSON.stringify({v:version,uid,iat:now(),exp,cv:'cv-test'})).toString('base64url')}.test-signature`;
+function tokenFor(uid,exp=now()+3600,version=4,iat=null){
+  const issued=iat??Math.min(now(),Number(exp)-3600);
+  return `${Buffer.from(JSON.stringify({v:version,uid,iat:issued,exp,cv:'cv-test'})).toString('base64url')}.test-signature`;
+}
 
 function makeStorage(seed={}){
   const map=new Map(Object.entries(seed));
