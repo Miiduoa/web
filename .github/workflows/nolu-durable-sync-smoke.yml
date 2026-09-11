@@ -2,7 +2,7 @@ name: nolu durable sync smoke
 
 on:
   push:
-    branches: [main, fix/nolu-durable-sync-v2, feat/nolu-hot-standby-v1]
+    branches: [main, fix/nolu-durable-sync-v2, fix/nolu-retired-ha-endpoint-compat]
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
@@ -38,7 +38,7 @@ jobs:
           npm --prefix /tmp/nolu-durable init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-durable install playwright >/dev/null 2>&1
           cd /tmp/nolu-durable && npx playwright install --with-deps chromium >/dev/null
-      - name: Verify IndexedDB snapshot and outbox recovery during dual-region outage
+      - name: Verify IndexedDB snapshot and outbox recovery during cloud outage
         env:
           NODE_PATH: /tmp/nolu-durable/node_modules
         run: |
@@ -90,19 +90,19 @@ jobs:
               console.log('DURABLE_RECOVERY',recovered);
               assert(recovered.course==='Durable 新課程','IndexedDB snapshot should restore the latest schedule');
               assert(recovered.pending.schedule?.courses?.[0]?.name==='Durable 新課程','IndexedDB outbox should rebuild the legacy pending queue');
-              assert(recovered.mode==='offline','dual-region outage should stay in offline protection mode');
+              assert(recovered.mode==='offline','cloud outage should stay in offline protection mode');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
           timeout 90s node /tmp/nolu-durable/check.cjs
-      - name: Verify five-path legacy API failover including Tokyo
+      - name: Verify audited three-path legacy failover
         env:
           NODE_PATH: /tmp/nolu-durable/node_modules
         run: |
           cat >/tmp/nolu-durable/failover.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
-          const MUMBAI='hrrmkrayvrgnwcroyttp',TOKYO='ltfurqaspqsvswmebyzw';
+          const MUMBAI='hrrmkrayvrgnwcroyttp';
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
@@ -110,26 +110,26 @@ jobs:
               const attempts=[];
               await context.route('https://*.supabase.co/functions/v1/**',async route=>{
                 const url=new URL(route.request().url());
-                if(!url.host.startsWith(MUMBAI)&&!url.host.startsWith(TOKYO))return route.continue();
-                attempts.push(`${url.host}${url.pathname}`);
-                if(url.host.startsWith(MUMBAI)&&url.pathname.endsWith('/pu-plan-api'))return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-fifth-path"}'});
+                if(!url.host.startsWith(MUMBAI))return route.continue();
+                attempts.push(url.pathname);
+                if(url.pathname.endsWith('/pu-plan-api'))return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-third-path"}'});
                 return route.fulfill({status:503,contentType:'application/json',body:'{"message":"simulated unavailable"}'});
               });
               const page=await context.newPage();
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
-              await page.waitForFunction(()=>window.NOLU_TRANSPORT?.candidates?.length===5,{timeout:10000});
+              await page.waitForFunction(()=>window.NOLU_TRANSPORT?.candidates?.length===3,{timeout:10000});
               attempts.length=0;
               const result=await page.evaluate(async()=>{
                 const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
                 const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'semesters'})});
-                return {status:res.status,data:await res.json()};
+                return {status:res.status,data:await res.json(),candidates:window.NOLU_TRANSPORT.candidates};
               });
               console.log('FAILOVER_RESULT',result,'ATTEMPTS',attempts);
-              assert(result.status===200&&result.data?.via==='legacy-fifth-path','legacy request should reach the final compatibility path');
-              assert(attempts.some(x=>x.includes(`${MUMBAI}.supabase.co/functions/v1/pu-plan-api-v7`)),'Mumbai v7 should be attempted');
-              assert(attempts.some(x=>x.includes(`${TOKYO}.supabase.co/functions/v1/pu-plan-api-v7`)),'Tokyo standby should be attempted');
-              assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'v6 compatibility path should be attempted');
-              assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'core compatibility path should be attempted');
+              assert(result.status===200&&result.data?.via==='legacy-third-path','legacy request should reach the final compatibility path');
+              assert(result.candidates.length===3,'unexpected legacy transport candidate count');
+              assert(result.candidates.every(x=>!x.includes('/pu-plan-api-v7')),'retired v7 endpoint remained in transport candidates');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'v6 path should be attempted');
+              assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'core path should be attempted');
               assert(attempts.some(x=>x.endsWith('/pu-plan-api')),'legacy final path should be attempted');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
