@@ -15,14 +15,19 @@ function render(){
   const configured=[...new Set(mesh.configuredProviders||[])];
   const healthy=[...new Set(mesh.healthyProviders||[])];
   const target=Number(mesh.requiredRemoteProviders||3);
-  const ready=configured.length>=target;
-  $('#providerMeshSummary').textContent=ready
-    ?`已設定 ${configured.length} 個獨立雲端供應商；目前偵測 ${healthy.length} 個可用。`
-    :`目前只有 ${configured.length}/${target} 個獨立雲端供應商完成設定。`;
-  $('#providerMeshState').textContent=`目標 ${target} 雲端 + 本機副本｜${configured.join(' · ')||'尚未設定'}`;
-  $('#providerMeshHint').textContent=ready
-    ?'遠端救援必須至少兩個獨立鏡像對同一版資料達成一致，避免單一故障或錯誤副本覆寫。'
-    :'目前仍會使用本機 IndexedDB 與既有 Supabase 備援，但要達到真正跨供應商容錯，還需要啟用 Neon 與 Render 鏡像。';
+  const configuredReady=configured.length>=target;
+  const healthyReady=healthy.length>=target;
+  $('#providerMeshSummary').textContent=healthyReady
+    ?`跨供應商備援正常：${healthy.length}/${target} 個獨立雲端目前可用。`
+    :configuredReady
+      ?`已設定 ${configured.length} 個獨立雲端供應商；目前只有 ${healthy.length}/${target} 個通過即時可用性檢查。`
+      :`目前只有 ${configured.length}/${target} 個獨立雲端供應商完成正式啟用。`;
+  $('#providerMeshState').textContent=`目標 ${target} 雲端 + 本機副本｜正式啟用：${configured.join(' · ')||'尚未設定'}｜即時可用：${healthy.join(' · ')||'尚未確認'}`;
+  $('#providerMeshHint').textContent=healthyReady
+    ?'遠端救援仍採至少兩個不同供應商對同一 revision 與 SHA-256 摘要達成一致，不採先回應者優先。'
+    :configuredReady
+      ?'目前處於降級狀態；本機 IndexedDB 會繼續保留資料。只有通過實際驗證的供應商才算入可用數。'
+      :'還需要至少一個通過實際讀寫驗證的獨立雲端。Render、Netlify、Railway 等候選在驗證完成前都不會被算成正式備援。';
 }
 
 document.addEventListener('nolu:provider-mesh',render);
