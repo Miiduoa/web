@@ -64,13 +64,14 @@ jobs:
 
           const versions=[...html.matchAll(/\?v=([^"']+)/g)].map(m=>m[1]);
           assert(versions.length>=10,'expected versioned shell assets');
-          assert.deepEqual([...new Set(versions)],['20260911-login-failover2'],'all shell assets must roll together');
-          assert.match(sw,/const CACHE='nolu-shell-20260911-login-failover2'/);
+          assert.deepEqual([...new Set(versions)],['20260911-login-failover3'],'all shell assets must roll together');
+          assert.match(sw,/const CACHE='nolu-shell-20260911-login-failover3'/);
           assert.match(sw,/login-failover-budget\.js/);
-          assert.match(pwa,/nolu_shell_reload_20260911_login_failover2/);
+          assert.match(pwa,/nolu_shell_reload_20260911_login_failover3/);
           assert.match(loginBudget,/OVERALL_LOGIN_TIMEOUT_MS=14000/);
           assert.match(loginPatience,/primaryLoginTimeoutMs:5000/);
           assert.match(loginPatience,/standbyLoginTimeoutMs:6500/);
+          assert.match(loginPatience,/deadlineAware:true/);
 
           const publicText=`${html}\n${cfg}\n${gateway}\n${loginBudget}\n${loginPatience}`;
           assert.doesNotMatch(publicText,/(?:service_role|PRIVATE KEY|postgres(?:ql)?:\/\/)/i,'browser files must not contain server secrets');
