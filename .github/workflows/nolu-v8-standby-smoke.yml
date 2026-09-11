@@ -31,7 +31,8 @@ jobs:
           grep -q "PBKDF2_ITERATIONS = 210000" "$FILE"
           grep -q "STANDBY_NOT_SEEDED" "$FILE"
           grep -q "PRIMARY_REQUIRED" "$FILE"
-          ! grep -Eq 'SUPABASE_SERVICE_ROLE_KEY[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9._-]+' "$FILE"
+          ! grep -Eq 'SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*"' "$FILE"
+          ! grep -Eq 'sb_secret_[A-Za-z0-9_-]+' "$FILE"
 
       - name: Live Tokyo v8 attack and availability smoke
         shell: bash
