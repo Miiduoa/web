@@ -8,6 +8,8 @@ on:
       - 'supabase/functions/pu-plan-admin/**'
       - 'supabase/functions/pu-plan-api/**'
       - 'supabase/functions/pu-plan-api-v8/**'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
       - 'supabase/functions/_shared/session-v4.ts'
       - '.github/workflows/nolu-api-authz-boundary-smoke.yml'
   pull_request:
@@ -17,6 +19,8 @@ on:
       - 'supabase/functions/pu-plan-admin/**'
       - 'supabase/functions/pu-plan-api/**'
       - 'supabase/functions/pu-plan-api-v8/**'
+      - 'supabase/functions/pu-plan-api-v6/**'
+      - 'supabase/functions/pu-plan-core-v1/**'
       - 'supabase/functions/_shared/session-v4.ts'
       - '.github/workflows/nolu-api-authz-boundary-smoke.yml'
   workflow_dispatch:
@@ -43,6 +47,8 @@ jobs:
           admin=Path('supabase/functions/pu-plan-admin/index.ts').read_text()
           core=Path('supabase/functions/pu-plan-api/index.ts').read_text()
           v8=Path('supabase/functions/pu-plan-api-v8/index.ts').read_text()
+          v6=Path('supabase/functions/pu-plan-api-v6/index.ts').read_text()
+          corev1=Path('supabase/functions/pu-plan-core-v1/index.ts').read_text()
 
           # Social/chat mutations must derive ownership and membership from the
           # verified session, never from a caller supplied user id.
@@ -80,6 +86,16 @@ jobs:
           assert ".eq('user_id', user.id).eq('semester_key', key)" in v8
           assert "if (PRIMARY_ONLY_ACTIONS.has(action)) return await forwardPrimary(req, body);" in v8
           assert "'Authorization': req.headers.get('authorization') || ''" in v8
+
+          # The compatibility APIs are part of the browser failover path too.
+          # They must enforce exactly the same signed-session/credential boundary
+          # and must preserve Authorization whenever they delegate to legacy.
+          assert "session = await verifySignedSessionV4(token, KEY)" in v6
+          assert "await assertCredentialCurrent(session, u.password_salt || '')" in v6
+          assert "'Authorization': req.headers.get('authorization') || ''" in v6
+          assert "session = await verifySignedSessionV4(token, KEY)" in corev1
+          assert "await assertCredentialCurrent(session, user.password_salt || '')" in corev1
+          assert "if (auth) headers.Authorization = auth" in corev1
           print('API authorization and IDOR source guardrails passed')
           PY
 
@@ -123,11 +139,14 @@ jobs:
           probe pu-plan-api '{"action":"send_request","user_id":"00000000-0000-4000-8000-000000000000"}' forged.session
           probe pu-plan-api-v8 '{"action":"bootstrap"}' forged.session
           probe pu-plan-api-v8 '{"action":"save_schedule","courses":[]}' forged.session
+          probe pu-plan-api-v6 '{"action":"bootstrap"}' forged.session
+          probe pu-plan-core-v1 '{"action":"bootstrap"}' forged.session
+          probe pu-plan-core-v1 '{"action":"save_schedule","courses":[]}' forged.session
 
       - name: Cross-origin browser calls must be rejected
         run: |
           set -euo pipefail
-          for endpoint in pu-plan-social pu-plan-admin pu-plan-api pu-plan-api-v8; do
+          for endpoint in pu-plan-social pu-plan-admin pu-plan-api pu-plan-api-v8 pu-plan-api-v6 pu-plan-core-v1; do
             code=""; rc=0
             code=$(curl -sS --connect-timeout 3 --max-time 7 -o /tmp/body -w '%{http_code}' -X OPTIONS "$BASE/$endpoint" -H "Origin: $EVIL_ORIGIN" -H 'Access-Control-Request-Method: POST') || rc=$?
             if [ "$rc" -ne 0 ]; then
