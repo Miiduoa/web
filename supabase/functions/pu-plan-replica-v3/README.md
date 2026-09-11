@@ -11,4 +11,4 @@ Security model:
 - Core seed scope is account/profile verifier material, schedule and semesters. Password verifier material is server-to-server only and is never returned to browser JavaScript.
 - Failback is intentionally manual/reconciled until a conflict-safe protocol can preserve primary credential authority.
 
-Live deployment currently exists in both Supabase projects as `pu-plan-replica-v3`. The browser remains on replica-v2 until the v3 live handshake tests, migration/versioning checks and strict regional-session hardening are all green.
+Both Supabase projects deploy `pu-plan-replica-v3`. The browser prewarms Tokyo only while Mumbai is the active authenticated tier. If a user writes while Tokyo is active, the client records a standby-dirty marker and refuses automatic failback or primary-to-standby overwrite until a conflict-safe reconciliation path handles those changes.
