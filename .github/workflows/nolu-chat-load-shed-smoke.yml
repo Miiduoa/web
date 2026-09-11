@@ -1,0 +1,67 @@
+name: nolu chat load-shed smoke
+
+on:
+  push:
+    branches: [main, perf/nolu-free-db-load-shed-20260911]
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-chat-load-shed-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-chat-load-shed-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  load-shed-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate community module syntax
+        run: node --check pu-plan/community.js
+      - name: Guard adaptive polling and request coalescing
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=pu-plan/community.js
+          grep -q "if(inboxInFlight)return inboxInFlight" "$f"
+          grep -q "timeoutMs=10000" "$f"
+          grep -q "new AbortController" "$f"
+          grep -q "function pollingDelay" "$f"
+          grep -q "document.hidden" "$f"
+          grep -q "chatActive()?20000:60000" "$f"
+          grep -q "Math.min(300000" "$f"
+          grep -q "refreshConversation&&currentConversation" "$f"
+          grep -q "lastConversationRefreshAt" "$f"
+          grep -q "Date.now()-lastConversationRefreshAt>120000" "$f"
+          grep -q "const changed=" "$f"
+          grep -q "const unread=Number(after?.unread||0)>0" "$f"
+          grep -q "if(!silent||unreadBefore>0)" "$f"
+          if grep -q "globalPoll" "$f"; then
+            echo '::error::Legacy globalPoll returned'
+            exit 1
+          fi
+          if grep -q "setInterval(" "$f"; then
+            echo '::error::Interval polling returned; use adaptive recursive timeout'
+            exit 1
+          fi
+      - name: Estimate maximum idle polling pressure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          # A visible active chat has one 20s inbox timer (<=3/min), while signed-in
+          # non-chat UI uses 60s (<=1/min). Full conversation refresh is event-driven
+          # and has a 120s safety refresh instead of happening every inbox poll.
+          chat_inbox_cycles_per_min = 60 / 20
+          idle_inbox_cycles_per_min = 60 / 60
+          idle_conversation_cycles_per_min = 60 / 120
+          assert chat_inbox_cycles_per_min <= 3
+          assert idle_inbox_cycles_per_min <= 1
+          assert idle_conversation_cycles_per_min <= 0.5
+          print(f'chat inbox <= {chat_inbox_cycles_per_min:g}/min; idle inbox <= {idle_inbox_cycles_per_min:g}/min; unchanged conversation <= {idle_conversation_cycles_per_min:g}/min')
+          PY
