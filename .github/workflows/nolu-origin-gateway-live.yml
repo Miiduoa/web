@@ -31,11 +31,12 @@ jobs:
           grep -q "pu-plan-replica-v3" pu-plan/origin-gateway.js
           grep -q "https://nolu.tw" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "https://nolu-8r2.pages.dev" supabase/functions/nolu-browser-gateway-v1/index.ts
-          grep -q "MAX_BODY_BYTES = 512_000" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "MAX_BODY_BYTES = 256_000" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "readBoundedBody" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "TARGET_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "METHOD_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "X-Forwarded-For" supabase/functions/nolu-browser-gateway-v1/index.ts
-          grep -q "X-Nolu-Browser-Gateway', 'v2" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "X-Nolu-Browser-Gateway', 'v3" supabase/functions/nolu-browser-gateway-v1/index.ts
 
       - name: Verify deployed frontends contain cloud router
         shell: bash
@@ -101,7 +102,7 @@ jobs:
             check_gateway "$STANDBY" "$origin"
           done
 
-      - name: Verify gateway attack boundaries
+      - name: Verify gateway attack and authentication boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -127,15 +128,24 @@ jobs:
           test "$code" = 405
           grep -q 'METHOD_NOT_ALLOWED' "$tmp"
 
+          # Keep this well below vendor ingress limits but above Nolu's 256 KB app boundary.
           python3 - <<'PY' > "$payload"
           import json
-          print(json.dumps({'action':'health','padding':'x'*520000}))
+          print(json.dumps({'action':'health','padding':'x'*280000}))
           PY
-          code=$(curl -sS --max-time 20 -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=pu-plan-api-v8" \
+          code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=pu-plan-api-v8" \
             -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data-binary @"$payload")
           echo "[oversize] HTTP $code :: $(cat "$tmp")"
           test "$code" = 413
           grep -q 'PAYLOAD_TOO_LARGE' "$tmp"
+
+          # The proxy must not turn a public browser request into an authenticated one.
+          : > "$headers"
+          code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=pu-plan-api-v8" \
+            -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data '{"action":"bootstrap"}')
+          echo "[unauth bootstrap] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 401
+          tr -d '\r' < "$headers" | grep -Fqi "access-control-allow-origin: ${ORIGIN}"
 
           : > "$headers"
           code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "${BASE}?target=pu-plan-api-v8" \
