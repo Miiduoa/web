@@ -5,12 +5,18 @@ on:
     paths:
       - '.github/workflows/nolu-replica-v3-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
+      - 'supabase/functions/pu-plan-replica-v2/**'
+      - 'supabase/migrations/**replica**'
+      - 'supabase/migrations/**standby**'
       - 'pu-plan/cloud-replication.js'
       - 'pu-plan/sw.js'
   pull_request:
     paths:
       - '.github/workflows/nolu-replica-v3-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
+      - 'supabase/functions/pu-plan-replica-v2/**'
+      - 'supabase/migrations/**replica**'
+      - 'supabase/migrations/**standby**'
       - 'pu-plan/cloud-replication.js'
       - 'pu-plan/sw.js'
   workflow_dispatch:
@@ -21,26 +27,89 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v6
-      - name: Bootstrap derived public keys
+
+      - name: Static replica v3 security invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          file='supabase/functions/pu-plan-replica-v3/index.ts'
+          grep -q "npm:@noble/curves@1.8.2/ed25519" "$file"
+          grep -q "SUPABASE_SERVICE_ROLE_KEY" "$file"
+          grep -q "name: 'HMAC'" "$file"
+          grep -q "SIGNING_KEY_MISMATCH" "$file"
+          grep -q "PRIMARY_ONLY_SEED" "$file"
+          grep -q "failback: 'manual-reconcile'" "$file"
+          grep -q "puplan_replica_v3_nonces" "$file"
+          ! grep -Eq 'SELF_PRIVATE_JWK|BEGIN (EC |RSA |)PRIVATE KEY|"d"[[:space:]]*:' "$file"
+          ! grep -Eq 'sb_secret_|service_role[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9._-]+' "$file"
+          ! grep -q 'console.error(error)' "$file"
+
+      - name: Live v3 health and pinned-key checks
         shell: bash
         run: |
           set -euo pipefail
           for spec in \
-            'hrrmkrayvrgnwcroyttp primary' \
-            'ltfurqaspqsvswmebyzw standby'
+            'hrrmkrayvrgnwcroyttp primary rv3-3ku8g6TEfZMcnpyj' \
+            'ltfurqaspqsvswmebyzw standby rv3-w-TaIrgeMY5T9Nb0'
           do
             set -- $spec
-            ref="$1"; role="$2"
+            ref="$1"; role="$2"; kid="$3"
             body="$(curl -fsS --max-time 12 "https://${ref}.supabase.co/functions/v1/pu-plan-replica-v3")"
-            node - "$body" "$ref" <<'NODE'
-          const [raw, ref] = process.argv.slice(2);
+            node - "$body" "$ref" "$role" "$kid" <<'NODE'
+          const [raw, ref, role, kid] = process.argv.slice(2);
           const data = JSON.parse(raw);
-          if (data.ok !== true || data.project_ref !== ref || data.alg !== 'Ed25519' || data.protocol !== 'replica-v3-key-bootstrap') process.exit(1);
-          if (!/^rv3-[A-Za-z0-9_-]{16}$/.test(data.kid || '')) process.exit(1);
-          if (!/^[A-Za-z0-9_-]{43}$/.test(data.public_key || '')) process.exit(1);
-          console.log(`${ref} ${data.kid} ${data.public_key}`);
+          if (data.ok !== true || data.protocol !== 'replica-v3' || data.project_ref !== ref || data.role !== role) process.exit(1);
+          if (data.alg !== 'Ed25519' || data.kid !== kid) process.exit(1);
+          if (data.seed_direction !== 'primary-to-standby' || data.failback !== 'manual-reconcile') process.exit(1);
+          const leak = JSON.stringify(data);
+          if (/password_hash|password_salt|service_role|private[_ -]?key/i.test(leak)) process.exit(1);
           NODE
+          done
+
+      - name: Live bidirectional signature handshake
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ref in hrrmkrayvrgnwcroyttp ltfurqaspqsvswmebyzw; do
+            body="$(curl -fsS --max-time 15 -X POST -H 'Content-Type: application/json' --data '{"action":"peer_probe"}' "https://${ref}.supabase.co/functions/v1/pu-plan-replica-v3")"
+            node - "$body" <<'NODE'
+          const data = JSON.parse(process.argv[2]);
+          if (data.ok !== true || data.peer_verified !== true || !data.peer_ref) process.exit(1);
+          NODE
+          done
+
+      - name: Reject forged envelopes and hostile origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ref in hrrmkrayvrgnwcroyttp ltfurqaspqsvswmebyzw; do
+            code="$(curl -sS --max-time 12 -o /tmp/forged.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"action":"verify_probe","envelope":"e30.e30"}' "https://${ref}.supabase.co/functions/v1/pu-plan-replica-v3")"
+            test "$code" = '401'
+            grep -q 'REPLICA_SIGNATURE_INVALID' /tmp/forged.json
+            code="$(curl -sS --max-time 12 -o /tmp/origin.txt -w '%{http_code}' -X OPTIONS -H 'Origin: https://evil.example' "https://${ref}.supabase.co/functions/v1/pu-plan-replica-v3")"
+            test "$code" = '403'
+          done
+
+      - name: Standby never auto-writes primary
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-replica-v3'
+          code="$(curl -sS --max-time 12 -o /tmp/standby-sync.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"action":"sync_and_prewarm"}' "$url")"
+          test "$code" = '503'
+          grep -q 'PRIMARY_REQUIRED' /tmp/standby-sync.json
+
+      - name: Retired replica v2 and experimental endpoints stay disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ref in hrrmkrayvrgnwcroyttp ltfurqaspqsvswmebyzw; do
+            for slug in pu-plan-replica-v2 pu-plan-api-v7 pu-plan-sync-v1; do
+              code="$(curl -sS --max-time 12 -o /tmp/retired.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"action":"health"}' "https://${ref}.supabase.co/functions/v1/${slug}")"
+              test "$code" = '410'
+              grep -q 'DISABLED' /tmp/retired.json
+            done
           done
