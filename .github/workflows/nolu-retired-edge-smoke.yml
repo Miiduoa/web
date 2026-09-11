@@ -4,10 +4,30 @@ on:
   push:
     branches: [main, security/nolu-data-api-exposure-20260911]
     paths:
+      - 'supabase/functions/pu-plan-social-core-v1/**'
+      - 'supabase/functions/pu-plan-social-v*/**'
+      - 'supabase/functions/pu-plan-api-v5/**'
+      - 'supabase/functions/pu-plan-api-v7/**'
+      - 'supabase/functions/pu-plan-sync-v1/**'
+      - 'supabase/functions/pu-plan-admin-audit-test/**'
+      - 'supabase/functions/pu-plan-db-probe/**'
+      - 'supabase/functions/pu-plan-load-proxy/**'
+      - 'supabase/functions/pu-plan-load-fixture/**'
+      - 'supabase/functions/campus-member-profile/**'
       - '.github/workflows/nolu-retired-edge-smoke.yml'
   pull_request:
     branches: [main]
     paths:
+      - 'supabase/functions/pu-plan-social-core-v1/**'
+      - 'supabase/functions/pu-plan-social-v*/**'
+      - 'supabase/functions/pu-plan-api-v5/**'
+      - 'supabase/functions/pu-plan-api-v7/**'
+      - 'supabase/functions/pu-plan-sync-v1/**'
+      - 'supabase/functions/pu-plan-admin-audit-test/**'
+      - 'supabase/functions/pu-plan-db-probe/**'
+      - 'supabase/functions/pu-plan-load-proxy/**'
+      - 'supabase/functions/pu-plan-load-fixture/**'
+      - 'supabase/functions/campus-member-profile/**'
       - '.github/workflows/nolu-retired-edge-smoke.yml'
   workflow_dispatch:
 
@@ -57,4 +77,5 @@ jobs:
           for slug in "${retired[@]}"; do check_disabled "$primary" "$slug" primary; done
           check_disabled "$standby" pu-plan-api-v7 standby
           check_disabled "$standby" pu-plan-sync-v1 standby
+          check_disabled "$standby" pu-plan-social-core-v1 standby
           [ "$failed" = '0' ]
