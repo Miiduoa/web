@@ -18,12 +18,12 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   dependency-audit:
     name: dependency audit and secret hygiene
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,9 +35,6 @@ jobs:
         with:
           node-version: '22.12.0'
           package-manager-cache: false
-
-      - name: Generate deterministic dependency graph
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Validate dependency contract
         shell: bash
@@ -101,17 +98,14 @@ jobs:
           print(f'secret hygiene scan passed across {len(tracked)} tracked files')
           PY
 
-      - name: Upload generated lockfile for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 3
-
   codeql:
     name: CodeQL JavaScript security-extended
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
