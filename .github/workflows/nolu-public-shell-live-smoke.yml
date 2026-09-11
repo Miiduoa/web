@@ -5,6 +5,8 @@ on:
     branches: [main, test/nolu-public-live-20260911]
     paths:
       - 'pu-plan/index.html'
+      - 'pu-plan/main.js'
+      - 'pu-plan/origin-gateway.js'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/sw.js'
       - '.github/workflows/nolu-public-shell-live-smoke.yml'
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/index.html'
+      - 'pu-plan/main.js'
+      - 'pu-plan/origin-gateway.js'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/sw.js'
       - '.github/workflows/nolu-public-shell-live-smoke.yml'
@@ -32,7 +36,9 @@ jobs:
         run: |
           set -euo pipefail
           grep -q '20260911-login-rescue6' pu-plan/index.html
-          grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
+          grep -q "nolu-shell-20260911-cloud-gateway1" pu-plan/sw.js
+          grep -q "./origin-gateway.js" pu-plan/sw.js
+          grep -q "import './origin-gateway.js'" pu-plan/main.js
 
       - name: Verify deployed GitHub Pages shell
         if: github.event_name != 'pull_request'
@@ -48,16 +54,24 @@ jobs:
 
           ready=0
           for attempt in $(seq 1 24); do
-            if curl -fsS --max-time 15 "$BASE/" -o "$tmp/index.html" && grep -q '20260911-login-rescue6' "$tmp/index.html"; then
+            if curl -fsS --max-time 15 "$BASE/sw.js?cloudfix=20260911" -o "$tmp/sw.js" && grep -q 'nolu-shell-20260911-cloud-gateway1' "$tmp/sw.js"; then
               ready=1
               break
             fi
             sleep 5
           done
           test "$ready" = 1
+
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/" -o "$tmp/index.html"
+          grep -q '20260911-login-rescue6' "$tmp/index.html"
           grep -q 'https://nolu-mirror.netlify.app' "$tmp/index.html"
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
+
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?cloudfix=20260911" -o "$tmp/main.js"
+          grep -q "import './origin-gateway.js'" "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?cloudfix=20260911" -o "$tmp/origin-gateway.js"
+          grep -q 'nolu-browser-gateway-v1' "$tmp/origin-gateway.js"
 
           curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js" -o "$tmp/provider-config.js"
           grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
@@ -66,8 +80,7 @@ jobs:
           grep -q "provider:'netlify'" "$tmp/provider-config.js"
           grep -q "enabled:true" "$tmp/provider-config.js"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/sw.js" -o "$tmp/sw.js"
-          grep -q "nolu-shell-20260911-login-rescue6" "$tmp/sw.js"
+          grep -q "./origin-gateway.js" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
           echo 'PUBLIC_SHELL_LIVE_OK'
 
