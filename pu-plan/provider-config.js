@@ -9,13 +9,13 @@
 // A candidate MUST stay disabled until its storage plane, authenticated read/write
 // path, health check, and recovery semantics have all been verified live.
 
-export const PROVIDER_MESH_VERSION='20260911-mesh4';
+export const PROVIDER_MESH_VERSION='20260911-mesh5';
 export const REQUIRED_REMOTE_PROVIDERS=3;
 export const MIRROR_READ_QUORUM=2;
 
 export const PORTABLE_MINT_ENDPOINTS=Object.freeze([
-  'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1',
-  'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1'
+  'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v2',
+  'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v2'
 ]);
 
 export const PROVIDER_MIRRORS=Object.freeze([
