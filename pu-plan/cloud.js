@@ -3,9 +3,20 @@ import {cleanAvatar} from './core/state.js';
 const API_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const API_FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const APIS=[API_PRIMARY,API_FALLBACK];
+const STANDBY_REF='ltfurqaspqsvswmebyzw';
+const STANDBY_SESSION_KEY='puplan_standby_session_v2';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
-let token=localStorage.getItem('puplan_session')||'', profile=null;
+function primaryToken(){return localStorage.getItem('puplan_session')||''}
+function standbyToken(){return localStorage.getItem(STANDBY_SESSION_KEY)||''}
+function preferredStoredToken(){return localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standbyToken()||primaryToken()):(primaryToken()||standbyToken())}
+function responseTier(){return String(window.NOLU_RESILIENCE?.state?.activeApi||'').includes(STANDBY_REF)?'standby':'primary'}
+function persistRuntimeToken(next){
+  token=String(next||'');if(!token)return;
+  if(responseTier()==='standby'){localStorage.setItem(STANDBY_SESSION_KEY,token);localStorage.setItem('nolu_preferred_cloud_v1','standby')}
+  else localStorage.setItem('puplan_session',token);
+}
+let token=preferredStoredToken(), profile=null;
 let preferredApi=Math.max(0,Math.min(APIS.length-1,Number(sessionStorage.getItem('puplan_api_index')||0)||0));
 let socialData={relationships:[],profiles:[],friends:[],meetups:[]}, searchTimer=null, syncTimer=null, socialLoading=null, socialLoaded=false, socialSummary={};
 
@@ -88,8 +99,8 @@ function profileFor(id){return (socialData.profiles||[]).find(p=>p.id===id)||{di
 function applyCoreBundle(data){isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);socialSummary=data.social_summary||{};applySocial(data.social||{relationships:[],profiles:[],friends:[],meetups:[]})}
 
 async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn('cloud bootstrap',e);if(e?.status===401){clearSession(false);purgeAccountCache()}return false}}
-async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
-async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
+async function login(email,password){const data=await api('login',{email,password},false);persistRuntimeToken(data.token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
+async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);persistRuntimeToken(data.token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
 async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
 async function updateProfile(display_name,username,opts={}){
   username=normalizeUsername(username);if(!display_name?.trim())return app?.toast?.('請輸入顯示名稱');if(!/^[a-z0-9_.]{2,24}$/.test(username))return app?.toast?.('@帳號需 2–24 字，只能英文、數字、底線、句點');
@@ -132,6 +143,7 @@ $('#registerForm')?.addEventListener('submit',async e=>{e.preventDefault();const
 $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault();setAuthStatus('登入中…');try{await login($('#loginEmail').value.trim(),$('#loginPassword').value);setAuthStatus('');app?.toast?.('登入成功')}catch(err){setAuthStatus(err.message,true)}});
 $('#cloudFriendSearch')?.addEventListener('input',e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchPeople(e.target.value),260)});
 document.addEventListener('puplan:courses-changed',e=>queueSchedule(e.detail||[]));
+document.addEventListener('nolu:session-rotated',()=>{const next=preferredStoredToken();if(next)token=next});
 $$('[data-view="friends"]').forEach(b=>b.addEventListener('click',()=>{if(isSignedIn()&&!socialLoaded)loadSocial().catch(()=>{})}));
 
 window.PUPLAN_CLOUD={isSignedIn,showGate,logout,updateProfile,removeFriend,searchPeople,loadSocial,syncSchedule:()=>saveSchedule(app?.courses?.()||[]),getProfile:()=>profile,getSocial:()=>socialData,getSocialSummary:()=>socialSummary,createMeetup,respondMeetup,cancelMeetup,avatarHTML};

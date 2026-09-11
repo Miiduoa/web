@@ -6,7 +6,7 @@ const encoder=new TextEncoder();
 
 function safeJson(raw,fallback=null){try{return JSON.parse(raw)}catch{return fallback}}
 function clean(v,n=160){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,n)}
-function rawToken(){return localStorage.getItem('puplan_session')||''}
+function rawToken(){const primary=localStorage.getItem('puplan_session')||'',standby=localStorage.getItem('puplan_standby_session_v2')||'';return localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standby||primary):(primary||standby)}
 function tokenUid(){
   try{
     const raw=rawToken();

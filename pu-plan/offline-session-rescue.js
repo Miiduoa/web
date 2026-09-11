@@ -27,7 +27,8 @@ async function fingerprint(raw){
   }catch{return''}
 }
 async function trustedSnapshot(){
-  const raw=localStorage.getItem('puplan_session')||'';const session=parseSession(raw);if(!session)return null;
+  const primary=localStorage.getItem('puplan_session')||'',standby=localStorage.getItem('puplan_standby_session_v2')||'';
+  const raw=localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standby||primary):(primary||standby);const session=parseSession(raw);if(!session)return null;
   if(session.exp*1000+MAX_EXPIRED_GRACE_MS<Date.now())return null;
   if((localStorage.getItem('puplan_course_owner')||'')!==String(session.uid))return null;
   const fp=await fingerprint(raw);if(!fp)return null;

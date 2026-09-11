@@ -124,7 +124,7 @@ window.fetch=async function noluResilientFetch(input,options={}){
   const candidates=apiCandidates(String(url),{action});if(!candidates.length){state.lastError='all cloud circuits are temporarily open';const local=offlineResponse(action,body,sequence);if(local)return local;throw new TypeError('Nolu cloud temporarily unavailable')}
   for(const api of candidates){
     if(options?.signal?.aborted)break;
-    if(api===STANDBY&&hasAuthorization(options)&&!standbyToken())continue;
+    if(hasAuthorization(options)&&!authTokenFor(api))continue;
     try{
       const res=await timedFetch(api,options,1800);lastResponse=res;
       if(api===STANDBY&&res.status===401&&hasAuthorization(options)){standby401=res;lastError=new Error('standby authorization unavailable');markFailure(api,lastError);continue}

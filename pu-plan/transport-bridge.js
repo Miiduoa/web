@@ -46,7 +46,7 @@ window.fetch=async function noluLegacyFailover(input,options={}){
   const candidates=ordered(action).filter(endpoint=>!isOpen(endpoint));if(!candidates.length)throw new TypeError('Nolu transport temporarily unavailable');
   for(const endpoint of candidates){
     if(options.signal?.aborted)break;
-    if(endpoint===STANDBY&&hasAuth(options)&&!standbyToken())continue;
+    if(hasAuth(options)&&!authTokenFor(endpoint))continue;
     try{
       const response=await timed(endpoint,options);lastResponse=response;
       if(endpoint===STANDBY&&response.status===401&&hasAuth(options)){standby401=true;failure(endpoint,new Error('standby authorization unavailable'));continue}

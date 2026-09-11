@@ -1,4 +1,5 @@
 const SESSION_KEY='puplan_session';
+const STANDBY_SESSION_KEY='puplan_standby_session_v2';
 const GUEST_KEY='puplan_guest';
 const GUEST_SCOPE_MARKER='nolu_guest_scope_v1';
 
@@ -65,24 +66,26 @@ function sessionUid(raw=''){
   }catch{return''}
 }
 
-const rawSession=localStorage.getItem(SESSION_KEY)||'';
-const hasSession=!!rawSession;
+const rawPrimary=localStorage.getItem(SESSION_KEY)||'';
+const rawStandby=localStorage.getItem(STANDBY_SESSION_KEY)||'';
+let primaryUid=sessionUid(rawPrimary),standbyUid=sessionUid(rawStandby);
+if(rawPrimary&&!primaryUid)localStorage.removeItem(SESSION_KEY);
+if(rawStandby&&!standbyUid)localStorage.removeItem(STANDBY_SESSION_KEY);
+const sessionConflict=!!(primaryUid&&standbyUid&&primaryUid!==standbyUid);
+const activeUid=sessionConflict?'':(primaryUid||standbyUid);
+const hasSession=!!activeUid;
 const isGuest=localStorage.getItem(GUEST_KEY)==='1';
 const owner=localStorage.getItem('puplan_course_owner')||'';
 
-if(hasSession){
-  const uid=sessionUid(rawSession);
-  if(!uid){
-    // Never render account-scoped cache behind a malformed or expired session.
-    clearPrivateAccountState(owner);
-    localStorage.removeItem(GUEST_SCOPE_MARKER);
-  }else{
-    // Account switches must be isolated before app.js can render the previous
-    // account. Missing ownership is also unsafe because legacy cache may remain.
-    if(owner!==uid)clearPrivateCaches(owner);
-    localStorage.removeItem(GUEST_KEY);
-    localStorage.removeItem(GUEST_SCOPE_MARKER);
-  }
+if(sessionConflict){
+  // Two region credentials for different accounts must never share one browser cache.
+  clearPrivateAccountState(owner);
+  localStorage.removeItem(GUEST_SCOPE_MARKER);
+}else if(hasSession){
+  // Account switches must be isolated before app.js can render the previous account.
+  if(owner!==activeUid)clearPrivateCaches(owner);
+  localStorage.removeItem(GUEST_KEY);
+  localStorage.removeItem(GUEST_SCOPE_MARKER);
 }else if(isGuest){
   // One-time migration for guest sessions created by older builds. Those builds could
   // leave the previous account's profile/schedule cache behind, so start from a clean
@@ -103,7 +106,7 @@ if(hasSession){
 // cannot repopulate guest mode from the account that was active moments earlier.
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
-  const uid=localStorage.getItem('puplan_course_owner')||sessionUid(localStorage.getItem(SESSION_KEY)||'');
+  const uid=localStorage.getItem('puplan_course_owner')||sessionUid(localStorage.getItem(SESSION_KEY)||'')||sessionUid(localStorage.getItem(STANDBY_SESSION_KEY)||'');
   clearPrivateAccountState(uid);
   localStorage.setItem(GUEST_KEY,'1');
   localStorage.setItem(GUEST_SCOPE_MARKER,'1');
