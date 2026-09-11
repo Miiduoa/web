@@ -1,4 +1,4 @@
-import {cleanAvatar} from './core/state.js';
+import {cleanAvatar,cleanMediaUrl} from './core/state.js';
 const SOCIAL_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const SOCIAL_STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social';
 const SUPABASE_URL='https://hrrmkrayvrgnwcroyttp.supabase.co';
@@ -157,8 +157,9 @@ async function loadFeed(reset=true){
   }catch(e){if($('#feedList'))$('#feedList').innerHTML=`<div class="panel">${esc(e.message)}</div>`}
 }
 function renderMedia(items=[]){
-  if(!items.length)return'';
-  return`<div class="feed-media ${items.length===1?'single':''}" data-count="${items.length}">${items.map((m,i)=>m.type==='image'?`<button class="feed-media-item" data-lightbox="${esc(m.url)}" aria-label="查看圖片"><img src="${esc(m.url)}" loading="lazy" alt="貼文圖片 ${i+1}"></button>`:`<div class="feed-media-item"><video src="${esc(m.url)}" controls playsinline preload="metadata"></video></div>`).join('')}</div>`;
+  const safe=(Array.isArray(items)?items:[]).slice(0,6).map(m=>({...m,url:cleanMediaUrl(m?.url)})).filter(m=>m.url&&(m.type==='image'||m.type==='video'));
+  if(!safe.length)return'';
+  return`<div class="feed-media ${safe.length===1?'single':''}" data-count="${safe.length}">${safe.map((m,i)=>m.type==='image'?`<button class="feed-media-item" data-lightbox="${esc(m.url)}" aria-label="查看圖片"><img src="${esc(m.url)}" loading="lazy" alt="貼文圖片 ${i+1}"></button>`:`<div class="feed-media-item"><video src="${esc(m.url)}" controls playsinline preload="metadata"></video></div>`).join('')}</div>`;
 }
 function renderFeed(){
   const list=$('#feedList');if(!list)return;const me=profile();
@@ -173,8 +174,9 @@ function renderFeed(){
   list.querySelectorAll('[data-lightbox]').forEach(b=>b.onclick=()=>lightbox(b.dataset.lightbox));
 }
 function lightbox(url){
+  const safe=cleanMediaUrl(url);if(!safe)return;
   let d=$('#mediaLightbox');if(!d){d=document.createElement('dialog');d.id='mediaLightbox';d.className='media-lightbox';document.body.append(d)}
-  d.innerHTML=`<button class="media-lightbox-close">×</button><img src="${esc(url)}" alt="貼文圖片">`;d.querySelector('button').onclick=()=>d.close();d.onclick=e=>{if(e.target===d)d.close()};d.showModal();
+  d.innerHTML=`<button class="media-lightbox-close">×</button><img src="${esc(safe)}" alt="貼文圖片">`;d.querySelector('button').onclick=()=>d.close();d.onclick=e=>{if(e.target===d)d.close()};d.showModal();
 }
 async function publishPost(){
   const input=$('#postInput'),body=input?.value.trim()||'',visibility=$('#postVisibility')?.value||'public';
