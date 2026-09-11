@@ -1,3 +1,4 @@
+import './login-transport-patience.js';
 import './avatar-guard.js';
 import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
