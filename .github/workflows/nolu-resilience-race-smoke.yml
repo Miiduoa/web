@@ -2,7 +2,7 @@ name: nolu resilience write race smoke
 
 on:
   push:
-    branches: [main, audit/nolu-resilience-write-race-20260910]
+    branches: [main, audit/nolu-resilience-write-race-20260910, feat/nolu-hot-standby-v1]
     paths:
       - 'pu-plan/resilience.js'
       - '.github/workflows/nolu-resilience-race-smoke.yml'
@@ -39,9 +39,10 @@ jobs:
           cat >/tmp/nolu-race/check.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
-          const API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+          const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
+          const V6='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
           const UID='11111111-1111-4111-8111-111111111111';
-          const payload=Buffer.from(JSON.stringify({v:3,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600})).toString('base64url');
+          const payload=Buffer.from(JSON.stringify({v:4,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'race-test'})).toString('base64url');
           const token=`${payload}.test-signature`;
           (async()=>{
             const browser=await chromium.launch({headless:true});
@@ -54,30 +55,38 @@ jobs:
                 localStorage.setItem('puplan_name','Race User');
                 localStorage.setItem('puplan_courses','[]');
               },{UID,token});
-              await page.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',async route=>{
+              // Simulate a total dual-region outage. OLD succeeds late only on the
+              // current primary so we can prove its stale response cannot erase a
+              // newer edit that failed across Mumbai, Tokyo, and compat paths.
+              await page.route('https://*.supabase.co/functions/v1/**',async route=>{
                 let body={};try{body=JSON.parse(route.request().postData()||'{}')}catch{}
                 const name=body?.courses?.[0]?.name;
-                if(body.action==='save_schedule'&&(name==='OLD'||name==='FLUSH_OLD')){
+                const url=route.request().url();
+                if(body.action==='save_schedule'&&name==='OLD'&&url===PRIMARY){
                   await new Promise(r=>setTimeout(r,800));
                   return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true}'});
                 }
-                if(body.action==='save_schedule'&&name==='NEW'){
+                if(body.action==='save_schedule'&&name==='FLUSH_OLD'){
+                  await new Promise(r=>setTimeout(r,800));
+                  return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true}'});
+                }
+                if(body.action==='save_schedule'&&(name==='NEW'||name==='FLUSH_NEW')){
                   return route.fulfill({status:503,contentType:'application/json',body:'{"message":"offline"}'});
                 }
-                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"unauthorized"}'});
+                return route.fulfill({status:503,contentType:'application/json',body:'{"message":"offline"}'});
               });
               await page.goto('http://127.0.0.1:4173/__resilience_race_test.html',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE);
 
-              const responseRace=await page.evaluate(async ({API,UID})=>{
+              const responseRace=await page.evaluate(async ({PRIMARY,UID})=>{
                 const old=[{id:'old',name:'OLD',day:1,start:1,end:1}];
                 const newer=[{id:'new',name:'NEW',day:2,start:2,end:2}];
                 document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:old}));
-                const oldRequest=fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:old})});
+                const oldRequest=fetch(PRIMARY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:old})});
                 await new Promise(r=>setTimeout(r,80));
                 localStorage.setItem('puplan_courses',JSON.stringify(newer));
                 document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:newer}));
-                const newerResponse=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:newer})});
+                const newerResponse=await fetch(PRIMARY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_schedule',courses:newer})});
                 const newerBody=await newerResponse.json();
                 await oldRequest;
                 await new Promise(r=>setTimeout(r,120));
@@ -86,17 +95,17 @@ jobs:
                   pending:localStorage.getItem(`nolu_pending_mutations_v1:${UID}`),
                   mode:window.NOLU_RESILIENCE.getMode()
                 };
-              },{API,UID});
+              },{PRIMARY,UID});
               console.log('RESPONSE_RACE_RESULT',responseRace);
               assert(responseRace.queued,'newer failed write was not queued');
               assert(responseRace.pending&&responseRace.pending.includes('NEW'),'older success deleted the newer queued schedule');
               assert(responseRace.mode==='offline','older delayed success incorrectly overrode newer offline state');
 
-              const flushRace=await page.evaluate(async ({API,UID})=>{
+              const flushRace=await page.evaluate(async ({V6,UID})=>{
                 const old=[{id:'flush-old',name:'FLUSH_OLD',day:3,start:3,end:3}];
                 const newer=[{id:'flush-new',name:'FLUSH_NEW',day:4,start:4,end:4}];
                 document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:old}));
-                const flushing=window.NOLU_RESILIENCE.flushPending(API);
+                const flushing=window.NOLU_RESILIENCE.flushPending(V6);
                 await new Promise(r=>setTimeout(r,80));
                 localStorage.setItem('puplan_courses',JSON.stringify(newer));
                 document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:newer}));
@@ -105,7 +114,7 @@ jobs:
                   complete,
                   pending:localStorage.getItem(`nolu_pending_mutations_v1:${UID}`)
                 };
-              },{API,UID});
+              },{V6,UID});
               console.log('FLUSH_RACE_RESULT',flushRace);
               assert(flushRace.complete===false,'flush incorrectly reported complete while a newer edit remained');
               assert(flushRace.pending&&flushRace.pending.includes('FLUSH_NEW'),'background flush deleted a newer queued schedule');
