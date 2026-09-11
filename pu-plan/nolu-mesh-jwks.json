@@ -1,1 +1,1 @@
-{"keys":[{"kty":"EC","crv":"P-256","x":"R660sc0IuSmurKalyRwrsMEnDWtKU7iQNwvYKAZ2SqU","y":"dDLWFPL-m-wIEQMuIw6aR6QpLfvZ7HPE0ivXoUAaJa0","use":"sig","alg":"ES256","kid":"mesh-20260911-4"}]}
+{"keys":[{"kty":"EC","crv":"P-256","x":"Sc8qAHmrxspTBileuVyyF7EXGJQekfmO9IK-Gp_E6Uc","y":"YrOGVTXTsApnPne0EUSlFeyz4L8Fvx2XvG9FsIEG_ts","use":"sig","alg":"ES256","kid":"mesh-mumbai-v2"},{"kty":"EC","crv":"P-256","x":"YPGzjs4ee0O0ADpT0Z1fOLvMuLgnCcD_yLrEJ27jJ9o","y":"rchlTSmWooZ8rLr6lMl0jJMAo7vdxxc_NrBsR5qOIx4","use":"sig","alg":"ES256","kid":"mesh-tokyo-v2"}]}
