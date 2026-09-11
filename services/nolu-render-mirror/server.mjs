@@ -13,19 +13,14 @@ const STORAGE_LABEL=(String(process.env.NOLU_STORAGE_LABEL||`${PROVIDER_ID}-post
 const ALLOWED_ORIGIN='https://miiduoa.github.io';
 const AUDIENCE='nolu-provider-mesh';
 const ISSUER='nolu';
-const KID='mesh-20260911-1';
+const JWKS_URL=process.env.NOLU_JWKS_URL||'https://miiduoa.github.io/web/nolu-mesh-jwks.json';
+const CURRENT_PORTABLE_KIDS=new Set(['mesh-mumbai-20260911-5','mesh-tokyo-20260911-5']);
 const MAX_BODY=360_000;
-const PUBLIC_JWK={
-  kty:'EC',crv:'P-256',
-  x:'4MhrmOPNbv2fphbk4Exsj9BLwyhIQnwK03Lj9uhXRds',
-  y:'VWSU7m8SyzOsph0f9k70HOZj6-MBpcF7HF_6pwCnHqg',
-  ext:true,key_ops:['verify'],alg:'ES256',kid:KID
-};
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX64=/^[0-9a-f]{64}$/i;
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false},max:5,idleTimeoutMillis:20_000,connectionTimeoutMillis:4_000}):null;
+const keyCache=new Map();
 let schemaReady=false;
-let verifyKeyPromise=null;
 
 function headers(origin=''){
   const h={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin'};
@@ -52,17 +47,31 @@ function canonical(value){
   return JSON.stringify(value);
 }
 function snapshotDigest(snapshot){return createHash('sha256').update(canonical(snapshot)).digest('hex')}
+async function verificationKey(kid){
+  if(!CURRENT_PORTABLE_KIDS.has(kid))throw new Error('unsupported key');
+  const cached=keyCache.get(kid);
+  if(cached&&cached.expires>Date.now())return cached.key;
+  const response=await fetch(JWKS_URL,{cache:'no-store',signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw new Error('jwks unavailable');
+  const data=await response.json();
+  const jwk=Array.isArray(data?.keys)
+    ?data.keys.find(item=>item?.kid===kid&&item?.kty==='EC'&&item?.crv==='P-256'&&item?.alg==='ES256'&&item?.use==='sig'&&!item?.d)
+    :null;
+  if(!jwk)throw new Error('unsupported key');
+  const key=await subtle.importKey('jwk',jwk,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
+  keyCache.set(kid,{key,expires:Date.now()+5*60_000});
+  return key;
+}
 async function verifyPortable(token){
   const [h,p,s,...extra]=String(token||'').split('.');
   if(!h||!p||!s||extra.length)throw new Error('invalid token');
   const header=safeJson(fromB64url(h)),claims=safeJson(fromB64url(p));
-  if(header?.alg!=='ES256'||header?.kid!==KID||header?.typ!=='NOLU')throw new Error('unsupported token');
-  if(claims?.v!==1||claims?.iss!==ISSUER||claims?.aud!==AUDIENCE||!UUID.test(String(claims?.sub||'')))throw new Error('invalid claims');
+  if(header?.alg!=='ES256'||header?.typ!=='NOLU'||typeof header?.kid!=='string')throw new Error('unsupported token');
+  if(claims?.v!==1||claims?.iss!==ISSUER||claims?.aud!==AUDIENCE||claims?.role!=='authenticated'||!['mumbai','tokyo'].includes(String(claims?.auth_domain||''))||!UUID.test(String(claims?.sub||'')))throw new Error('invalid claims');
   const now=Math.floor(Date.now()/1000);
-  if(!Number.isFinite(claims?.iat)||!Number.isFinite(claims?.exp)||claims.exp<=now||claims.iat>now+300||claims.exp-claims.iat>31*24*60*60)throw new Error('expired token');
+  if(!Number.isFinite(claims?.iat)||!Number.isFinite(claims?.exp)||claims.exp<=now||claims.iat>now+300||claims.exp<=claims.iat||claims.exp-claims.iat>300)throw new Error('expired token');
   if(!claims.cv||String(claims.cv).length>160)throw new Error('invalid credential version');
-  verifyKeyPromise ||= subtle.importKey('jwk',PUBLIC_JWK,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
-  const key=await verifyKeyPromise;
+  const key=await verificationKey(header.kid);
   const ok=await subtle.verify({name:'ECDSA',hash:'SHA-256'},key,fromB64url(s),Buffer.from(`${h}.${p}`));
   if(!ok)throw new Error('bad signature');
   return claims;
@@ -133,7 +142,7 @@ async function getSnapshot(uid){
   return {ok:true,snapshot:row.snapshot,digest:row.digest,revision:Number(row.revision),updated_at:row.updated_at};
 }
 async function health(){
-  const base={provider:PROVIDER_ID,storage:STORAGE_LABEL,configured:!!pool};
+  const base={provider:PROVIDER_ID,storage:STORAGE_LABEL,configured:!!pool,portable_auth:'regional-es256-v2'};
   if(!pool)return {...base,ok:false,status:'unconfigured'};
   try{
     await ensureSchema();await pool.query('select 1');
@@ -166,7 +175,7 @@ const server=http.createServer(async(req,res)=>{
     else throw Object.assign(new Error('unsupported action'),{status:400});
     return send(res,200,{...result,provider:PROVIDER_ID},origin);
   }catch(error){
-    const status=Number(error?.status)||(/token|signature|claims|bearer|expired/i.test(String(error?.message||''))?401:500);
+    const status=Number(error?.status)||(/token|signature|claims|bearer|expired|jwks|key/i.test(String(error?.message||''))?401:500);
     const safe=status>=500?'mirror temporarily unavailable':String(error?.message||'request failed');
     return send(res,status,{ok:false,provider:PROVIDER_ID,error:status===401?'UNAUTHORIZED':'MIRROR_ERROR',message:safe},origin);
   }
