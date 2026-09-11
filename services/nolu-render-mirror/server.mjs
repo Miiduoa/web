@@ -6,6 +6,10 @@ const {Pool}=pg;
 const {subtle}=webcrypto;
 const PORT=Number(process.env.PORT||10000);
 const DATABASE_URL=process.env.DATABASE_URL||'';
+const PROVIDER_ID=/^[a-z0-9][a-z0-9-]{0,39}$/.test(String(process.env.NOLU_PROVIDER_ID||'render').toLowerCase())
+  ?String(process.env.NOLU_PROVIDER_ID||'render').toLowerCase()
+  :'render';
+const STORAGE_LABEL=(String(process.env.NOLU_STORAGE_LABEL||`${PROVIDER_ID}-postgres`).trim().slice(0,80)||`${PROVIDER_ID}-postgres`);
 const ALLOWED_ORIGIN='https://miiduoa.github.io';
 const AUDIENCE='nolu-provider-mesh';
 const ISSUER='nolu';
@@ -129,8 +133,14 @@ async function getSnapshot(uid){
   return {ok:true,snapshot:row.snapshot,digest:row.digest,revision:Number(row.revision),updated_at:row.updated_at};
 }
 async function health(){
-  if(!pool)return {ok:false,storage:'unconfigured'};
-  try{await ensureSchema();await pool.query('select 1');return {ok:true,storage:'render-postgres'}}catch{return {ok:false,storage:'unavailable'}}
+  const base={provider:PROVIDER_ID,storage:STORAGE_LABEL,configured:!!pool};
+  if(!pool)return {...base,ok:false,status:'unconfigured'};
+  try{
+    await ensureSchema();await pool.query('select 1');
+    return {...base,ok:true,status:'available'};
+  }catch{
+    return {...base,ok:false,status:'unavailable'};
+  }
 }
 
 const server=http.createServer(async(req,res)=>{
@@ -141,7 +151,7 @@ const server=http.createServer(async(req,res)=>{
   }
   const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
   if(req.method==='GET'&&url.pathname==='/health'){
-    const result=await health();return send(res,result.ok?200:503,{...result,provider:'render'},origin);
+    const result=await health();return send(res,result.ok?200:503,result,origin);
   }
   if(url.pathname!=='/mirror'||req.method!=='POST')return send(res,404,{error:'NOT_FOUND'},origin);
   if(origin!==ALLOWED_ORIGIN)return send(res,403,{error:'ORIGIN_NOT_ALLOWED'},origin);
@@ -154,13 +164,13 @@ const server=http.createServer(async(req,res)=>{
     if(action==='put_snapshot')result=await putSnapshot(String(claims.sub),body);
     else if(action==='get_snapshot')result=await getSnapshot(String(claims.sub));
     else throw Object.assign(new Error('unsupported action'),{status:400});
-    return send(res,200,result,origin);
+    return send(res,200,{...result,provider:PROVIDER_ID},origin);
   }catch(error){
     const status=Number(error?.status)||(/token|signature|claims|bearer|expired/i.test(String(error?.message||''))?401:500);
     const safe=status>=500?'mirror temporarily unavailable':String(error?.message||'request failed');
-    return send(res,status,{ok:false,error:status===401?'UNAUTHORIZED':'MIRROR_ERROR',message:safe},origin);
+    return send(res,status,{ok:false,provider:PROVIDER_ID,error:status===401?'UNAUTHORIZED':'MIRROR_ERROR',message:safe},origin);
   }
 });
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`nolu-render-mirror listening on ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`nolu-${PROVIDER_ID}-mirror listening on ${PORT}`));
 process.on('SIGTERM',()=>server.close(()=>pool?.end().finally(()=>process.exit(0))));
