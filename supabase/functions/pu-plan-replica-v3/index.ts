@@ -83,8 +83,7 @@ async function readJson(req: Request) {
 }
 async function deriveSeed() {
   if (!SERVICE_KEY) throw new ApiError(503, '簽章服務未就緒', 'SIGNING_KEY_UNAVAILABLE');
-  const key = await crypto.subtle.importKey('raw', encoder.encode(SERVICE_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(KEY_DOMAIN)));
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(`${KEY_DOMAIN}:${SERVICE_KEY}`)));
 }
 async function assertSigningKey() {
   const expected = PINNED_KEYS[SELF_REF];
