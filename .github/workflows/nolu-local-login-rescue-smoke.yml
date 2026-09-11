@@ -1,0 +1,65 @@
+name: nolu local login rescue smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-local-login-rescue-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-local-login-rescue-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-device-rescue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Parse rescue and PWA files
+        run: |
+          set -euo pipefail
+          node --check pu-plan/offline-session-rescue.js
+          node --check pu-plan/session-recovery.js
+          node --check pu-plan/sw.js
+          node --check pu-plan/pwa.js
+      - name: Require authority-first login rescue
+        run: |
+          set -euo pipefail
+          f=pu-plan/offline-session-rescue.js
+          grep -Fq "if(response.status<500&&response.status!==410)return response" "$f"
+          grep -Fq "if(action==='login')" "$f"
+          grep -Fq "return loginResponse(trusted)" "$f"
+          grep -Fq "String(recovery?.uid||'')===String(trusted.session.uid)" "$f"
+          grep -Fq "['canonical-ok','recovered','local-grace']" "$f"
+          grep -Fq "error:'AUTHORITY_UNAVAILABLE'" "$f"
+          ! grep -Eq 'checkPassword|passwordHash|recover_password|signup' "$f"
+      - name: Require exact-fingerprint owner repair only from IndexedDB
+        run: |
+          set -euo pipefail
+          f=pu-plan/offline-session-rescue.js
+          grep -Fq "const exact=x=>x?.uid===id&&x?.profile?.id===id&&x?.sessionFingerprint===fp" "$f"
+          grep -Fq "if(exact(durable))candidates.push({snap:durable,durable:true})" "$f"
+          grep -Fq "if(owner===id&&exact(local))candidates.push({snap:local,durable:false})" "$f"
+          grep -Fq "if(best.durable&&owner!==id)rebindFromDurable(id,best.snap)" "$f"
+      - name: Require fresh installed shell
+        run: |
+          set -euo pipefail
+          grep -Fq 'nolu-shell-20260911-login-rescue6' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260911_login_rescue6' pu-plan/pwa.js
+          grep -Fq '20260911-login-rescue6' pu-plan/index.html
+          grep -Fq "'./offline-session-rescue.js'" pu-plan/sw.js
