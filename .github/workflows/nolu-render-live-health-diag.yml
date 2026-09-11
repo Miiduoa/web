@@ -16,12 +16,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Probe primary login database path
+      - name: Probe live login tiers with synthetic credentials
         shell: bash
         run: |
           set -euo pipefail
           payload='{"action":"login","email":"nolu-health-probe-20260911@invalid.example","password":"not-a-real-password-9f12"}'
           for endpoint in \
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8' \
+            'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8' \
             'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6' \
             'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1'
           do
