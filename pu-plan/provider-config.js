@@ -3,13 +3,13 @@
 //
 // Provider identity is a failure-domain label, not a hostname. Multiple Supabase
 // projects still count as ONE provider because a provider-wide incident can affect
-// them together. The target topology is:
-//   1. Supabase (existing primary + Tokyo standby)
-//   2. Neon Singapore (independent Postgres/Data API mirror)
-//   3. Render (independent service + Postgres mirror)
-// plus IndexedDB on the user's device as a fourth durable local copy.
+// them together. The production target is at least three independent remote
+// providers, plus IndexedDB on the user's device as an additional durable local copy.
+//
+// A candidate MUST stay disabled until its storage plane, authenticated read/write
+// path, health check, and recovery semantics have all been verified live.
 
-export const PROVIDER_MESH_VERSION='20260911-mesh2';
+export const PROVIDER_MESH_VERSION='20260911-mesh3';
 export const REQUIRED_REMOTE_PROVIDERS=3;
 export const MIRROR_READ_QUORUM=2;
 
@@ -26,7 +26,19 @@ export const PROVIDER_MIRRORS=Object.freeze([
     endpoint:'https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1',
     enabled:true
   }),
-  // Render remains disabled until its independent account/service connection is
-  // authorized. It will use the same portable public-key token, never a browser DB secret.
-  Object.freeze({id:'render-mirror',provider:'render',kind:'action-api',endpoint:'',enabled:false})
+  // Render service is deployed, but it remains excluded from quorum until its
+  // independent Render Postgres DATABASE_URL is safely bound and live R/W passes.
+  Object.freeze({
+    id:'render-singapore',
+    provider:'render',
+    kind:'action-api',
+    endpoint:'https://nolu-render-mirror.onrender.com/mirror',
+    enabled:false
+  }),
+  // Railway is the preferred next independent provider because its app and DB can
+  // be bound privately. It stays inert until the account connection and live tests exist.
+  Object.freeze({id:'railway-mirror',provider:'railway',kind:'action-api',endpoint:'',enabled:false}),
+  // Netlify Blobs is an additional fourth-provider candidate, never counted until
+  // an authenticated Function + durable Blob read/write path is deployed and tested.
+  Object.freeze({id:'netlify-blobs',provider:'netlify',kind:'action-api',endpoint:'',enabled:false})
 ]);
