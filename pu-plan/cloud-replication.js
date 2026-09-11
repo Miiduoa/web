@@ -6,8 +6,8 @@ const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const DIRTY_PREFIX='nolu_standby_dirty_v3:';
 const SEEDED_PREFIX='nolu_standby_seeded_v3:';
 const state={
-  version:'20260911-replica3',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,
-  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false
+  version:'20260911-replica3-failback-guard',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,
+  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false,manualReconcileRequired:false
 };
 let debounceTimer=null;
 
@@ -59,24 +59,40 @@ function storeStandbyToken(raw){
   document.dispatchEvent(new CustomEvent('nolu:peer-session-ready',{detail:{uid:currentUid,tier:'standby',at:Date.now()}}));
   return true;
 }
-function markStandbyDirty(){const id=uid();if(id)localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1')}
+function dirtyKey(id=uid()){return id?`${DIRTY_PREFIX}${id}`:''}
+function hasStandbyDirty(id=uid()){const key=dirtyKey(id);return !!key&&localStorage.getItem(key)==='1'}
+function requireManualReconcile(reason='standby-dirty'){
+  state.manualReconcileRequired=true;state.peerSynced=false;
+  state.lastError='standby has unsafely divergent changes; manual reconciliation required';
+  document.dispatchEvent(new CustomEvent('nolu:replica-manual-reconcile-required',{detail:{uid:uid(),reason,at:Date.now()}}));
+}
+function markStandbyDirty(){
+  const id=uid();if(!id||activeTier()!=='standby')return false;
+  localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1');requireManualReconcile('standby-write');return true;
+}
 function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
 
 async function sync(reason='periodic',force=false){
   const id=uid();
   if(!id||localStorage.getItem('puplan_guest')==='1'||state.busy)return false;
-  const tier=activeTier();
+  const tier=activeTier();state.lastTier=tier;state.lastReason=reason;
   if(tier!=='primary'){
     // Replica v3 intentionally supports trusted primary -> standby replication only.
     // Never send a Tokyo session to the primary endpoint or pretend reverse replication succeeded.
-    markStandbyDirty();state.lastTier=tier;state.lastReason=reason;state.peerSynced=false;
-    state.lastError='standby active; reverse replication is intentionally disabled';
+    state.peerSynced=false;
+    if(hasStandbyDirty(id))requireManualReconcile('standby-dirty');
+    else state.lastError='standby active; reverse replication is intentionally disabled';
     return false;
+  }
+  if(hasStandbyDirty(id)){
+    // A previous Tokyo-side write is newer/independent state. Do not overwrite it
+    // merely because Mumbai became reachable again; explicit conflict resolution is required.
+    requireManualReconcile('primary-failback-blocked');return false;
   }
   seedPrimarySessionFromCanonical();
   const session=primarySession();if(!session)return false;
   const at=Date.now();if(!force&&at-state.lastAttemptAt<4000)return false;
-  state.busy=true;state.lastAttemptAt=at;state.lastReason=reason;state.lastTier=tier;state.peerSessionReady=false;
+  state.busy=true;state.lastAttemptAt=at;state.peerSessionReady=false;
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),8000);
   try{
     const response=await fetch(PRIMARY_SYNC,{
@@ -88,8 +104,8 @@ async function sync(reason='periodic',force=false){
     if(data.peer_synced!==true||!storeStandbyToken(data.peer_token)){
       state.lastError='replica v3 completed without a valid standby-local session';state.peerSynced=false;return false;
     }
-    state.lastSuccessAt=Date.now();state.lastPeerSyncAt=state.lastSuccessAt;state.lastError='';state.peerSynced=true;
-    localStorage.setItem(`${SEEDED_PREFIX}${id}`,'1');localStorage.removeItem(`${DIRTY_PREFIX}${id}`);
+    state.lastSuccessAt=Date.now();state.lastPeerSyncAt=state.lastSuccessAt;state.lastError='';state.peerSynced=true;state.manualReconcileRequired=false;
+    localStorage.setItem(`${SEEDED_PREFIX}${id}`,'1');
     document.dispatchEvent(new CustomEvent('nolu:replica-synced',{detail:{uid:id,tier:'primary',peerTier:'standby',at:state.lastPeerSyncAt,peerSessionReady:true}}));
     return true;
   }catch(error){state.lastError=String(error?.message||error||'sync unavailable');state.peerSynced=false;return false}
@@ -109,6 +125,6 @@ setInterval(()=>void sync('periodic'),30000);
 seedPrimarySessionFromCanonical();
 if(window.PUPLAN_CLOUD?.isSignedIn?.()||uid())schedule('startup',400);
 window.NOLU_REPLICATION={
-  state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,
+  state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,hasStandbyDirty,
   sessionFor,seedPrimarySessionFromCanonical,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
 };
