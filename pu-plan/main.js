@@ -54,6 +54,11 @@ await import('./resilience.js');
 // timeout cannot abort the standby leg before it has a fair chance to authenticate.
 await import('./login-failover-budget.js');
 
+// Friend/search/meetup operations historically stayed primary-only. This wrapper
+// preserves the Mumbai path first, but uses the user's independent Tokyo Session v4
+// against a scoped standby API when Mumbai cannot serve those social-core actions.
+await import('./social-core-failover.js');
+
 // If the database is unreachable, a previously authenticated device can still
 // prove possession of its exact session-bound IndexedDB snapshot. This wrapper
 // only rescues bootstrap/profile/schedule requests; it never accepts a password
