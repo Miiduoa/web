@@ -41,7 +41,11 @@ jobs:
         run: |
           set -euo pipefail
           probe() {
-            local fn="$1" payload="$2" body="/tmp/${fn}.json" code rc=0
+            local fn="$1"
+            local payload="$2"
+            local body="/tmp/${fn}.json"
+            local code
+            local rc=0
             code=$(curl -sS --connect-timeout 3 --max-time 8 -o "$body" -w '%{http_code}' -X POST \
               "$PROJECT_URL/rest/v1/rpc/$fn" \
               -H "apikey: $PUBLISHABLE_KEY" \
