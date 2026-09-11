@@ -6,6 +6,7 @@ on:
     paths:
       - 'pu-plan/offline-session-rescue.js'
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/account-boundary.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - 'pu-plan/index.html'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'pu-plan/offline-session-rescue.js'
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/account-boundary.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - 'pu-plan/index.html'
@@ -35,6 +37,7 @@ jobs:
           set -euo pipefail
           node --check pu-plan/offline-session-rescue.js
           node --check pu-plan/session-recovery.js
+          node --check pu-plan/account-boundary.js
           node --check pu-plan/sw.js
           node --check pu-plan/pwa.js
       - name: Require authority-first login rescue
@@ -56,10 +59,11 @@ jobs:
           grep -Fq "if(exact(durable))candidates.push({snap:durable,durable:true})" "$f"
           grep -Fq "if(owner===id&&exact(local))candidates.push({snap:local,durable:false})" "$f"
           grep -Fq "if(best.durable&&owner!==id)rebindFromDurable(id,best.snap)" "$f"
-      - name: Require fresh installed shell
+      - name: Require current installed shell
         run: |
           set -euo pipefail
-          grep -Fq 'nolu-shell-20260911-login-rescue6' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260911_login_rescue6' pu-plan/pwa.js
-          grep -Fq '20260911-login-rescue6' pu-plan/index.html
+          grep -Fq 'nolu-shell-20260911-login-failover3' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260911_login_failover3' pu-plan/pwa.js
+          grep -Fq '20260911-login-failover3' pu-plan/index.html
           grep -Fq "'./offline-session-rescue.js'" pu-plan/sw.js
+          grep -Fq "'./account-boundary.js'" pu-plan/sw.js
