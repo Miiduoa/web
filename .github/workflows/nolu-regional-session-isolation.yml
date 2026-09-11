@@ -11,6 +11,7 @@ on:
       - 'pu-plan/guest-privacy.js'
       - 'pu-plan/durable-bridge.js'
       - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/provider-mesh.js'
       - '.github/workflows/nolu-regional-session-isolation.yml'
   pull_request:
     branches: [main]
@@ -22,6 +23,7 @@ on:
       - 'pu-plan/guest-privacy.js'
       - 'pu-plan/durable-bridge.js'
       - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/provider-mesh.js'
       - '.github/workflows/nolu-regional-session-isolation.yml'
   workflow_dispatch:
 
@@ -38,15 +40,18 @@ jobs:
       - name: Static session boundaries
         run: |
           set -euo pipefail
-          for f in pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud.js pu-plan/cloud-replication.js pu-plan/guest-privacy.js pu-plan/durable-bridge.js pu-plan/offline-session-rescue.js; do node --check "$f"; done
+          for f in pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud.js pu-plan/cloud-replication.js pu-plan/guest-privacy.js pu-plan/durable-bridge.js pu-plan/offline-session-rescue.js pu-plan/provider-mesh.js; do node --check "$f"; done
           grep -q 'pu-plan-api-v8' pu-plan/transport-bridge.js
           grep -q 'pu-plan-api-v8' pu-plan/resilience.js
           grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
           grep -q 'puplan_standby_session_v2' pu-plan/cloud.js
           grep -q 'sessionConflict' pu-plan/guest-privacy.js
+          grep -q 'sessionForMintEndpoint' pu-plan/provider-mesh.js
           ! grep -q 'puplan_portable_session_v1' pu-plan/transport-bridge.js
           ! grep -q 'puplan_portable_session_v1' pu-plan/resilience.js
           ! grep -q 'puplan_portable_session_v1' pu-plan/cloud-replication.js
+          ! grep -q 'PORTABLE_KEY' pu-plan/resilience.js
+          ! grep -q 'portableToken,PRIMARY,STANDBY' pu-plan/resilience.js
 
       - name: Install Playwright
         run: |
@@ -104,6 +109,7 @@ jobs:
               });
 
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>!!window.PUPLAN_CLOUD&&!!window.NOLU_RESILIENCE,{timeout:15000});
               await page.locator('[data-auth-tab="login"]').click();
               await page.locator('#loginEmail').waitFor({state:'visible'});
               await page.fill('#loginEmail','tokyo@example.invalid');
@@ -115,28 +121,33 @@ jobs:
                 standby:localStorage.getItem('puplan_standby_session_v2'),
                 preferred:localStorage.getItem('nolu_preferred_cloud_v1'),
                 owner:localStorage.getItem('puplan_course_owner'),
-                name:localStorage.getItem('puplan_name')
+                name:localStorage.getItem('puplan_name'),
+                resilienceUid:window.NOLU_RESILIENCE?.currentUid?.()
               }));
               console.log('TOKYO_LOGIN',state);
               assert(state.primary===null,'Tokyo login polluted Mumbai puplan_session');
               assert(state.standby===STANDBY,'Tokyo session was not stored in dedicated key');
               assert(state.preferred==='standby','Tokyo success did not become preferred cloud');
               assert(state.owner===uid&&state.name==='Tokyo User','Tokyo account cache was not hydrated');
+              assert(state.resilienceUid===uid,'resilience did not bind the Tokyo-only account owner');
 
               await page.reload({waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>!!window.PUPLAN_CLOUD&&!!window.NOLU_RESILIENCE,{timeout:15000});
               await page.waitForFunction(()=>document.body.innerText.includes('TOKYO COURSE'),{timeout:15000});
               state=await page.evaluate(()=>({
                 primary:localStorage.getItem('puplan_session'),
                 standby:localStorage.getItem('puplan_standby_session_v2'),
                 owner:localStorage.getItem('puplan_course_owner'),
                 courses:localStorage.getItem('puplan_courses'),
-                gateOff:document.querySelector('#authGate')?.classList.contains('off')
+                gateOff:document.querySelector('#authGate')?.classList.contains('off'),
+                resilienceUid:window.NOLU_RESILIENCE?.currentUid?.()
               }));
               console.log('TOKYO_RELOAD',state);
               assert(state.primary===null,'Reload copied Tokyo token into Mumbai key');
               assert(state.standby===STANDBY,'Reload lost Tokyo regional session');
               assert(state.owner===uid&&/TOKYO COURSE/.test(state.courses||''),'Reload lost Tokyo account cache');
               assert(state.gateOff===true,'Standby-only session was treated as signed out after reload');
+              assert(state.resilienceUid===uid,'Tokyo-only resilience owner was lost after reload');
 
               wrongRegionAuth=[];
               await page.evaluate(()=>window.PUPLAN_CLOUD.searchPeople('zz'));
