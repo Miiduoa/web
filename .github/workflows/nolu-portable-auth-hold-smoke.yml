@@ -1,0 +1,55 @@
+name: nolu portable auth hold smoke
+
+on:
+  push:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'supabase/functions/pu-plan-portable-v1/index.ts'
+      - '.github/workflows/nolu-portable-auth-hold-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'supabase/functions/pu-plan-portable-v1/index.ts'
+      - '.github/workflows/nolu-portable-auth-hold-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fail-closed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify configured mirrors are disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "PORTABLE_MINT_ENDPOINTS=Object.freeze([])" pu-plan/provider-config.js
+          grep -A6 "id:'neon-singapore'" pu-plan/provider-config.js | grep -Fq "enabled:false"
+      - name: Verify production mint endpoints are disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in \
+            https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1 \
+            https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1
+          do
+            code=$(curl -sS --connect-timeout 5 --max-time 10 -o /tmp/body -w '%{http_code}' -X POST "$url" || true)
+            echo "$url -> HTTP $code"
+            test "$code" = 410 || { echo "::error::portable mint endpoint must stay disabled (410)"; cat /tmp/body || true; exit 1; }
+          done
+      - name: Verify Neon mirror is not anonymously readable
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1/nolu_snapshots?select=uid&limit=1'
+          code=$(curl -sS --connect-timeout 5 --max-time 10 -o /tmp/neon-body -w '%{http_code}' "$url" || true)
+          echo "Neon anonymous -> HTTP $code"
+          case "$code" in
+            2*) echo '::error::Neon mirror unexpectedly allowed anonymous read'; cat /tmp/neon-body || true; exit 1 ;;
+            000) echo '::warning::Neon Data API was unreachable; anonymous exposure check inconclusive' ;;
+            *) : ;;
+          esac
