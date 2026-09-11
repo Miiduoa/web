@@ -1,0 +1,39 @@
+name: nolu render live health diagnostic
+
+on:
+  push:
+    branches:
+      - diag/nolu-render-live-health-20260911
+    paths:
+      - '.github/workflows/nolu-render-live-health-diag.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Probe Render mirror health
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://nolu-render-mirror.onrender.com/health'
+          code=$(curl --retry 4 --retry-delay 3 --connect-timeout 10 --max-time 30 -sS -o /tmp/health.json -w '%{http_code}' "$url")
+          echo "HTTP $code"
+          cat /tmp/health.json
+          echo
+          python3 - <<'PY'
+          import json
+          data=json.load(open('/tmp/health.json'))
+          print('provider=',data.get('provider'))
+          print('storage=',data.get('storage'))
+          print('configured=',data.get('configured'))
+          print('ok=',data.get('ok'))
+          print('status=',data.get('status'))
+          if data.get('configured') is not True or data.get('ok') is not True or data.get('status')!='available':
+              raise SystemExit('Render mirror is not backed by a live database yet')
+          PY
+          test "$code" = '200'
