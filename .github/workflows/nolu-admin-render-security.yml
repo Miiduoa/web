@@ -1,0 +1,47 @@
+name: nolu admin render security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin.js'
+      - '.github/workflows/nolu-admin-render-security.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin.js'
+      - '.github/workflows/nolu-admin-render-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  admin-render-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check admin JavaScript syntax
+        run: node --check pu-plan/admin.js
+      - name: Require fail-closed HTML escaping and no-store admin requests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/admin.js').read_text()
+          compact=''.join(s.split())
+          assert "constfallbackEsc=s=>String(s??'').replace(/[&<>\"']/g" in compact, 'admin fallback must HTML-escape untrusted strings'
+          assert "constesc=s=>app?.esc?.(String(s??''))||fallbackEsc(s)" in compact, 'admin escape path must fail closed'
+          assert "||String(s??'');" not in s, 'raw admin escaping fallback reintroduced'
+          assert "cache:'no-store'" in s, 'admin authenticated requests must explicitly disable caching'
+          for needle in [
+            'data-user="${esc(u.id)}"',
+            'data-remove-post="${esc(p.id)}"',
+            'data-restore-post="${esc(p.id)}"',
+            'data-chat="${esc(c.id)}"',
+            'data-remove-message="${esc(m.id)}"',
+          ]:
+            assert needle in s, f'unescaped admin attribute identifier: {needle}'
+          print('ADMIN_RENDER_SECURITY_OK')
+          PY
