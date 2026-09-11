@@ -3,12 +3,16 @@ name: nolu independent provider contract
 on:
   push:
     paths:
+      - 'package.json'
+      - 'netlify.toml'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/provider-mesh.js'
       - 'services/nolu-render-mirror/**'
       - '.github/workflows/nolu-independent-provider-contract.yml'
   pull_request:
     paths:
+      - 'package.json'
+      - 'netlify.toml'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/provider-mesh.js'
       - 'services/nolu-render-mirror/**'
@@ -26,6 +30,20 @@ jobs:
 
       - name: Syntax check portable mirror service
         run: node --check services/nolu-render-mirror/server.mjs
+
+      - name: Verify Netlify runtime supports installed Blobs SDK
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const assert=require('node:assert/strict');
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+          const netlify=fs.readFileSync('netlify.toml','utf8');
+          assert.equal(pkg.dependencies?.['@netlify/blobs'],'11.0.3','unexpected @netlify/blobs version; re-check its Node requirement');
+          assert.equal(pkg.engines?.node,'>=22.12.0','package engine must match @netlify/blobs 11.x minimum Node runtime');
+          assert.match(netlify,/NODE_VERSION\s*=\s*"22\.12\.0"/,'Netlify must run Node 22.12+ for @netlify/blobs 11.x');
+          console.log('Netlify Node runtime contract OK');
+          NODE
 
       - name: Verify independent-provider safety contract
         shell: bash

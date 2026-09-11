@@ -1,4 +1,3 @@
-import './guest-privacy.js';
 import './avatar-guard.js';
 import {authView} from './views/auth.js';
 import {shellView} from './views/shell.js';
@@ -6,13 +5,25 @@ import {dialogsView} from './views/dialogs.js';
 
 window.CAMPUS_SOCIAL_ENDPOINT='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 
-const root=document.querySelector('#app');
-root.innerHTML=authView()+shellView()+dialogsView();
-
 async function startModule(path){
   try{return await import(path)}
   catch(error){console.error(`nolu module failed: ${path}`,error);return null}
 }
+
+// Reconstruct the canonical device credential before any privacy/cache decision.
+// This keeps regional failover usable after an interrupted cloud-auth attempt.
+await import('./session-recovery.js');
+
+// Apply guest/account isolation before the application can render storage-backed data.
+await import('./guest-privacy.js');
+
+const root=document.querySelector('#app');
+root.innerHTML=authView()+shellView()+dialogsView();
+
+// Bind the current raw session to its exact durable IndexedDB snapshot before app.js
+// reads profile/schedule state. If no exact binding exists, the cache stays empty and
+// the authenticated cloud bootstrap below becomes the only source of account data.
+await import('./durable-bridge.js');
 
 await import('./app.js');
 const scheduleUI=await import('./features/schedule.js');
@@ -21,15 +32,6 @@ const scheduleUI=await import('./features/schedule.js');
 // fully separated from the schedule feature. This prevents it from switching a
 // saved classic timetable back to the old human presentation while it loads.
 localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule_presentation')||'human');
-
-// A cloud-auth timeout can clear only the canonical session while the separately
-// stored regional credential and exact IndexedDB snapshot remain valid. Recover
-// that canonical anchor before any durable/cloud bootstrap code reads it.
-await import('./session-recovery.js');
-
-// Restore the signed-in account's durable IndexedDB snapshot/outbox first. This
-// gives iPhone/PWA launches a second local copy before any cloud bootstrap runs.
-await import('./durable-bridge.js');
 
 // Some older modules still call the original API path directly. Give those
 // requests the same multi-path transport failover before resilience captures fetch.

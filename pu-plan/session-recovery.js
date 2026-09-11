@@ -28,13 +28,13 @@ function writeState(result){
 }
 
 function recover(){
+  // Guest mode is an explicit privacy choice and must win over every credential,
+  // including a leftover canonical token from an interrupted logout/older build.
+  if(localStorage.getItem('puplan_guest')==='1')return writeState({status:'guest',uid:'',recovered:false});
+
   const canonicalRaw=localStorage.getItem(CANONICAL_KEY)||'';
   const canonical=parse(canonicalRaw);
   if(canonical)return writeState({status:'canonical-ok',uid:canonical.uid,recovered:false});
-
-  // Guest mode is an explicit privacy choice. Never silently turn it back into
-  // an authenticated/local-rescue session merely because old credentials exist.
-  if(localStorage.getItem('puplan_guest')==='1')return writeState({status:'guest',uid:'',recovered:false});
 
   const primaryRaw=localStorage.getItem(PRIMARY_KEY)||'';
   const standbyRaw=localStorage.getItem(STANDBY_KEY)||'';

@@ -42,6 +42,9 @@ jobs:
         env:
           NODE_PATH: /tmp/nolu-durable/node_modules
         run: |
+          cat >pu-plan/__durable_seed_test.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>nolu durable seed</title>
+          HTML
           python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-http.log 2>&1 &
           cat >/tmp/nolu-durable/check.cjs <<'NODE'
           const {chromium}=require('playwright');
@@ -59,15 +62,48 @@ jobs:
               });
               const page=await context.newPage();
               const uid='22222222-2222-4222-8222-222222222222';
-              const payload=b64(JSON.stringify({v:4,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'durable-test'}));
-              await page.addInitScript(({uid,token})=>{
+              const issued=Math.floor(Date.now()/1000);
+              const payload=b64(JSON.stringify({v:4,uid,iat:issued,exp:issued+3600,cv:'durable-test'}));
+              const token=`${payload}.test-signature`;
+
+              // This represents a device that was authenticated on an earlier online
+              // visit. The exact raw-session fingerprint is the durable trust anchor;
+              // an unbound localStorage cache must never create this snapshot itself.
+              await page.goto('http://127.0.0.1:4173/__durable_seed_test.html',{waitUntil:'domcontentloaded'});
+              await page.evaluate(async({uid,token})=>{
                 localStorage.clear();sessionStorage.clear();
                 localStorage.setItem('puplan_session',token);
-                localStorage.setItem('puplan_course_owner',uid);
-                localStorage.setItem('puplan_name','Durable Test');
-                localStorage.setItem('puplan_username','durable_test');
-                localStorage.setItem('puplan_courses',JSON.stringify([{id:'old',name:'原始課程',day:1,start:1,end:2,teacher:'',room:'A101',color:'violet'}]));
-              },{uid,token:`${payload}.test-signature`});
+                const bytes=new TextEncoder().encode(token);
+                const digest=await crypto.subtle.digest('SHA-256',bytes);
+                const sessionFingerprint=[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+                const snapshot={
+                  uid,
+                  profile:{id:uid,display_name:'Durable Test',username:'durable_test',avatar_data:'',bio:'',discoverable:true},
+                  courses:[{id:'old',name:'原始課程',day:1,start:1,end:2,teacher:'',room:'A101',color:'violet'}],
+                  meta:{school:'Test School'},
+                  savedAt:Date.now(),revision:Date.now(),sessionFingerprint
+                };
+                await new Promise((resolve,reject)=>{
+                  const req=indexedDB.open('nolu-resilience-v2',1);
+                  req.onupgradeneeded=()=>{
+                    const db=req.result;
+                    if(!db.objectStoreNames.contains('snapshots'))db.createObjectStore('snapshots',{keyPath:'uid'});
+                    if(!db.objectStoreNames.contains('outbox')){
+                      const store=db.createObjectStore('outbox',{keyPath:'id'});
+                      store.createIndex('by_uid','uid',{unique:false});
+                      store.createIndex('by_uid_changed',['uid','changedAt'],{unique:false});
+                    }
+                  };
+                  req.onerror=()=>reject(req.error);
+                  req.onsuccess=()=>{
+                    const db=req.result,tx=db.transaction('snapshots','readwrite');
+                    tx.objectStore('snapshots').put(snapshot);
+                    tx.oncomplete=()=>{db.close();resolve()};
+                    tx.onerror=()=>reject(tx.error);
+                  };
+                });
+              },{uid,token});
+
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.()===true&&window.NOLU_DURABLE?.state?.ready===true,{timeout:15000});
               await page.evaluate(()=>window.PUPLAN_APP.setCoursesFromUser([{id:'new',name:'Durable 新課程',day:2,start:3,end:4,teacher:'',room:'B202',color:'blue'}]));
@@ -95,6 +131,7 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
           timeout 90s node /tmp/nolu-durable/check.cjs
+          rm -f pu-plan/__durable_seed_test.html
       - name: Verify five-path legacy API failover including Tokyo
         env:
           NODE_PATH: /tmp/nolu-durable/node_modules
