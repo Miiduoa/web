@@ -1,13 +1,15 @@
 const PRIMARY_REF='hrrmkrayvrgnwcroyttp';
 const STANDBY_REF='ltfurqaspqsvswmebyzw';
 const PRIMARY_SYNC=`https://${PRIMARY_REF}.supabase.co/functions/v1/pu-plan-replica-v3`;
+const FAILBACK_SYNC=`https://${STANDBY_REF}.supabase.co/functions/v1/pu-plan-failback-v1`;
 const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
 const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const DIRTY_PREFIX='nolu_standby_dirty_v3:';
 const SEEDED_PREFIX='nolu_standby_seeded_v3:';
 const state={
-  version:'20260911-replica3-failback-guard',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,
-  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false,manualReconcileRequired:false
+  version:'20260911-replica3-failback2',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,
+  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false,manualReconcileRequired:false,
+  failbackPending:false,lastFailbackAt:0,lastFailbackError:''
 };
 let debounceTimer=null;
 
@@ -21,7 +23,7 @@ function decodeV4(raw){
     return data;
   }catch{return null}
 }
-function uid(){return String(decodeV4(canonicalToken())?.uid||'')}
+function uid(){return String(decodeV4(canonicalToken())?.uid||decodeV4(localStorage.getItem(STANDBY_SESSION_KEY)||'')?.uid||'')}
 function activeTier(){
   const api=String(window.NOLU_RESILIENCE?.state?.activeApi||'');
   if(api.includes(STANDBY_REF))return'standby';
@@ -61,34 +63,44 @@ function storeStandbyToken(raw){
 }
 function dirtyKey(id=uid()){return id?`${DIRTY_PREFIX}${id}`:''}
 function hasStandbyDirty(id=uid()){const key=dirtyKey(id);return !!key&&localStorage.getItem(key)==='1'}
-function requireManualReconcile(reason='standby-dirty'){
-  state.manualReconcileRequired=true;state.peerSynced=false;
-  state.lastError='standby has unsafely divergent changes; manual reconciliation required';
+function requireManualReconcile(reason='standby-conflict'){
+  state.manualReconcileRequired=true;state.peerSynced=false;state.failbackPending=true;
+  state.lastError='主雲端與東京備援都有較新的變更，已停止自動覆寫';
   document.dispatchEvent(new CustomEvent('nolu:replica-manual-reconcile-required',{detail:{uid:uid(),reason,at:Date.now()}}));
 }
-function markStandbyDirty(){
-  const id=uid();if(!id||activeTier()!=='standby')return false;
-  localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1');requireManualReconcile('standby-write');return true;
+function markStandbyDirty(force=false){
+  const id=uid();if(!id||(!force&&activeTier()!=='standby'))return false;
+  localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1');state.failbackPending=true;state.peerSynced=false;return true;
+}
+function clearStandbyDirty(id=uid()){
+  const key=dirtyKey(id);if(key)localStorage.removeItem(key);
+  state.failbackPending=false;state.manualReconcileRequired=false;state.lastFailbackError='';
 }
 function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
+
+async function reconcileFromStandby(reason='standby-failback'){
+  const id=uid(),session=sessionFor('standby');
+  if(!id||!session||!hasStandbyDirty(id)||state.busy)return false;
+  state.busy=true;state.lastReason=reason;state.lastTier='standby';state.lastAttemptAt=Date.now();state.failbackPending=true;
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),15000);
+  try{
+    const response=await fetch(FAILBACK_SYNC,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session}`},body:JSON.stringify({action:'reconcile'}),cache:'no-store',signal:ctrl.signal});
+    const data=await response.json().catch(()=>({}));
+    if(response.status===409||data.conflict===true){state.lastFailbackError=data.message||'FAILBACK_CONFLICT';requireManualReconcile('primary-advanced');return false}
+    if(!response.ok||data.reconciled!==true){state.lastFailbackError=data.message||data.error||`HTTP ${response.status}`;state.lastError=state.lastFailbackError;return false}
+    clearStandbyDirty(id);state.lastFailbackAt=Date.now();state.lastSuccessAt=state.lastFailbackAt;state.lastPeerSyncAt=state.lastFailbackAt;state.lastError='';state.peerSynced=true;
+    document.dispatchEvent(new CustomEvent('nolu:replica-failback-synced',{detail:{uid:id,tier:'standby',peerTier:'primary',at:state.lastFailbackAt}}));
+    return true;
+  }catch(error){state.lastFailbackError=String(error?.message||error||'failback unavailable');state.lastError=state.lastFailbackError;return false}
+  finally{clearTimeout(timer);state.busy=false}
+}
 
 async function sync(reason='periodic',force=false){
   const id=uid();
   if(!id||localStorage.getItem('puplan_guest')==='1'||state.busy)return false;
+  if(hasStandbyDirty(id))return reconcileFromStandby(reason);
   const tier=activeTier();state.lastTier=tier;state.lastReason=reason;
-  if(tier!=='primary'){
-    // Replica v3 intentionally supports trusted primary -> standby replication only.
-    // Never send a Tokyo session to the primary endpoint or pretend reverse replication succeeded.
-    state.peerSynced=false;
-    if(hasStandbyDirty(id))requireManualReconcile('standby-dirty');
-    else state.lastError='standby active; reverse replication is intentionally disabled';
-    return false;
-  }
-  if(hasStandbyDirty(id)){
-    // A previous Tokyo-side write is newer/independent state. Do not overwrite it
-    // merely because Mumbai became reachable again; explicit conflict resolution is required.
-    requireManualReconcile('primary-failback-blocked');return false;
-  }
+  if(tier!=='primary'){state.peerSynced=true;state.lastError='';return true}
   seedPrimarySessionFromCanonical();
   const session=primarySession();if(!session)return false;
   const at=Date.now();if(!force&&at-state.lastAttemptAt<4000)return false;
@@ -112,8 +124,9 @@ async function sync(reason='periodic',force=false){
   finally{clearTimeout(timer);state.busy=false}
 }
 
-document.addEventListener('puplan:courses-changed',()=>{markStandbyDirty();schedule('schedule-change',1400)});
-document.addEventListener('puplan:profile-changed',()=>{markStandbyDirty();schedule('profile-change',900)});
+document.addEventListener('puplan:courses-changed',()=>{if(activeTier()==='standby')markStandbyDirty();schedule('schedule-change',1400)});
+document.addEventListener('puplan:profile-changed',()=>{if(activeTier()==='standby')markStandbyDirty();schedule('profile-change',900)});
+document.addEventListener('nolu:standby-write',event=>{markStandbyDirty(true);schedule(`standby-write:${event.detail?.action||'unknown'}`,250)});
 document.addEventListener('nolu:session-rotated',()=>schedule('session-rotated',250));
 document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')schedule('connectivity-online',450)});
 document.addEventListener('nolu:peer-session-needed',()=>schedule('peer-session-needed',50));
@@ -125,6 +138,6 @@ setInterval(()=>void sync('periodic'),30000);
 seedPrimarySessionFromCanonical();
 if(window.PUPLAN_CLOUD?.isSignedIn?.()||uid())schedule('startup',400);
 window.NOLU_REPLICATION={
-  state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,hasStandbyDirty,
+  state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,hasStandbyDirty,reconcileFromStandby,
   sessionFor,seedPrimarySessionFromCanonical,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
 };
