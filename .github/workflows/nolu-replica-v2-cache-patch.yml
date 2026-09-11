@@ -1,0 +1,41 @@
+name: nolu replica v2 cache patch
+
+on:
+  push:
+    branches: [fix/nolu-replica-v2-client]
+    paths:
+      - '.github/workflows/nolu-replica-v2-cache-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-replica-v2-client
+      - name: Rotate installed PWA reload key
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('pu-plan/pwa.js')
+          s=p.read_text()
+          old='nolu_shell_reload_20260911_mesh2'
+          new='nolu_shell_reload_20260911_replica2'
+          if old not in s: raise SystemExit('old reload key missing')
+          p.write_text(s.replace(old,new))
+          PY
+          node --check pu-plan/pwa.js
+          grep -q 'nolu_shell_reload_20260911_replica2' pu-plan/pwa.js
+      - name: Commit PWA cache refresh
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pu-plan/pwa.js
+          git commit -m 'fix(nolu): force PWA reload for replica v2'
+          git push origin HEAD:fix/nolu-replica-v2-client
