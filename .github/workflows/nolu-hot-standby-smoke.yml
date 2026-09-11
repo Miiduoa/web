@@ -55,7 +55,8 @@ jobs:
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const b64=s=>Buffer.from(s).toString('base64url');
           const uid='55555555-5555-4555-8555-555555555555';
-          const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
+          const issuedAt=Math.floor(Date.now()/1000);
+          const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:issuedAt,exp:issuedAt+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
           const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
           (async()=>{
             const browser=await chromium.launch({headless:true});
