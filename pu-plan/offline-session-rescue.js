@@ -26,25 +26,36 @@ async function fingerprint(raw){
     return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
   }catch{return''}
 }
+function rebindFromDurable(id,snap){
+  const p=snap?.profile||{};
+  localStorage.setItem('puplan_course_owner',id);
+  if(p.display_name)localStorage.setItem('puplan_name',String(p.display_name).slice(0,80));else localStorage.removeItem('puplan_name');
+  if(p.username!==undefined)localStorage.setItem('puplan_username',String(p.username).slice(0,24));else localStorage.removeItem('puplan_username');
+  if(p.bio!==undefined)localStorage.setItem('puplan_bio',String(p.bio).slice(0,120));else localStorage.removeItem('puplan_bio');
+  if(p.discoverable!==undefined)localStorage.setItem('puplan_discoverable',p.discoverable===false?'0':'1');else localStorage.removeItem('puplan_discoverable');
+  if(p.avatar_data&&String(p.avatar_data).length<=180000)localStorage.setItem('puplan_avatar',String(p.avatar_data));else localStorage.removeItem('puplan_avatar');
+  if(Array.isArray(snap?.courses))localStorage.setItem('puplan_courses',JSON.stringify(snap.courses.slice(0,80)));else localStorage.removeItem('puplan_courses');
+  if(snap?.meta&&typeof snap.meta==='object')localStorage.setItem('puplan_schedule_meta',JSON.stringify(snap.meta));else localStorage.removeItem('puplan_schedule_meta');
+}
 async function trustedSnapshot(){
   const raw=localStorage.getItem('puplan_session')||'';const session=parseSession(raw);if(!session)return null;
   if(session.exp*1000+MAX_EXPIRED_GRACE_MS<Date.now())return null;
   const id=String(session.uid),owner=localStorage.getItem('puplan_course_owner')||'';
-  if(owner&&owner!==id)return null;
   const fp=await fingerprint(raw);if(!fp)return null;
   let durable=null;try{durable=await window.NOLU_DURABLE?.getSnapshot?.(id)}catch{}
   const local=safeJson(localStorage.getItem(`nolu_account_snapshot_v1:${id}`),null);
   const exact=x=>x?.uid===id&&x?.profile?.id===id&&x?.sessionFingerprint===fp&&Date.now()-Number(x?.savedAt||0)<=MAX_SNAPSHOT_AGE_MS;
   const candidates=[];
+  // IndexedDB is session-fingerprint bound. An exact durable match is allowed to
+  // repair a stale/wrong owner key left by a prior failed auth/cache transition.
   if(exact(durable))candidates.push({snap:durable,durable:true});
-  // The localStorage mirror is accepted only when the account owner binding still
-  // exists. If that binding was purged by an uncertain cloud-auth response, only
-  // the exact IndexedDB session fingerprint may restore the owner.
+  // localStorage is not allowed to repair ownership; it is trusted only if the
+  // owner already matches the signed session uid.
   if(owner===id&&exact(local))candidates.push({snap:local,durable:false});
   candidates.sort((a,b)=>Number(b.snap?.savedAt||0)-Number(a.snap?.savedAt||0));
   const best=candidates[0];if(!best)return null;
-  if(!owner&&best.durable)localStorage.setItem('puplan_course_owner',id);
-  return {session,raw,snap:best.snap};
+  if(best.durable&&owner!==id)rebindFromDurable(id,best.snap);
+  return {session,raw,snap:best.snap,ownerRebound:best.durable&&owner!==id};
 }
 function queue(uid,action,body,snap){
   const key=`nolu_pending_mutations_v1:${uid}`,q=safeJson(localStorage.getItem(key),{})||{},changedAt=Date.now();
