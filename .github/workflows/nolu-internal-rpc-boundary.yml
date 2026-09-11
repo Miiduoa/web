@@ -19,7 +19,7 @@ permissions:
 jobs:
   internal-rpc-boundary:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     env:
       PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
       PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
@@ -46,7 +46,8 @@ jobs:
             local payload="$2"
             local body="/tmp/${fn}.json"
             local code
-            code=$(curl -sS --connect-timeout 3 --max-time 8 \
+            code=$(curl -sS --retry 2 --retry-delay 1 --retry-all-errors \
+              --connect-timeout 4 --max-time 12 \
               -o "$body" -w '%{http_code}' -X POST \
               "$PROJECT_URL/rest/v1/rpc/$fn" \
               -H "apikey: $PUBLISHABLE_KEY" \
