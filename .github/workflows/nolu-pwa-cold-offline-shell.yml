@@ -1,0 +1,102 @@
+name: nolu PWA cold offline shell
+
+on:
+  push:
+    branches: [test/nolu-pwa-cold-offline-shell-20260911, main]
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/avatar-guard.js'
+      - 'pu-plan/regional-credential-guard.js'
+      - '.github/workflows/nolu-pwa-cold-offline-shell.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/avatar-guard.js'
+      - 'pu-plan/regional-credential-guard.js'
+      - '.github/workflows/nolu-pwa-cold-offline-shell.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cold-offline-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify top-level local modules are precached
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          main=Path('pu-plan/main.js').read_text()
+          sw=Path('pu-plan/sw.js').read_text()
+          imports=set(re.findall(r"(?:import\s+(?:[^'\"]+?\s+from\s+)?|import\()\s*['\"](\./[^'\"]+)['\"]",main))
+          local={x for x in imports if x.endswith('.js')}
+          missing=sorted(x for x in local if repr(x) not in sw and f'"{x}"' not in sw and f"'{x}'" not in sw)
+          assert not missing, f'main.js local modules missing from service-worker shell: {missing}'
+          print('PWA_TOP_LEVEL_PRECACHE_OK', sorted(local))
+          PY
+      - name: Install Playwright
+        if: always()
+        run: |
+          npm --prefix /tmp/nolu-pwa-cold init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-pwa-cold install playwright >/dev/null 2>&1
+          cd /tmp/nolu-pwa-cold && npx playwright install --with-deps chromium >/dev/null
+      - name: Fresh service worker must boot app after immediate offline reopen
+        if: always()
+        env:
+          NODE_PATH: /tmp/nolu-pwa-cold/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-pwa-cold-http.log 2>&1 &
+          cat >/tmp/nolu-pwa-cold/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const first=await context.newPage();
+              const initialErrors=[];
+              first.on('pageerror',e=>initialErrors.push(String(e)));
+              await first.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await first.waitForFunction(()=>!!window.PUPLAN_APP,{timeout:15000});
+              await first.waitForFunction(()=>navigator.serviceWorker?.controller,{timeout:20000});
+              await first.evaluate(async()=>{const reg=await navigator.serviceWorker.ready;if(reg.active?.state!=='activated')await new Promise(r=>setTimeout(r,300));});
+              const cacheState=await first.evaluate(async()=>({keys:await caches.keys(),controlled:!!navigator.serviceWorker.controller}));
+              console.log('PWA_INITIAL',cacheState,'ERRORS',initialErrors);
+              await first.close();
+
+              await context.setOffline(true);
+              const second=await context.newPage();
+              const errors=[];
+              const failures=[];
+              second.on('pageerror',e=>errors.push(String(e)));
+              second.on('requestfailed',r=>failures.push({url:r.url(),error:r.failure()?.errorText||''}));
+              const response=await second.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000}).catch(()=>null);
+              await second.waitForTimeout(1200);
+              const state=await second.evaluate(()=>({
+                app:!!window.PUPLAN_APP,
+                regional:!!window.NOLU_REGIONAL_CREDENTIALS,
+                avatarGuard:!!document.documentElement,
+                rootChildren:document.querySelector('#app')?.children?.length||0,
+                controlled:!!navigator.serviceWorker?.controller,
+                body:(document.body?.innerText||'').slice(0,200)
+              })).catch(()=>({app:false,regional:false,rootChildren:0,controlled:false,body:''}));
+              console.log('PWA_OFFLINE_REOPEN',{status:response?.status?.()||0,state,errors,failures});
+              assert(response&&response.ok(),'offline navigation was not served from service-worker cache');
+              assert(state.controlled,'offline reopen is not controlled by the service worker');
+              assert(state.app&&state.rootChildren>0,'app shell did not boot on immediate cold-offline reopen');
+              assert(state.regional,'regional credential guard was unavailable offline');
+              assert(!errors.some(x=>/module|mime|unexpected token|html/i.test(x)),`offline module load failed: ${errors.join(' | ')}`);
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 100s node /tmp/nolu-pwa-cold/check.cjs
