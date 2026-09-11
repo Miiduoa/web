@@ -2,18 +2,22 @@ import {putSnapshot} from './durable-store.js';
 import {
   PROVIDER_MESH_VERSION,
   PROVIDER_MIRRORS,
+  PORTABLE_MINT_ENDPOINTS,
   REQUIRED_REMOTE_PROVIDERS,
   MIRROR_READ_QUORUM
 } from './provider-config.js';
 
 const encoder=new TextEncoder();
+const PORTABLE_KEY='puplan_portable_session_v1';
 const state={
   version:PROVIDER_MESH_VERSION,
   busy:false,
   recovering:false,
+  minting:false,
   lastAttemptAt:0,
   lastSuccessAt:0,
   lastRecoveryAt:0,
+  lastMintAt:0,
   lastError:'',
   lastReason:'',
   configuredProviders:[],
@@ -24,24 +28,67 @@ const state={
   requiredRemoteProviders:REQUIRED_REMOTE_PROVIDERS,
   readQuorum:MIRROR_READ_QUORUM
 };
-let debounceTimer=null;
+let debounceTimer=null,mintPromise=null;
 
 function clean(v,n=160){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,n)}
-function safeJson(raw,fallback=null){try{return JSON.parse(raw)}catch{return fallback}}
 function sessionToken(){return localStorage.getItem('puplan_session')||''}
-function portableToken(){return localStorage.getItem('puplan_portable_session_v1')||''}
 function isGuest(){return localStorage.getItem('puplan_guest')==='1'}
+function decodePart(part){
+  try{
+    const normalized=String(part||'').replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(String(part||'').length/4)*4,'=');
+    return JSON.parse(decodeURIComponent(escape(atob(normalized))));
+  }catch{return null}
+}
 function tokenUid(raw=sessionToken()){
   try{
     const [payload,signature,...extra]=String(raw||'').split('.');
     if(!payload||!signature||extra.length)return'';
-    const normalized=payload.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(payload.length/4)*4,'=');
-    const data=JSON.parse(decodeURIComponent(escape(atob(normalized))));
+    const data=decodePart(payload);
     if(data?.v!==4||!data?.uid||!data?.iat||!data?.exp||data.exp*1000<=Date.now())return'';
     if(data.iat*1000>Date.now()+5*60*1000)return'';
     return String(data.uid);
   }catch{return''}
 }
+function portableToken(minTtlSeconds=60){
+  const raw=localStorage.getItem(PORTABLE_KEY)||'';
+  const [header,payload,signature,...extra]=raw.split('.');
+  if(!header||!payload||!signature||extra.length)return'';
+  const data=decodePart(payload),now=Math.floor(Date.now()/1000);
+  if(data?.v!==1||!data?.sub||data?.aud!=='nolu-provider-mesh'||!Number.isFinite(data?.exp)||data.exp<=now+minTtlSeconds)return'';
+  if(String(data.sub)!==tokenUid())return'';
+  return raw;
+}
+async function mintPortableToken(force=false){
+  if(isGuest()||!tokenUid())return'';
+  if(!force){const current=portableToken(300);if(current)return current}
+  if(mintPromise)return mintPromise;
+  mintPromise=(async()=>{
+    state.minting=true;
+    const source=sessionToken();
+    for(const endpoint of PORTABLE_MINT_ENDPOINTS||[]){
+      const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),3500);
+      try{
+        const response=await fetch(endpoint,{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Authorization':`Bearer ${source}`},
+          body:'{}',
+          cache:'no-store',
+          signal:ctrl.signal
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok||!data?.portable_token)continue;
+        localStorage.setItem(PORTABLE_KEY,String(data.portable_token));
+        state.lastMintAt=Date.now();
+        document.dispatchEvent(new CustomEvent('nolu:portable-session',{detail:{at:state.lastMintAt}}));
+        return portableToken(30)||String(data.portable_token);
+      }catch{}
+      finally{clearTimeout(timer)}
+    }
+    return'';
+  })().finally(()=>{state.minting=false;mintPromise=null});
+  return mintPromise;
+}
+async function ensurePortableToken(){return portableToken(120)||await mintPortableToken(false)}
 async function fingerprint(raw=sessionToken()){
   if(!raw||!crypto?.subtle)return'';
   try{
@@ -58,7 +105,7 @@ function mirrors(){
     if(!item?.enabled||!item.id||!item.provider||!validEndpoint(item.endpoint))return false;
     if(item.provider==='supabase'||seen.has(item.provider))return false;
     seen.add(item.provider);return true;
-  }).map(item=>({...item,id:clean(item.id,60),provider:clean(item.provider,40),endpoint:String(item.endpoint)}));
+  }).map(item=>({...item,id:clean(item.id,60),provider:clean(item.provider,40),kind:clean(item.kind||'action-api',30),endpoint:String(item.endpoint).replace(/\/$/,'')}));
 }
 function localRevision(snap){return Math.max(Number(snap?.revision||0),Number(snap?.savedAt||0),0)}
 function sanitizeProfile(profile,uid){
@@ -112,24 +159,62 @@ function refreshHealthy(externalHealthy=[]){
   document.documentElement.dataset.noluProviderTarget=String(REQUIRED_REMOTE_PROVIDERS);
   document.dispatchEvent(new CustomEvent('nolu:provider-mesh',{detail:{...state}}));
 }
-async function requestMirror(mirror,action,payload={},timeout=4200){
-  const auth=portableToken();if(!auth)throw new Error('portable session unavailable');
-  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeout);
-  try{
-    const response=await fetch(mirror.endpoint,{
+async function postgrestMirror(mirror,action,payload,auth,ctrl){
+  const table=`${mirror.endpoint}/nolu_snapshots`;
+  let response;
+  if(action==='put_snapshot'){
+    const snapshot=payload?.snapshot||{};
+    response=await fetch(`${table}?on_conflict=uid`,{
       method:'POST',
       headers:{
         'Content-Type':'application/json',
         'Authorization':`Bearer ${auth}`,
+        'Prefer':'resolution=merge-duplicates,return=representation',
         'X-Nolu-Mesh-Version':PROVIDER_MESH_VERSION
       },
-      body:JSON.stringify({action,...payload}),
-      cache:'no-store',
-      signal:ctrl.signal
+      body:JSON.stringify({uid:snapshot.uid,revision:Number(payload.revision||snapshot.revision||0),digest:String(payload.digest||''),snapshot,updated_at:new Date().toISOString()}),
+      cache:'no-store',signal:ctrl.signal
     });
-    const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data?.message||`HTTP ${response.status}`);
-    return data;
+    const data=await response.json().catch(()=>[]);
+    if(!response.ok)throw Object.assign(new Error(data?.message||data?.details||`HTTP ${response.status}`),{status:response.status});
+    return {ok:true,stored:true,row:Array.isArray(data)?data[0]:data};
+  }
+  if(action==='get_snapshot'){
+    const uid=encodeURIComponent(String(payload?.uid||''));
+    response=await fetch(`${table}?uid=eq.${uid}&select=uid,revision,digest,snapshot&limit=1`,{
+      method:'GET',headers:{'Authorization':`Bearer ${auth}`,'Accept':'application/json','X-Nolu-Mesh-Version':PROVIDER_MESH_VERSION},cache:'no-store',signal:ctrl.signal
+    });
+    const data=await response.json().catch(()=>[]);
+    if(!response.ok)throw Object.assign(new Error(data?.message||data?.details||`HTTP ${response.status}`),{status:response.status});
+    const row=Array.isArray(data)?data[0]:null;
+    return {ok:true,snapshot:row?.snapshot||null,digest:row?.digest||'',revision:Number(row?.revision||0)};
+  }
+  throw new Error('unsupported mirror action');
+}
+async function requestMirror(mirror,action,payload={},timeout=4200){
+  let auth=await ensurePortableToken();if(!auth)throw new Error('portable session unavailable');
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeout);
+  try{
+    try{
+      if(mirror.kind==='postgrest')return await postgrestMirror(mirror,action,payload,auth,ctrl);
+      const response=await fetch(mirror.endpoint,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${auth}`,'X-Nolu-Mesh-Version':PROVIDER_MESH_VERSION},
+        body:JSON.stringify({action,...payload}),cache:'no-store',signal:ctrl.signal
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw Object.assign(new Error(data?.message||`HTTP ${response.status}`),{status:response.status});
+      return data;
+    }catch(error){
+      if(error?.status!==401)throw error;
+      localStorage.removeItem(PORTABLE_KEY);
+      auth=await mintPortableToken(true);if(!auth)throw error;
+      if(mirror.kind==='postgrest')return await postgrestMirror(mirror,action,payload,auth,ctrl);
+      const response=await fetch(mirror.endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${auth}`,'X-Nolu-Mesh-Version':PROVIDER_MESH_VERSION},body:JSON.stringify({action,...payload}),cache:'no-store',signal:ctrl.signal});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(data?.message||`HTTP ${response.status}`);
+      return data;
+    }
   }finally{clearTimeout(timer)}
 }
 async function currentSnapshot(){
@@ -140,9 +225,10 @@ async function currentSnapshot(){
 }
 async function sync(reason='periodic',force=false){
   const external=recordConfigured();
-  if(state.busy||!external.length||isGuest()||!portableToken())return false;
+  if(state.busy||!external.length||isGuest()||!tokenUid())return false;
   const at=Date.now();if(!force&&at-state.lastAttemptAt<3500)return false;
   const snap=await currentSnapshot();if(!snap)return false;
+  const auth=await ensurePortableToken();if(!auth){state.lastError='portable session unavailable';return false}
   state.busy=true;state.lastAttemptAt=at;state.lastReason=reason;state.lastError='';
   const digest=await digestSnapshot(snap),healthy=[];
   try{
@@ -167,7 +253,8 @@ async function readMirror(mirror,uid,sessionFingerprint){
 }
 async function recover(reason='startup'){
   const external=recordConfigured();
-  if(state.recovering||external.length<MIRROR_READ_QUORUM||isGuest()||!portableToken())return false;
+  if(state.recovering||external.length<MIRROR_READ_QUORUM||isGuest()||!tokenUid())return false;
+  if(!await ensurePortableToken())return false;
   const uid=tokenUid();if(!uid)return false;
   const fp=await fingerprint();if(!fp)return false;
   state.recovering=true;state.lastReason=`recover:${reason}`;state.lastError='';
@@ -183,9 +270,7 @@ async function recover(reason='startup'){
       const g=groups.get(key)||{snapshot:row.snapshot,digest:row.digest,providers:new Set()};
       g.providers.add(row.mirror.provider);groups.set(key,g);
     }
-    const winner=[...groups.values()]
-      .filter(g=>g.providers.size>=MIRROR_READ_QUORUM)
-      .sort((a,b)=>localRevision(b.snapshot)-localRevision(a.snapshot))[0];
+    const winner=[...groups.values()].filter(g=>g.providers.size>=MIRROR_READ_QUORUM).sort((a,b)=>localRevision(b.snapshot)-localRevision(a.snapshot))[0];
     if(!winner)return false;
     let local=null;try{local=await window.NOLU_DURABLE?.getSnapshot?.(uid)}catch{}
     const current=sanitizeSnapshot(local,uid,fp);
@@ -196,36 +281,31 @@ async function recover(reason='startup'){
     document.dispatchEvent(new CustomEvent('nolu:provider-recovered',{detail:{uid,revision:winner.snapshot.revision,providers:[...winner.providers]}}));
     if(!window.PUPLAN_CLOUD?.isSignedIn?.()){
       const key='nolu_provider_recovery_reload_v1';
-      if(sessionStorage.getItem(key)!=='1'){
-        sessionStorage.setItem(key,'1');setTimeout(()=>location.reload(),60);
-      }
+      if(sessionStorage.getItem(key)!=='1'){sessionStorage.setItem(key,'1');setTimeout(()=>location.reload(),60)}
     }else sessionStorage.removeItem('nolu_provider_recovery_reload_v1');
     return true;
   }catch(error){state.lastError=String(error?.message||error||'provider recovery failed');return false}
   finally{state.recovering=false}
 }
-function schedule(reason,delay=900){
-  clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay);
-}
+function schedule(reason,delay=900){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
 
 recordConfigured();refreshHealthy([]);
 document.addEventListener('puplan:courses-changed',()=>schedule('schedule-change',900));
 document.addEventListener('puplan:profile-changed',()=>schedule('profile-change',700));
-document.addEventListener('nolu:session-rotated',()=>{schedule('session-rotated',150);setTimeout(()=>void recover('session-rotated'),250)});
+document.addEventListener('nolu:session-rotated',()=>{void mintPortableToken(true);schedule('session-rotated',150);setTimeout(()=>void recover('session-rotated'),250)});
 document.addEventListener('nolu:connectivity',e=>{if(e.detail?.mode==='online')schedule('connectivity-online',250);refreshHealthy([])});
 addEventListener('online',()=>{schedule('browser-online',250);setTimeout(()=>void recover('browser-online'),300)});
 addEventListener('focus',()=>{schedule('focus',500);setTimeout(()=>void recover('focus'),550)});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){schedule('visible',500);setTimeout(()=>void recover('visible'),550)}});
 setInterval(()=>void sync('periodic'),45000);
 
-if(tokenUid()&&!isGuest()){
-  setTimeout(()=>void recover('startup').then(()=>sync('startup',true)),350);
-}
+if(tokenUid()&&!isGuest())setTimeout(()=>void mintPortableToken(false).then(()=>recover('startup')).then(()=>sync('startup',true)),350);
 
 window.NOLU_PROVIDER_MESH={
   state,
   sync:(reason='manual',force=true)=>sync(reason,force),
   recover,
+  mintPortableToken,
   configured:()=>recordConfigured(),
   target:REQUIRED_REMOTE_PROVIDERS
 };
