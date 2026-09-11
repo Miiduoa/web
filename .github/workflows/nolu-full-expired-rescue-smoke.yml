@@ -1,0 +1,155 @@
+name: nolu full expired rescue smoke
+
+on:
+  push:
+    branches: [test/nolu-full-expired-rescue-20260911]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/transport-bridge.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-full-expired-rescue-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/transport-bridge.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-full-expired-rescue-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  full-expired-rescue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax check
+        run: |
+          set -euo pipefail
+          node --check pu-plan/session-recovery.js
+          node --check pu-plan/durable-bridge.js
+          node --check pu-plan/offline-session-rescue.js
+          node --check pu-plan/transport-bridge.js
+          node --check pu-plan/resilience.js
+          node --check pu-plan/cloud.js
+          node --check pu-plan/main.js
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-full-rescue init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-full-rescue install playwright >/dev/null 2>&1
+          cd /tmp/nolu-full-rescue && npx playwright install --with-deps chromium >/dev/null
+      - name: Verify full app hides auth gate and keeps expired token local-only
+        env:
+          NODE_PATH: /tmp/nolu-full-rescue/node_modules
+        run: |
+          set -euo pipefail
+          cat >pu-plan/__expired_rescue_seed.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>seed</title><body>seed</body>
+          HTML
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-full-rescue-http.log 2>&1 &
+          cat >/tmp/nolu-full-rescue/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const uid='88888888-8888-4888-8888-888888888888';
+          const now=Math.floor(Date.now()/1000);
+          const expired=`${b64(JSON.stringify({v:4,uid,iat:now-26*3600,exp:now-3600,cv:'full-rescue'}))}.${b64('expired-signature')}`;
+          const origin='http://127.0.0.1:4173';
+
+          async function fingerprint(page,raw){
+            return page.evaluate(async raw=>{
+              const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));
+              return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+            },raw);
+          }
+          async function putSnapshot(page,snapshot){
+            await page.evaluate(snapshot=>new Promise((resolve,reject)=>{
+              const req=indexedDB.open('nolu-resilience-v2',1);
+              req.onupgradeneeded=()=>{
+                const db=req.result;
+                if(!db.objectStoreNames.contains('snapshots'))db.createObjectStore('snapshots',{keyPath:'uid'});
+                if(!db.objectStoreNames.contains('outbox')){
+                  const store=db.createObjectStore('outbox',{keyPath:'id'});
+                  store.createIndex('by_uid','uid',{unique:false});
+                  store.createIndex('by_uid_changed',['uid','changedAt'],{unique:false});
+                }
+              };
+              req.onerror=()=>reject(req.error);
+              req.onsuccess=()=>{
+                const db=req.result,tx=db.transaction('snapshots','readwrite');
+                tx.objectStore('snapshots').put(snapshot);
+                tx.oncomplete=()=>{db.close();resolve(true)};
+                tx.onerror=()=>reject(tx.error);
+              };
+            }),snapshot);
+          }
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const outbound=[];
+              await context.route('https://*.supabase.co/**',async route=>{
+                const req=route.request(),auth=req.headers()['authorization']||'';
+                outbound.push({url:req.url(),method:req.method(),auth});
+                return route.fulfill({status:503,contentType:'application/json',body:'{"error":"SIMULATED_DB_OUTAGE"}'});
+              });
+              const page=await context.newPage();
+              await page.goto(`${origin}/__expired_rescue_seed.html`);
+              const fp=await fingerprint(page,expired);
+              await page.evaluate(expired=>{
+                localStorage.clear();sessionStorage.clear();
+                localStorage.setItem('puplan_session_primary_v1',expired);
+              },expired);
+              await putSnapshot(page,{
+                uid,
+                profile:{id:uid,display_name:'Recovered iPhone',username:'recovered_iphone',avatar_data:'',bio:'local rescue',discoverable:true,role:'user',profile_visibility:'public'},
+                courses:[{id:'rescue-course',name:'救援課程',day:1,start:1,end:2,teacher:'Local',room:'R1',color:'blue'}],
+                meta:{source:'exact-indexeddb'},
+                savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp
+              });
+
+              outbound.length=0;
+              await page.goto(`${origin}/`,{waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD&&window.NOLU_OFFLINE_RESCUE,{timeout:20000});
+              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.()===true,{timeout:20000});
+              await page.waitForTimeout(1000);
+
+              const state=await page.evaluate(()=>({
+                gateHidden:document.querySelector('#authGate')?.classList.contains('off')===true,
+                signedIn:window.PUPLAN_CLOUD?.isSignedIn?.()===true,
+                localRescue:document.documentElement.dataset.noluLocalRescue,
+                recovered:document.documentElement.dataset.noluSessionRecovered,
+                accountName:document.querySelector('#accountName')?.textContent||'',
+                courses:window.PUPLAN_APP?.courses?.()||[],
+                owner:localStorage.getItem('puplan_course_owner'),
+                canonical:localStorage.getItem('puplan_session')
+              }));
+              const leaked=outbound.filter(x=>x.auth===`Bearer ${expired}`);
+              console.log('FULL_EXPIRED_RESCUE_STATE',state);
+              console.log('EXPIRED_TOKEN_OUTBOUND',leaked.map(x=>({url:x.url,method:x.method})));
+
+              assert(state.signedIn,'full cloud controller did not enter signed-in local-rescue state');
+              assert(state.gateHidden,'auth gate stayed visible after exact-device rescue');
+              assert(state.localRescue==='1','offline rescue mode was not activated');
+              assert(state.recovered?.includes('local-grace'),'recently expired regional session was not used as local-grace anchor');
+              assert(state.accountName.includes('Recovered iPhone'),'recovered profile was not rendered');
+              assert(state.courses.some(c=>c.name==='救援課程'),'recovered schedule was not rendered');
+              assert(state.owner===uid,'recovered owner binding is wrong');
+              assert(state.canonical===expired,'local fingerprint anchor changed unexpectedly');
+              assert(leaked.length===0,`expired local-only token left the device: ${JSON.stringify(leaked.map(x=>x.url))}`);
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-full-rescue/check.cjs
+          rm -f pu-plan/__expired_rescue_seed.html
