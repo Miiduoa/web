@@ -42,7 +42,7 @@ jobs:
           npm --prefix /tmp/nolu-ha install playwright >/dev/null 2>&1
           cd /tmp/nolu-ha && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify Tokyo failover, dual sessions, auth preservation, and safe failback
+      - name: Verify Tokyo v8 failover, regional credentials, auth preservation, and replica-v2 failback
         env:
           NODE_PATH: /tmp/nolu-ha/node_modules
         run: |
@@ -57,79 +57,107 @@ jobs:
           const uid='55555555-5555-4555-8555-555555555555';
           const issuedAt=Math.floor(Date.now()/1000);
           const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:issuedAt,exp:issuedAt+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
+          const PRIMARY=token('primary');
+          const STANDBY=token('standby');
+          const STANDBY_ROTATED=token('standby-rotated');
+          const PRIMARY_PEER=token('primary-peer');
+          const PORTABLE_SENTINEL='portable-must-remain-separate';
           const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
+          const PRIMARY_V8=`https://${A}.supabase.co/functions/v1/pu-plan-api-v8`;
+          const STANDBY_V8=`https://${B}.supabase.co/functions/v1/pu-plan-api-v8`;
+          const STANDBY_REPLICA=`https://${B}.supabase.co/functions/v1/pu-plan-replica-v2`;
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
-              const context=await browser.newContext();
-              const counts={a7:0,aCompat:0,b7:0,bSync:0};
-              let standbyMode='ok',lastStandbyAuth='',lastSyncAuth='';
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const counts={a8:0,aCompat:0,b8:0,bReplica:0};
+              const wrongRegionAuth=[];
+              let standbyMode='ok',lastStandbyAuth='',lastReplicaAuth='';
               await context.route('https://*.supabase.co/functions/v1/**',async route=>{
-                const url=new URL(route.request().url()),path=url.pathname;
+                const req=route.request(),url=new URL(req.url()),path=url.pathname;
+                const auth=req.headers()['authorization']||'';
+                if(url.host.startsWith(A)&&(auth===`Bearer ${STANDBY}`||auth===`Bearer ${STANDBY_ROTATED}`))wrongRegionAuth.push({host:'Mumbai',auth,path});
+                if(url.host.startsWith(B)&&auth===`Bearer ${PRIMARY}`)wrongRegionAuth.push({host:'Tokyo',auth,path});
                 if(url.host.startsWith(A)){
-                  if(path.endsWith('/pu-plan-api-v7'))counts.a7++;else counts.aCompat++;
+                  if(path.endsWith('/pu-plan-api-v8'))counts.a8++;else counts.aCompat++;
                   return route.abort('timedout');
                 }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-sync-v1')){
-                  counts.bSync++;lastSyncAuth=route.request().headers()['authorization']||'';
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,self:B,peer_synced:true,peer_status:200,revision:Date.now()})});
+                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-replica-v2')){
+                  counts.bReplica++;lastReplicaAuth=auth;
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_token:PRIMARY_PEER,peer_ref:A})});
                 }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v7')){
-                  counts.b7++;lastStandbyAuth=route.request().headers()['authorization']||'';
-                  if(standbyMode==='unauthorized')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED',message:'standby cannot verify old token'})});
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:token('shared'),profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
+                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v8')){
+                  counts.b8++;lastStandbyAuth=auth;
+                  if(standbyMode==='unauthorized')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED',message:'standby rejected session'})});
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:STANDBY_ROTATED,profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
                 }
                 return route.abort();
               });
+
               const page=await context.newPage();
               await page.goto('http://127.0.0.1:4173/__hot_standby_test.html');
-              await page.evaluate(({uid,old})=>{
+              await page.evaluate(({uid,PRIMARY,STANDBY,PORTABLE_SENTINEL})=>{
                 localStorage.clear();sessionStorage.clear();
-                localStorage.setItem('puplan_session',old);
+                localStorage.setItem('puplan_session',PRIMARY);
+                localStorage.setItem('puplan_standby_session_v2',STANDBY);
+                localStorage.setItem('puplan_portable_session_v1',PORTABLE_SENTINEL);
                 localStorage.setItem('puplan_course_owner',uid);
                 localStorage.setItem('puplan_name','Cached User');
                 localStorage.setItem('puplan_username','cached_user');
                 localStorage.setItem('puplan_courses',JSON.stringify([{id:'local',name:'Local course',day:2,start:2,end:2,teacher:'',room:'L1',color:'gray'}]));
-              },{uid,old:token('old')});
+              },{uid,PRIMARY,STANDBY,PORTABLE_SENTINEL});
               await page.reload({waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
-              const requested=`https://${A}.supabase.co/functions/v1/pu-plan-api-v6`;
-              const authHeaders={'Content-Type':'application/json','Authorization':`Bearer ${token('old')}`};
-              const first=await page.evaluate(async({url,headers})=>{const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session'),portable:localStorage.getItem('puplan_portable_session_v1')}} ,{url:requested,headers:authHeaders});
-              assert(first.status===200,'standby bootstrap failed');
-              assert(first.active.includes(B),'Tokyo was not selected as active cloud');
-              assert(first.preferred==='standby','standby preference was not persisted');
-              assert(first.primary===token('old'),'standby bootstrap overwrote the primary session token');
-              assert(first.portable===token('shared'),'standby token was not stored in the portable session slot');
-              assert(counts.a7>=1&&counts.b7>=1,'first request did not try primary then Tokyo');
 
-              const aBefore=counts.a7+counts.aCompat,bBefore=counts.b7;
+              const requested=`https://${A}.supabase.co/functions/v1/pu-plan-api-v6`;
+              const authHeaders={'Content-Type':'application/json','Authorization':`Bearer ${PRIMARY}`};
+              const first=await page.evaluate(async({url,headers})=>{
+                const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({action:'bootstrap'})});
+                return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session'),standby:localStorage.getItem('puplan_standby_session_v2'),portable:localStorage.getItem('puplan_portable_session_v1')};
+              },{url:requested,headers:authHeaders});
+              console.log('FIRST_FAILOVER',first,counts);
+              assert(first.status===200,'standby bootstrap failed');
+              assert(first.active===STANDBY_V8,'Tokyo v8 was not selected as active cloud');
+              assert(first.preferred==='standby','standby preference was not persisted');
+              assert(first.primary===PRIMARY,'standby bootstrap overwrote the Mumbai session token');
+              assert(first.standby===STANDBY_ROTATED,'Tokyo token rotation was not stored in the standby slot');
+              assert(first.portable===PORTABLE_SENTINEL,'regional failover polluted the portable session slot');
+              assert(counts.a8>=1&&counts.b8>=1,'first request did not try Mumbai v8 then Tokyo v8');
+              assert(lastStandbyAuth===`Bearer ${STANDBY}`,'initial Tokyo request did not use the Tokyo regional session');
+              assert(wrongRegionAuth.length===0,`regional credential crossed providers: ${JSON.stringify(wrongRegionAuth)}`);
+
+              const aBefore=counts.a8+counts.aCompat,bBefore=counts.b8;
               const second=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return r.status},requested);
               assert(second===200,'preferred Tokyo request failed');
-              assert(counts.b7===bBefore+1,'second request did not go to Tokyo first');
-              assert(counts.a7+counts.aCompat===aBefore,'second request unnecessarily hammered primary');
-              assert(lastStandbyAuth===`Bearer ${token('shared')}`,'Tokyo request did not use the portable session token');
+              assert(counts.b8===bBefore+1,'second request did not go to Tokyo first');
+              assert(counts.a8+counts.aCompat===aBefore,'second request unnecessarily hammered Mumbai');
+              assert(lastStandbyAuth===`Bearer ${STANDBY_ROTATED}`,'Tokyo request did not use the rotated Tokyo session');
+              assert(wrongRegionAuth.length===0,`regional credential crossed providers after rotation: ${JSON.stringify(wrongRegionAuth)}`);
 
-              const bBeforeSignup=counts.b7;
+              const bBeforeSignup=counts.b8;
               await page.evaluate(async url=>{try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'signup',display_name:'x',username:'xx',email:'x@example.com',password:'12345678'})})}catch{}},requested);
-              assert(counts.b7===bBeforeSignup,'signup was incorrectly allowed to fail over to an unseeded standby');
+              assert(counts.b8===bBeforeSignup,'signup was incorrectly allowed to fail over to standby');
 
               standbyMode='unauthorized';
-              const oldStored=await page.evaluate(()=>localStorage.getItem('puplan_session'));
-              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),stored:localStorage.getItem('puplan_session')}},requested);
+              const beforeProtected=await page.evaluate(()=>({primary:localStorage.getItem('puplan_session'),standby:localStorage.getItem('puplan_standby_session_v2'),portable:localStorage.getItem('puplan_portable_session_v1')}));
+              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),primary:localStorage.getItem('puplan_session'),standby:localStorage.getItem('puplan_standby_session_v2'),portable:localStorage.getItem('puplan_portable_session_v1')}},requested);
               assert(protectedResult.status===200&&protectedResult.data.offline===true,'standby 401 did not safely degrade to local offline bootstrap');
-              assert(protectedResult.stored===oldStored,'uncertain standby auth incorrectly cleared or changed the primary session');
+              assert(protectedResult.primary===beforeProtected.primary&&protectedResult.standby===beforeProtected.standby,'uncertain standby auth changed regional sessions');
+              assert(protectedResult.portable===PORTABLE_SENTINEL,'uncertain standby auth changed portable session');
 
               standbyMode='ok';
-              await page.evaluate(async url=>{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})})},requested);
-              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=1')});
+              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=regional-v8')});
               const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
-              assert(synced===true,'standby -> primary reconciliation did not report success');
-              assert(counts.bSync>=1,'reconciliation did not use the active Tokyo sync endpoint');
-              assert(lastSyncAuth===`Bearer ${token('shared')}`,'standby replication did not use the portable session token');
-              const preferredAfterSync=await page.evaluate(()=>window.NOLU_RESILIENCE.preferredCloud());
-              assert(preferredAfterSync==='primary','client did not permit primary failback after successful replication');
-              console.log('HOT_STANDBY_OK',counts);
+              const finalState=await page.evaluate(()=>({primary:localStorage.getItem('puplan_session'),standby:localStorage.getItem('puplan_standby_session_v2'),portable:localStorage.getItem('puplan_portable_session_v1'),preferred:localStorage.getItem('nolu_preferred_cloud_v1')}));
+              console.log('REPLICA_V2_FAILBACK',synced,finalState,counts);
+              assert(synced===true,'standby -> primary replica-v2 reconciliation did not report success');
+              assert(counts.bReplica>=1,'reconciliation did not use the Tokyo replica-v2 endpoint');
+              assert(lastReplicaAuth===`Bearer ${STANDBY_ROTATED}`,'replica-v2 did not use the Tokyo regional session');
+              assert(finalState.primary===PRIMARY_PEER,'replica-v2 peer credential was not stored as the Mumbai session');
+              assert(finalState.standby===STANDBY_ROTATED,'replica-v2 overwrote the Tokyo session');
+              assert(finalState.portable===PORTABLE_SENTINEL,'replica-v2 touched the provider-mesh portable session');
+              assert(finalState.preferred==='primary','client did not permit primary failback after successful replica-v2 sync');
+              assert(wrongRegionAuth.length===0,`regional credential crossed providers during failback: ${JSON.stringify(wrongRegionAuth)}`);
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
