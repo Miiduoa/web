@@ -60,6 +60,12 @@ await import('./resilience.js');
   };
 }
 
+// If the database is unreachable, a previously authenticated device can still
+// prove possession of its exact session-bound IndexedDB snapshot. This wrapper
+// only rescues bootstrap/profile/schedule requests; it never accepts a password
+// or creates a new identity while the cloud cannot verify one.
+await import('./offline-session-rescue.js');
+
 // cloud.js exposes window.PUPLAN_CLOUD before its authenticated bootstrap finishes.
 // Await the whole module so the signed-in user's profile and schedule are hydrated
 // before semesters/auth/social/import modules can read or write account state.
