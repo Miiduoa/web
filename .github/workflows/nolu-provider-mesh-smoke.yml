@@ -8,6 +8,17 @@ on:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
+      - 'supabase/functions/pu-plan-portable-v1/index.ts'
+      - '.github/workflows/nolu-provider-mesh-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'supabase/functions/pu-plan-portable-v1/index.ts'
       - '.github/workflows/nolu-provider-mesh-smoke.yml'
   workflow_dispatch:
 
@@ -29,13 +40,34 @@ jobs:
           node --check pu-plan/main.js
           node --check pu-plan/sw.js
 
+      - name: Guard portable auth security hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "PORTABLE_MINT_ENDPOINTS=Object.freeze([])" pu-plan/provider-config.js
+          grep -A6 "id:'neon-singapore'" pu-plan/provider-config.js | grep -Fq "enabled:false"
+          grep -Fq "status: 410" supabase/functions/pu-plan-portable-v1/index.ts
+          if grep -R -n -E 'PRIVATE_JWK|"d"[[:space:]]*:' supabase/functions/pu-plan-portable-v1 pu-plan/provider-config.js; then
+            echo '::error::Private signing key material must not be committed to portable auth source'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          jwks=json.loads(Path('pu-plan/nolu-mesh-jwks.json').read_text())
+          assert jwks.get('keys'), 'public JWKS key missing'
+          for key in jwks['keys']:
+              assert 'd' not in key, 'JWKS must never contain private signing material'
+          print('portable auth security hold guard OK')
+          PY
+
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-mesh init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-mesh install playwright >/dev/null 2>&1
           cd /tmp/nolu-mesh && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify Neon Data API plus second independent mirror and quorum recovery
+      - name: Verify future Neon plus second mirror quorum flow in isolated mocks
         env:
           NODE_PATH: /tmp/nolu-mesh/node_modules
         run: |
@@ -45,8 +77,12 @@ jobs:
           p=Path('/tmp/nolu-provider-app/provider-config.js')
           s=p.read_text()
           s=s.replace(
-              "https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1",
-              "https://neon.test/rest/v1"
+              "export const PORTABLE_MINT_ENDPOINTS=Object.freeze([]);",
+              "export const PORTABLE_MINT_ENDPOINTS=Object.freeze(['https://mint.test/portable']);"
+          )
+          s=s.replace(
+              "endpoint:'https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1',\n    enabled:false",
+              "endpoint:'https://neon.test/rest/v1',\n    enabled:true"
           )
           s=s.replace(
               "Object.freeze({id:'render-mirror',provider:'render',kind:'action-api',endpoint:'',enabled:false})",
@@ -117,7 +153,7 @@ jobs:
               await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
 
               const configured=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.configuredProviders);
-              assert(configured.includes('supabase')&&configured.includes('neon')&&configured.includes('render'),'three remote failure domains must be registered');
+              assert(configured.includes('supabase')&&configured.includes('neon')&&configured.includes('render'),'mocked three-provider topology must be registered');
 
               const recovered=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.recover('ci'));
               assert(recovered===true,'two matching independent mirrors should recover a missing local snapshot');
@@ -127,10 +163,10 @@ jobs:
               await page.evaluate(snap=>{window.__localSnapshot=snap},baseSnapshot);
               const synced=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.sync('ci',true));
               assert(synced===true,'mirror fan-out should succeed when at least one independent provider acknowledges');
-              assert(writes.neon.length>=1,'Neon Data API mirror should receive the snapshot');
-              assert(writes.render.length>=1,'Render mirror should receive the snapshot');
+              assert(writes.neon.length>=1,'Neon mock should receive the snapshot');
+              assert(writes.render.length>=1,'Render mock should receive the snapshot');
               assert(writes.neon.at(-1)?.uid===uid&&writes.render.at(-1)?.uid===uid,'both mirrors must receive only the current account snapshot');
-              console.log('PROVIDER_MESH_OK',{configured,writes:{neon:writes.neon.length,render:writes.render.length}});
+              console.log('PROVIDER_MESH_FUTURE_FLOW_OK',{configured,writes:{neon:writes.neon.length,render:writes.render.length}});
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
