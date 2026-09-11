@@ -104,6 +104,8 @@ jobs:
               });
 
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.locator('[data-auth-tab="login"]').click();
+              await page.locator('#loginEmail').waitFor({state:'visible'});
               await page.fill('#loginEmail','tokyo@example.invalid');
               await page.fill('#loginPassword','not-a-real-password');
               await page.locator('#loginForm').evaluate(form=>form.requestSubmit());
