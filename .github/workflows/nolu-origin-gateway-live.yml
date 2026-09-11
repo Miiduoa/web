@@ -34,6 +34,8 @@ jobs:
           grep -q "MAX_BODY_BYTES = 512_000" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "TARGET_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "METHOD_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "X-Forwarded-For" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "X-Nolu-Browser-Gateway', 'v2" supabase/functions/nolu-browser-gateway-v1/index.ts
 
       - name: Verify deployed frontends contain cloud router
         shell: bash
@@ -54,13 +56,18 @@ jobs:
             echo "[$base] router_ready=$ready"
             test "$ready" = 1
           }
-          check_frontend 'https://nolu-8r2.pages.dev'
+          check_optional_frontend() {
+            local host="$1"
+            local base="$2"
+            if getent hosts "$host" >/dev/null 2>&1; then
+              check_frontend "$base"
+            else
+              echo "[$base] DNS is not publicly resolvable from this runner; skipping inactive frontend while backend origin support remains tested below."
+            fi
+          }
           check_frontend 'https://miiduoa.github.io/web'
-          if getent hosts nolu.tw >/dev/null 2>&1; then
-            check_frontend 'https://nolu.tw'
-          else
-            echo '[https://nolu.tw] DNS is not publicly resolvable from this runner; backend origin support is still tested below.'
-          fi
+          check_optional_frontend 'nolu-8r2.pages.dev' 'https://nolu-8r2.pages.dev'
+          check_optional_frontend 'nolu.tw' 'https://nolu.tw'
 
       - name: Verify primary and standby gateways from production origins
         shell: bash
@@ -105,7 +112,6 @@ jobs:
           payload=$(mktemp)
           trap 'rm -f "$tmp" "$headers" "$payload"' EXIT
 
-          # Unknown function names and traversal-like target strings must never proxy.
           for target in 'does-not-exist' '../pu-plan-api-v8' '%2e%2e%2fpu-plan-api-v8'; do
             : > "$headers"
             code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=${target}" \
@@ -115,14 +121,12 @@ jobs:
             grep -q 'TARGET_NOT_ALLOWED' "$tmp"
           done
 
-          # The public browser gateway deliberately exposes only GET/POST/OPTIONS.
           code=$(curl -sS --max-time 15 -o "$tmp" -w '%{http_code}' -X PUT "${BASE}?target=pu-plan-api-v8" \
             -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data '{}')
           echo "[method PUT] HTTP $code :: $(cat "$tmp")"
           test "$code" = 405
           grep -q 'METHOD_NOT_ALLOWED' "$tmp"
 
-          # Oversized browser payloads are rejected before reaching an application API.
           python3 - <<'PY' > "$payload"
           import json
           print(json.dumps({'action':'health','padding':'x'*520000}))
@@ -133,7 +137,6 @@ jobs:
           test "$code" = 413
           grep -q 'PAYLOAD_TOO_LARGE' "$tmp"
 
-          # Browser preflight must be explicit and origin-scoped, never wildcarded.
           : > "$headers"
           code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "${BASE}?target=pu-plan-api-v8" \
             -H "Origin: ${ORIGIN}" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: authorization,content-type')
