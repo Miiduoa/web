@@ -38,12 +38,17 @@ function json(status: number, body: unknown) {
   });
 }
 
+async function rejectOversized(req: Request) {
+  try { await req.body?.cancel('payload too large'); } catch { /* noop */ }
+  throw new ApiError(413, 'failback payload too large', 'PAYLOAD_TOO_LARGE');
+}
+
 async function readJson(req: Request) {
   const declaredRaw = req.headers.get('content-length');
   if (declaredRaw) {
     const declared = Number(declaredRaw);
     if (!Number.isFinite(declared) || declared < 0 || declared > MAX_BODY) {
-      throw new ApiError(413, 'failback payload too large', 'PAYLOAD_TOO_LARGE');
+      await rejectOversized(req);
     }
   }
   if (!req.body) return {};
