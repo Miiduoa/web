@@ -25,14 +25,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v6
+
       - name: Verify source shell contract
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            grep -q '20260911-login-rescue6' pu-plan/index.html
-            grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
-          fi
+          grep -q '20260911-login-rescue6' pu-plan/index.html
+          grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
 
       - name: Verify deployed GitHub Pages shell
         if: github.event_name != 'pull_request'
