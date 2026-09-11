@@ -1,0 +1,43 @@
+name: nolu apply strict regional patch once
+
+on:
+  push:
+    branches: [fix/nolu-strict-regional-credentials-20260911]
+    paths:
+      - '.github/scripts/patch-strict-regional-credentials.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-strict-regional-credentials-20260911
+          fetch-depth: 0
+      - name: Apply exact product patch
+        run: python3 .github/scripts/patch-strict-regional-credentials.py
+      - name: Validate strict regional invariants
+        run: |
+          set -euo pipefail
+          for f in pu-plan/resilience.js pu-plan/transport-bridge.js pu-plan/cloud-replication.js pu-plan/provider-mesh.js pu-plan/admin.js pu-plan/community.js pu-plan/discover.js pu-plan/privacy.js; do node --check "$f"; done
+          grep -q "if(hasAuthorization(options)&&!authTokenFor(api))continue" pu-plan/resilience.js
+          grep -q "if(hasAuth(options)&&!authTokenFor(endpoint))continue" pu-plan/transport-bridge.js
+          grep -q "function legacyPrimarySession" pu-plan/resilience.js
+          grep -q "function legacyPrimarySession" pu-plan/cloud-replication.js
+          grep -q "regionalSessionForEndpoint" pu-plan/provider-mesh.js
+          for f in pu-plan/admin.js pu-plan/community.js pu-plan/discover.js pu-plan/privacy.js; do
+            ! grep -q "puplan_session_primary_v1')||localStorage.getItem('puplan_session" "$f"
+          done
+      - name: Commit only product files
+        run: |
+          set -euo pipefail
+          git config user.name 'Miiduoa'
+          git config user.email '107848266+Miiduoa@users.noreply.github.com'
+          git add pu-plan/resilience.js pu-plan/transport-bridge.js pu-plan/cloud-replication.js pu-plan/provider-mesh.js pu-plan/admin.js pu-plan/community.js pu-plan/discover.js pu-plan/privacy.js
+          git commit -m 'security(nolu): enforce strict regional credentials'
+          git push origin HEAD:fix/nolu-strict-regional-credentials-20260911
