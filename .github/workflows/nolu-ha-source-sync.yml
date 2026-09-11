@@ -1,0 +1,60 @@
+name: nolu ha source sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-failback-ingest-v1/**'
+      - 'supabase/functions/pu-plan-failback-v1/**'
+      - 'supabase/functions/pu-plan-replica-ingest-v3/**'
+      - 'supabase/migrations/20260911173100_nolu_failback_apply_v2.sql'
+      - 'supabase/standby/20260911_nolu_failback_snapshot_v2.sql'
+      - 'supabase/standby/20260911_nolu_social_helper_lockdown.sql'
+      - '.github/workflows/nolu-ha-source-sync.yml'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify failback and replica invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s supabase/functions/pu-plan-failback-ingest-v1/index.ts
+          test -s supabase/functions/pu-plan-failback-v1/index.ts
+          test -s supabase/functions/pu-plan-replica-ingest-v3/index.ts
+          test -s supabase/migrations/20260911173100_nolu_failback_apply_v2.sql
+          test -s supabase/standby/20260911_nolu_failback_snapshot_v2.sql
+          test -s supabase/standby/20260911_nolu_social_helper_lockdown.sql
+
+          grep -q "BROWSER_ORIGIN_NOT_ALLOWED" supabase/functions/pu-plan-failback-ingest-v1/index.ts
+          grep -q "FAILBACK_REPLAY" supabase/functions/pu-plan-failback-ingest-v1/index.ts
+          grep -q "base_primary_revision" supabase/functions/pu-plan-failback-ingest-v1/index.ts
+          grep -q "FAILBACK_CONFLICT" supabase/functions/pu-plan-failback-ingest-v1/index.ts
+
+          grep -q "pu-plan-failback-ingest-v1" supabase/functions/pu-plan-failback-v1/index.ts
+          grep -q "reconciled:true" supabase/functions/pu-plan-failback-v1/index.ts
+          grep -q "SESSION_REVOKED" supabase/functions/pu-plan-failback-v1/index.ts
+
+          grep -q "puplan_apply_replica_media" supabase/functions/pu-plan-replica-ingest-v3/index.ts
+          grep -q "REPLICA_REPLAY" supabase/functions/pu-plan-replica-ingest-v3/index.ts
+          grep -q "BROWSER_ORIGIN_NOT_ALLOWED" supabase/functions/pu-plan-replica-ingest-v3/index.ts
+
+          grep -q "v_base_revision<>v_current_revision" supabase/migrations/20260911173100_nolu_failback_apply_v2.sql
+          grep -q "PRIMARY_ADVANCED" supabase/migrations/20260911173100_nolu_failback_apply_v2.sql
+          grep -q "post_media" supabase/migrations/20260911173100_nolu_failback_apply_v2.sql
+          grep -q "base_primary_revision" supabase/standby/20260911_nolu_failback_snapshot_v2.sql
+          grep -q "puplan_apply_replica_media" supabase/standby/20260911_nolu_failback_snapshot_v2.sql
+          grep -q "from public, anon, authenticated" supabase/standby/20260911_nolu_social_helper_lockdown.sql
+          grep -q "to service_role" supabase/standby/20260911_nolu_social_helper_lockdown.sql
+
+          ! grep -R -E "SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*['\"][A-Za-z0-9._-]+" \
+            supabase/functions/pu-plan-failback-ingest-v1 \
+            supabase/functions/pu-plan-failback-v1 \
+            supabase/functions/pu-plan-replica-ingest-v3
