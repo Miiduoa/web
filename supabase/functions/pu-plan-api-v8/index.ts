@@ -348,6 +348,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'login') {
       await rateLimit(req, 'login', 20, 5);
       const email = cleanEmail(body.email), password = String(body.password || '');
+      if (!password || password.length > 128) throw new ApiError(401, 'Email 或密碼錯誤', 'INVALID_LOGIN');
       const { data: user, error } = await db.from('puplan_app_users')
         .select('id,email,display_name,username,avatar_data,bio,discoverable,role,profile_visibility,password_salt,password_hash')
         .ilike('email', email)

@@ -142,10 +142,12 @@ async function ownBundle(uid: string) {
 async function rateLimit(req: Request, action: string, limit: number, minutes: number) {
   const ip = (req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || 'unknown').split(',')[0].trim();
   const key = b64url(await hmac(`rate:${ip}`)), since = new Date(Date.now() - minutes * 60000).toISOString();
-  const { count } = await db.from('puplan_app_rate_limits').select('id', { count: 'exact', head: true })
+  const { count, error } = await db.from('puplan_app_rate_limits').select('id', { count: 'exact', head: true })
     .eq('rate_key', key).eq('action', action).gte('created_at', since);
+  if (error) throw error;
   if ((count || 0) >= limit) throw new ApiError(429, '操作太頻繁，請稍後再試', 'RATE_LIMITED');
-  await db.from('puplan_app_rate_limits').insert({ rate_key: key, action });
+  const inserted = await db.from('puplan_app_rate_limits').insert({ rate_key: key, action });
+  if (inserted.error) throw inserted.error;
 }
 
 async function profiles(ids: string[]) {
@@ -224,6 +226,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'login') {
       await rateLimit(req, 'login', 20, 5);
       const email = String(body.email || '').trim().toLowerCase().slice(0, 254), password = String(body.password || '');
+      if (!password || password.length > 128) throw new ApiError(401, 'Email 或密碼錯誤', 'INVALID_LOGIN');
       const { data: u, error } = await db.from('puplan_app_users')
         .select('id,email,display_name,username,avatar_data,bio,discoverable,role,profile_visibility,password_salt,password_hash')
         .ilike('email', email).maybeSingle();
