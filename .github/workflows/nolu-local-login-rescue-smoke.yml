@@ -59,7 +59,8 @@ jobs:
       - name: Require fresh installed shell
         run: |
           set -euo pipefail
-          grep -Fq 'nolu-shell-20260911-login-rescue6' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260911_login_rescue6' pu-plan/pwa.js
-          grep -Fq '20260911-login-rescue6' pu-plan/index.html
+          grep -Fq 'nolu-shell-20260911-cloud-reconnect1' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260911_cloud_reconnect1' pu-plan/pwa.js
+          grep -Fq '20260911-cloud-reconnect1' pu-plan/index.html
           grep -Fq "'./offline-session-rescue.js'" pu-plan/sw.js
+          grep -Fq "'./origin-gateway.js'" pu-plan/sw.js
