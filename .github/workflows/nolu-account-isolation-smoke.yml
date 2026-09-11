@@ -45,7 +45,7 @@ jobs:
           const b64=s=>Buffer.from(s).toString('base64url');
           const A='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
           const B='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-          const payload=b64(JSON.stringify({v:3,uid:B,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}));
+          const payload=b64(JSON.stringify({v:4,uid:B,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'ci-account-isolation'}));
           const token=`${payload}.test-signature`;
           (async()=>{
             const browser=await chromium.launch({headless:true});
