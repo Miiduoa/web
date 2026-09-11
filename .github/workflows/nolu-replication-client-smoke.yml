@@ -47,19 +47,22 @@ jobs:
         run: |
           grep -q "pu-plan-replica-v3" pu-plan/cloud-replication.js
           ! grep -q "pu-plan-replica-v2" pu-plan/cloud-replication.js
-      - name: Fail closed on standby reverse sync
+      - name: Require trusted automatic failback before primary reseed
         run: |
-          grep -q "tier!=='primary'" pu-plan/cloud-replication.js
-          grep -q "reverse replication is intentionally disabled" pu-plan/cloud-replication.js
-          grep -q "manualReconcileRequired" pu-plan/cloud-replication.js
+          grep -q "pu-plan-failback-v1" pu-plan/cloud-replication.js
+          grep -q "reconcileStandby" pu-plan/cloud-replication.js
           grep -q "hasStandbyDirty" pu-plan/cloud-replication.js
+          grep -q "primary-returned" pu-plan/cloud-replication.js
+          grep -q "nolu:replica-failback-complete" pu-plan/cloud-replication.js
+          grep -q "nolu:standby-write" pu-plan/cloud-replication.js
+          ! grep -q "markStandbyDirty('standby-active',true)" pu-plan/cloud-replication.js
           ! grep -q "STANDBY_SYNC" pu-plan/cloud-replication.js
-      - name: Surface unresolved failback state to the user
+      - name: Keep failback failure visible instead of silently overwriting
         run: |
+          grep -q "manualReconcileRequired" pu-plan/cloud-replication.js
+          grep -q "automatic-failback-failed" pu-plan/cloud-replication.js
           grep -q "nolu:replica-manual-reconcile-required" pu-plan/provider-status.js
-          grep -q "manualReconcileRequired" pu-plan/provider-status.js
-          grep -q "已停止自動回切覆寫" pu-plan/provider-status.js
-      - name: Keep installed PWA on current replica v3 shell
+      - name: Keep installed PWA on current shell
         run: |
           grep -q "nolu-shell-20260911-login-failover3" pu-plan/sw.js
           grep -q "nolu_shell_reload_20260911_login_failover3" pu-plan/pwa.js

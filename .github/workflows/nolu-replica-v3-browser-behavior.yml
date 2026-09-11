@@ -75,7 +75,7 @@ jobs:
                 window.PUPLAN_CLOUD={isSignedIn:()=>true};
               },{UID,PRIMARY,A});
               await page.goto('http://127.0.0.1:4173/__replica_v3_browser_test.html',{waitUntil:'domcontentloaded'});
-              await page.evaluate(()=>import('./cloud-replication.js?browser-ci=2'));
+              await page.evaluate(()=>import('./cloud-replication.js?browser-ci=3'));
               await page.waitForFunction(()=>!!window.NOLU_REPLICATION);
 
               const first=await page.evaluate(async()=>{
@@ -120,7 +120,7 @@ jobs:
               assert(dirtyStandby.marked===true&&dirtyStandby.ok===false,'standby write was not held for reconciliation');
               assert(replicaCalls===beforeStandby,'dirty standby attempted reverse replication');
               assert(dirtyStandby.dirty==='1'&&dirtyStandby.manual===true,'standby dirty state did not require reconciliation');
-              assert(dirtyStandby.error.includes('manual reconciliation required'),'dirty standby state was not explicit');
+              assert(dirtyStandby.error.includes('trusted failback reconciliation'),'dirty standby state was not explicit');
 
               const failback=await page.evaluate(async({A,UID})=>{
                 window.NOLU_RESILIENCE.state.activeApi=`https://${A}.supabase.co/functions/v1/pu-plan-api-v8`;
@@ -129,10 +129,10 @@ jobs:
                 const ok=await window.NOLU_REPLICATION.sync('ci-primary-failback',true);
                 return {ok,before,after:localStorage.getItem(`nolu_standby_dirty_v3:${UID}`),manual:window.NOLU_REPLICATION.state.manualReconcileRequired,error:window.NOLU_REPLICATION.state.lastError};
               },{A,UID});
-              assert(failback.ok===false,'dirty failback was allowed to overwrite standby state');
-              assert(replicaCalls===beforeStandby,'dirty primary failback sent a replica request');
-              assert(failback.before==='1'&&failback.after==='1','dirty marker was cleared without reconciliation');
-              assert(failback.manual===true&&failback.error.includes('manual reconciliation required'),'failback did not remain fail-closed');
+              assert(failback.ok===false,'failed trusted failback was allowed to overwrite standby state');
+              assert(replicaCalls===beforeStandby,'failed trusted failback sent a primary reseed request');
+              assert(failback.before==='1'&&failback.after==='1','dirty marker was cleared without successful reconciliation');
+              assert(failback.manual===true&&failback.error.includes('trusted failback reconciliation'),'failed automatic failback did not remain fail-closed');
 
               console.log('REPLICA_V3_BROWSER_BEHAVIOR_OK',{replicaCalls,requests:requests.map(x=>({host:x.host,path:x.path,auth:x.auth?'bearer-present':'none'}))});
             }finally{await browser.close()}

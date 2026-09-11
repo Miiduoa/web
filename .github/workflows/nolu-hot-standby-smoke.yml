@@ -30,8 +30,10 @@ jobs:
           grep -q 'puplan_session_primary_v1' pu-plan/resilience.js
           grep -q 'puplan_session_standby_v1' pu-plan/resilience.js
           grep -q 'pu-plan-replica-v3' pu-plan/cloud-replication.js
+          grep -q 'pu-plan-failback-v1' pu-plan/cloud-replication.js
           grep -q "tier!=='primary'" pu-plan/cloud-replication.js
-          grep -q 'reverse replication is intentionally disabled' pu-plan/cloud-replication.js
+          grep -q 'reconcileStandby' pu-plan/cloud-replication.js
+          grep -q 'primary-returned' pu-plan/cloud-replication.js
           ! grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
           ! grep -q 'STANDBY_SYNC' pu-plan/cloud-replication.js
           ! grep -q 'pu-plan-api-v7' pu-plan/resilience.js
