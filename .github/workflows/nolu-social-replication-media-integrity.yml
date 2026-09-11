@@ -1,0 +1,60 @@
+name: nolu social replication media integrity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-social-replication-media-integrity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-social-replication-media-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrity-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require one canonical social replication trigger path
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql
+          test "$(grep -c '^DROP TRIGGER IF EXISTS puplan_replica_' "$f")" -eq 9
+          grep -Fq "CREATE OR REPLACE FUNCTION public.puplan_enqueue_social_replication()" "$f"
+          grep -Fq "REVOKE ALL ON FUNCTION public.puplan_enqueue_social_replication() FROM PUBLIC, anon, authenticated" "$f"
+          grep -Fq "GRANT EXECUTE ON FUNCTION public.puplan_enqueue_social_replication() TO service_role" "$f"
+      - name: Require conversation and social fanout
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql
+          grep -Fq "WHERE cm.conversation_id=v_conversation_id" "$f"
+          grep -Fq "PERFORM public.puplan_queue_replication_for_user(v_other)" "$f"
+          grep -Fq "SELECT author_id INTO v_uid2 FROM public.puplan_app_posts WHERE id=v_parent_id" "$f"
+          grep -Fq "SELECT author_id INTO v_uid2 FROM public.puplan_app_posts WHERE id=v_post_id" "$f"
+      - name: Require authoritative stored media validation
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql
+          grep -Fq "FROM storage.objects o" "$f"
+          grep -Fq "v_author<>new.owner_id" "$f"
+          grep -Fq "IF v_size>12*1024*1024" "$f"
+          grep -Fq "IF v_size>80*1024*1024" "$f"
+          grep -Fq "IF v_existing_count>=6" "$f"
+          grep -Fq "IF v_existing_bytes+v_size>100*1024*1024" "$f"
+          grep -Fq "new.size_bytes := v_size" "$f"
+          grep -Fq "new.mime_type := v_mime" "$f"
+          grep -Fq "new.media_type := v_type" "$f"
+          grep -Fq "CREATE TRIGGER puplan_validate_post_media_storage" "$f"
+          grep -Fq "SET file_size_limit=80*1024*1024" "$f"
+      - name: Block weakening the media boundary
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql
+          ! grep -Eq "GRANT EXECUTE .* (anon|authenticated)|file_size_limit=100\*1024\*1024" "$f"
