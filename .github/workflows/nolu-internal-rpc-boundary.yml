@@ -19,7 +19,7 @@ permissions:
 jobs:
   internal-rpc-boundary:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     env:
       PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
       PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
@@ -110,14 +110,29 @@ jobs:
             local fn="$1"
             local payload="$2"
             local body="/tmp/${fn}.json"
-            local code
-            code=$(curl -sS --retry 2 --retry-delay 1 --retry-all-errors \
-              --connect-timeout 4 --max-time 12 \
-              -o "$body" -w '%{http_code}' -X POST \
-              "$PROJECT_URL/rest/v1/rpc/$fn" \
-              -H "apikey: $PUBLISHABLE_KEY" \
-              -H 'Content-Type: application/json' \
-              --data "$payload")
+            local code=""
+            local rc=1
+            local attempt
+            for attempt in 1 2 3; do
+              set +e
+              code=$(curl -sS --connect-timeout 4 --max-time 8 \
+                -o "$body" -w '%{http_code}' -X POST \
+                "$PROJECT_URL/rest/v1/rpc/$fn" \
+                -H "apikey: $PUBLISHABLE_KEY" \
+                -H 'Content-Type: application/json' \
+                --data "$payload")
+              rc=$?
+              set -e
+              if [ "$rc" -eq 0 ]; then
+                break
+              fi
+              echo "::warning::$fn transport attempt $attempt failed with curl exit $rc; retrying"
+              sleep "$attempt"
+            done
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::$fn RPC boundary probe could not reach Supabase after 3 attempts"
+              exit "$rc"
+            fi
             echo "$fn -> HTTP $code"
             if [[ "$code" =~ ^2 ]]; then
               echo "::error::Anonymous caller executed protected RPC $fn"
