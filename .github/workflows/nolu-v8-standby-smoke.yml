@@ -2,7 +2,7 @@ name: nolu independent standby v8 smoke
 
 on:
   push:
-    branches: [feat/nolu-independent-standby-v8]
+    branches: [main, feat/nolu-v8-rebased-20260911]
     paths:
       - 'supabase/functions/pu-plan-api-v8/**'
       - '.github/workflows/nolu-v8-standby-smoke.yml'
