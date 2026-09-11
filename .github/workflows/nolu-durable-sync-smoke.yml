@@ -126,8 +126,8 @@ jobs:
               });
               console.log('FAILOVER_RESULT',result,'ATTEMPTS',attempts);
               assert(result.status===200&&result.data?.via==='legacy-fifth-path','legacy request should reach the final compatibility path');
-              assert(attempts.some(x=>x.includes(`${MUMBAI}.supabase.co/functions/v1/pu-plan-api-v7`)),'Mumbai v7 should be attempted');
-              assert(attempts.some(x=>x.includes(`${TOKYO}.supabase.co/functions/v1/pu-plan-api-v7`)),'Tokyo standby should be attempted');
+              assert(attempts.some(x=>x.includes(`${MUMBAI}.supabase.co/functions/v1/pu-plan-api-v8`)),'Mumbai v8 should be attempted');
+              assert(attempts.some(x=>x.includes(`${TOKYO}.supabase.co/functions/v1/pu-plan-api-v8`)),'Tokyo standby should be attempted');
               assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'v6 compatibility path should be attempted');
               assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'core compatibility path should be attempted');
               assert(attempts.some(x=>x.endsWith('/pu-plan-api')),'legacy final path should be attempted');
