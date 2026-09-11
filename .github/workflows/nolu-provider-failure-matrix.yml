@@ -1,0 +1,164 @@
+name: nolu provider failure matrix
+
+on:
+  push:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/provider-status.js'
+      - '.github/workflows/nolu-provider-failure-matrix.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/provider-status.js'
+      - '.github/workflows/nolu-provider-failure-matrix.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  one-provider-down:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: |
+          node --check pu-plan/provider-config.js
+          node --check pu-plan/provider-mesh.js
+          node --check pu-plan/provider-status.js
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-matrix init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-matrix install playwright >/dev/null 2>&1
+          cd /tmp/nolu-matrix && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Verify recovery and fan-out survive one independent mirror outage
+        env:
+          NODE_PATH: /tmp/nolu-matrix/node_modules
+        run: |
+          rm -rf /tmp/nolu-matrix-app
+          cp -R pu-plan /tmp/nolu-matrix-app
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('/tmp/nolu-matrix-app/provider-config.js')
+          s=p.read_text()
+          s=s.replace(
+              "https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1",
+              "https://neon.test/rest/v1"
+          )
+          replacements = [
+              (r"(id:'render-singapore',\s*provider:'render',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false", r"\1'https://render.test/mirror'\2true", 'render'),
+              (r"(id:'netlify-blobs',\s*provider:'netlify',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false", r"\1'https://netlify.test/mirror'\2true", 'netlify'),
+          ]
+          for pattern,repl,name in replacements:
+              s,n=re.subn(pattern,repl,s,count=1)
+              if n != 1:
+                  raise SystemExit(f'{name} candidate fixture could not be enabled')
+          p.write_text(s)
+          Path('/tmp/nolu-matrix-app/matrix-test.html').write_text('''<!doctype html><html><body><script>
+          window.__localSnapshot=null;
+          window.NOLU_DURABLE={
+            getSnapshot:async()=>window.__localSnapshot,
+            bindCurrentSession:async()=>true
+          };
+          window.NOLU_RESILIENCE={state:{mode:'online',activeApi:'https://example.supabase.co/functions/v1/pu-plan-api-v8'}};
+          </script><script type="module" src="./provider-mesh.js"></script></body></html>''')
+          PY
+          python3 -m http.server 4176 --directory /tmp/nolu-matrix-app >/tmp/nolu-matrix-http.log 2>&1 &
+
+          cat >/tmp/nolu-matrix/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const crypto=require('crypto');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const uid='44444444-4444-4444-8444-444444444444';
+          const now=Math.floor(Date.now()/1000);
+          const session=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'matrix-test'}))}.test-signature`;
+          const portable=`${b64(JSON.stringify({alg:'ES256',typ:'NOLU',kid:'test'}))}.${b64(JSON.stringify({v:1,sub:uid,cv:'matrix-test',iat:now,exp:now+3600,iss:'nolu',aud:'nolu-provider-mesh'}))}.test-signature`;
+          const fp=crypto.createHash('sha256').update(session).digest('hex');
+          const snapshot={
+            uid,
+            profile:{id:uid,display_name:'Failure Matrix',username:'matrix_test',bio:'',avatar_data:'',discoverable:true,role:'user',profile_visibility:'public'},
+            courses:[{id:'remote',name:'單一供應商故障仍可復原',day:4,start:1,end:2,teacher:'',room:'D404',color:'blue'}],
+            meta:{},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp
+          };
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const writes={neon:0,netlify:0,render:0};
+
+              await context.route('https://neon.test/**',async route=>{
+                const req=route.request();
+                if(req.method()==='POST'){
+                  writes.neon++;
+                  const body=JSON.parse(req.postData()||'{}');
+                  return route.fulfill({status:201,contentType:'application/json',body:JSON.stringify([body])});
+                }
+                if(req.method()==='GET'){
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{uid,revision:snapshot.revision,digest:'',snapshot}])});
+                }
+                return route.fulfill({status:405,body:'{}'});
+              });
+
+              await context.route('https://netlify.test/mirror',async route=>{
+                const body=JSON.parse(route.request().postData()||'{}');
+                if(body.action==='put_snapshot'){
+                  writes.netlify++;
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,stored:true})});
+                }
+                if(body.action==='get_snapshot'){
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot})});
+                }
+                return route.fulfill({status:400,contentType:'application/json',body:'{}'});
+              });
+
+              // Simulate a complete Render outage. No request may succeed here.
+              await context.route('https://render.test/mirror',async route=>{
+                writes.render++;
+                return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,message:'simulated provider outage'})});
+              });
+
+              const page=await context.newPage();
+              await page.addInitScript(({session,portable,uid})=>{
+                localStorage.setItem('puplan_session',session);
+                localStorage.setItem('puplan_portable_session_v1',portable);
+                localStorage.setItem('puplan_course_owner',uid);
+              },{session,portable,uid});
+              await page.goto('http://127.0.0.1:4176/matrix-test.html',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
+
+              const configured=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.configuredProviders);
+              for(const provider of ['supabase','neon','render','netlify']){
+                assert(configured.includes(provider),`${provider} failure domain must be registered in the matrix`);
+              }
+
+              const recovered=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.recover('one-provider-down'));
+              assert(recovered===true,'two matching independent mirrors must recover data while the third mirror is down');
+              const stored=await page.evaluate(async uid=>{const m=await import('./durable-store.js');return m.getSnapshot(uid)},uid);
+              assert(stored?.courses?.[0]?.name==='單一供應商故障仍可復原','quorum recovery must persist the agreed snapshot');
+
+              await page.evaluate(snap=>{window.__localSnapshot=snap},snapshot);
+              const synced=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.sync('one-provider-down',true));
+              assert(synced===true,'fan-out must continue when one independent mirror is unavailable');
+              assert(writes.neon>=1&&writes.netlify>=1,'both surviving independent mirrors must receive the snapshot');
+              assert(writes.render>=1,'the failed provider must actually have been exercised');
+
+              const healthy=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.healthyProviders);
+              assert(healthy.includes('supabase')&&healthy.includes('neon')&&healthy.includes('netlify'),'healthy set must preserve three independent providers when Render is down');
+              assert(!healthy.includes('render'),'failed provider must never be reported healthy');
+              console.log('PROVIDER_FAILURE_MATRIX_OK',{configured,healthy,writes});
+            }finally{await browser.close()}
+          })().catch(error=>{console.error(error);process.exit(1)});
+          NODE
+
+          timeout 90s node /tmp/nolu-matrix/check.cjs
