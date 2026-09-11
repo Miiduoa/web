@@ -97,13 +97,9 @@ async function sync(reason='periodic',force=false){
   if(!id||localStorage.getItem('puplan_guest')==='1'||state.busy)return false;
   const tier=activeTier();state.lastTier=tier;state.lastReason=reason;
   if(tier!=='primary'){
-    // Any authenticated use of the standby may include writes from schedule, profile,
-    // community or messaging code. Conservatively mark it dirty so failback can merge
-    // the trusted Tokyo snapshot before Mumbai resumes as the source of truth.
-    if(sessionFor('standby')&&(localStorage.getItem('nolu_social_cloud_v1')==='standby'||tier==='standby'))markStandbyDirty('standby-active',true);
     state.peerSynced=false;
     if(hasStandbyDirty(id))requireManualReconcile('standby-dirty');
-    else state.lastError='standby active';
+    else {state.manualReconcileRequired=false;state.lastError='standby active'}
     return false;
   }
   if(hasStandbyDirty(id)){
@@ -132,6 +128,7 @@ async function sync(reason='periodic',force=false){
 
 document.addEventListener('puplan:courses-changed',()=>{markStandbyDirty('schedule-change');schedule('schedule-change',1400)});
 document.addEventListener('puplan:profile-changed',()=>{markStandbyDirty('profile-change');schedule('profile-change',900)});
+document.addEventListener('nolu:standby-write',event=>{markStandbyDirty(String(event.detail?.source||'standby-write'),true);schedule('standby-write',500)});
 document.addEventListener('nolu:session-rotated',()=>schedule('session-rotated',250));
 document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')schedule('connectivity-online',450)});
 document.addEventListener('nolu:peer-session-needed',()=>schedule('peer-session-needed',50));
