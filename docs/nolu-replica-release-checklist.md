@@ -1,4 +1,4 @@
-# Replica v2 release checklist
+# Replica release checklist
 
 - [x] Mumbai and Tokyo `pu-plan-replica-v2` endpoints deployed.
 - [x] Live fail-closed smoke: health 200, unauthenticated sync 401, forged ingest 401, disallowed origin 403.
