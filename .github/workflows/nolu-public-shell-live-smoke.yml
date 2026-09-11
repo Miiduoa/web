@@ -7,6 +7,8 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/main.js'
       - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/login-transport-patience.js'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
@@ -17,6 +19,8 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/main.js'
       - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/login-transport-patience.js'
       - 'pu-plan/provider-config.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
@@ -37,11 +41,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '20260911-cloud-gateway1' pu-plan/index.html
-          grep -q "nolu-shell-20260911-cloud-gateway1" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260911_cloud_gateway1" pu-plan/pwa.js
+          grep -q '20260911-login-failover2' pu-plan/index.html
+          grep -q "nolu-shell-20260911-login-failover2" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260911_login_failover2" pu-plan/pwa.js
           grep -q "./origin-gateway.js" pu-plan/sw.js
+          grep -q "./login-failover-budget.js" pu-plan/sw.js
           grep -q "import './origin-gateway.js'" pu-plan/main.js
+          grep -q "await import('./login-failover-budget.js')" pu-plan/main.js
+          grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
+          grep -q "standbyLoginTimeoutMs:6500" pu-plan/login-transport-patience.js
 
       - name: Verify deployed GitHub Pages shell
         if: github.event_name != 'pull_request'
@@ -54,7 +62,7 @@ jobs:
 
           ready=0
           for attempt in $(seq 1 24); do
-            if curl -fsS --max-time 15 "$BASE/sw.js?cloudfix=20260911" -o "$tmp/sw.js" && grep -q 'nolu-shell-20260911-cloud-gateway1' "$tmp/sw.js"; then
+            if curl -fsS --max-time 15 "$BASE/sw.js?loginfix=20260911" -o "$tmp/sw.js" && grep -q 'nolu-shell-20260911-login-failover2' "$tmp/sw.js"; then
               ready=1
               break
             fi
@@ -63,17 +71,22 @@ jobs:
           test "$ready" = 1
 
           curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/" -o "$tmp/index.html"
-          grep -q '20260911-cloud-gateway1' "$tmp/index.html"
+          grep -q '20260911-login-failover2' "$tmp/index.html"
           grep -q 'https://nolu-mirror.netlify.app' "$tmp/index.html"
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?cloudfix=20260911" -o "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?loginfix=20260911" -o "$tmp/main.js"
           grep -q "import './origin-gateway.js'" "$tmp/main.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?cloudfix=20260911" -o "$tmp/origin-gateway.js"
+          grep -q "await import('./login-failover-budget.js')" "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?loginfix=20260911" -o "$tmp/origin-gateway.js"
           grep -q 'nolu-browser-gateway-v1' "$tmp/origin-gateway.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/pwa.js?cloudfix=20260911" -o "$tmp/pwa.js"
-          grep -q 'nolu_shell_reload_20260911_cloud_gateway1' "$tmp/pwa.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-failover-budget.js?loginfix=20260911" -o "$tmp/login-budget.js"
+          grep -q 'OVERALL_LOGIN_TIMEOUT_MS=14000' "$tmp/login-budget.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-transport-patience.js?loginfix=20260911" -o "$tmp/login-patience.js"
+          grep -q 'standbyLoginTimeoutMs:6500' "$tmp/login-patience.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/pwa.js?loginfix=20260911" -o "$tmp/pwa.js"
+          grep -q 'nolu_shell_reload_20260911_login_failover2' "$tmp/pwa.js"
 
           curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js" -o "$tmp/provider-config.js"
           grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
@@ -83,6 +96,7 @@ jobs:
           grep -q "enabled:true" "$tmp/provider-config.js"
 
           grep -q "./origin-gateway.js" "$tmp/sw.js"
+          grep -q "./login-failover-budget.js" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
           echo 'PUBLIC_SHELL_LIVE_OK'
 
@@ -111,10 +125,7 @@ jobs:
             tr -d '\r' < "$headers" | grep -Fqi "access-control-allow-origin: ${origin}"
           }
 
-          # GitHub Pages is the currently resolvable production shell and must work.
           check_cors 'https://miiduoa.github.io'
-          # Keep future/custom origins in source configuration, but only require the
-          # deployed mirror to accept them once those hosts are actually live in DNS.
           if getent hosts nolu.tw >/dev/null 2>&1; then check_cors 'https://nolu.tw'; else echo '[mirror][https://nolu.tw] inactive DNS; live CORS check skipped'; fi
           if getent hosts nolu-8r2.pages.dev >/dev/null 2>&1; then check_cors 'https://nolu-8r2.pages.dev'; else echo '[mirror][https://nolu-8r2.pages.dev] inactive DNS; live CORS check skipped'; fi
 
