@@ -41,32 +41,40 @@ jobs:
           BASE='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8'
           ORIGIN='https://miiduoa.github.io'
           tmp=$(mktemp)
+          show(){ echo "[$1] HTTP $2 :: $(cat "$tmp")"; }
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$BASE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"health"}')
+          show health "$code"
           test "$code" = 200
           grep -q '"ok":true' "$tmp"
           grep -q '"cloud_tier":"standby"' "$tmp"
           grep -q '"protocol":"independent-session-v1"' "$tmp"
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$BASE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"bootstrap"}')
+          show unauth-bootstrap "$code"
           test "$code" = 401
           grep -Eq 'UNAUTHORIZED|SESSION_' "$tmp"
 
           forged='eyJ2Ijo0LCJ1aWQiOiI1NTU1NTU1NS01NTU1LTQ1NTUtODU1NS01NTU1NTU1NTU1NTUiLCJpYXQiOjE3ODkwMDAwMDAsImV4cCI6MTc4OTAwMzYwMCwiY3YiOiJmYWtlIn0.ZmFrZQ'
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$BASE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' -H "Authorization: Bearer $forged" --data '{"action":"bootstrap"}')
+          show forged-session "$code"
           test "$code" = 401
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$BASE" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+          show evil-origin "$code"
           test "$code" = 403
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' "$BASE")
+          show get "$code"
           test "$code" = 405
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$BASE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"signup","display_name":"Smoke","username":"standby_smoke","email":"never-create@example.invalid","password":"12345678"}')
+          show standby-signup "$code"
           test "$code" = 503
           grep -q 'PRIMARY_REQUIRED' "$tmp"
 
           code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$BASE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"login","email":"definitely-missing-v8@example.invalid","password":"not-a-real-password"}')
+          show unseeded-login "$code"
           test "$code" = 503
           grep -q 'STANDBY_NOT_SEEDED' "$tmp"
 
@@ -81,6 +89,7 @@ jobs:
           set -euo pipefail
           for path in pu-plan-api-v7 pu-plan-sync-v1; do
             code=$(curl -sS --max-time 12 -o /tmp/retired.json -w '%{http_code}' -X POST "https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/$path" -H 'Origin: https://miiduoa.github.io' -H 'Content-Type: application/json' --data '{"action":"health"}')
+            echo "[$path] HTTP $code :: $(cat /tmp/retired.json)"
             test "$code" = 410
             grep -q 'DISABLED' /tmp/retired.json
           done
