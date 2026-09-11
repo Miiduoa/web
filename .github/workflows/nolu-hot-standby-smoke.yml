@@ -2,7 +2,7 @@ name: nolu hot standby smoke
 
 on:
   push:
-    branches: [main, feat/nolu-hot-standby-v1]
+    branches: [main, fix/nolu-replica-v2-client]
     paths:
       - 'pu-plan/resilience.js'
       - 'pu-plan/transport-bridge.js'
@@ -26,8 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Syntax check
+      - name: Syntax and routing invariants
         run: |
+          set -euo pipefail
           node --check pu-plan/resilience.js
           node --check pu-plan/transport-bridge.js
           node --check pu-plan/cloud-replication.js
@@ -35,6 +36,14 @@ jobs:
           node --check pu-plan/auth.js
           node --check pu-plan/sw.js
           node --check pu-plan/pwa.js
+          grep -q 'pu-plan-api-v8' pu-plan/resilience.js
+          grep -q 'pu-plan-api-v8' pu-plan/transport-bridge.js
+          ! grep -q 'pu-plan-api-v7' pu-plan/resilience.js
+          ! grep -q 'pu-plan-api-v7' pu-plan/transport-bridge.js
+          ! grep -q 'pu-plan-sync-v1' pu-plan/cloud-replication.js
+          grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
+          grep -q 'puplan_session_primary_v1' pu-plan/resilience.js
+          grep -q 'puplan_session_standby_v1' pu-plan/resilience.js
 
       - name: Install Playwright
         run: |
@@ -42,7 +51,7 @@ jobs:
           npm --prefix /tmp/nolu-ha install playwright >/dev/null 2>&1
           cd /tmp/nolu-ha && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify Tokyo failover, dual sessions, auth preservation, and safe failback
+      - name: Verify v8 failover, separate sessions, offline safety, and replica-v2 failback
         env:
           NODE_PATH: /tmp/nolu-ha/node_modules
         run: |
@@ -58,78 +67,86 @@ jobs:
           const issuedAt=Math.floor(Date.now()/1000);
           const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:issuedAt,exp:issuedAt+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
           const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
+          const primaryOld=token('primary-old'),primaryNew=token('primary-new'),standby=token('standby');
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
               const context=await browser.newContext();
-              const counts={a7:0,aCompat:0,b7:0,bSync:0};
-              let standbyMode='ok',lastStandbyAuth='',lastSyncAuth='';
+              const counts={a8:0,aCompat:0,b8:0,bReplica:0};
+              let standbyMode='ok',lastStandbyAuth='',lastReplicaAuth='';
               await context.route('https://*.supabase.co/functions/v1/**',async route=>{
-                const url=new URL(route.request().url()),path=url.pathname;
+                const req=route.request(),url=new URL(req.url()),path=url.pathname;
+                const body=(()=>{try{return JSON.parse(req.postData()||'{}')}catch{return{}}})();
                 if(url.host.startsWith(A)){
-                  if(path.endsWith('/pu-plan-api-v7'))counts.a7++;else counts.aCompat++;
+                  if(path.endsWith('/pu-plan-api-v8'))counts.a8++;else counts.aCompat++;
                   return route.abort('timedout');
                 }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-sync-v1')){
-                  counts.bSync++;lastSyncAuth=route.request().headers()['authorization']||'';
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,self:B,peer_synced:true,peer_status:200,revision:Date.now()})});
+                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-replica-v2')){
+                  counts.bReplica++;lastReplicaAuth=req.headers()['authorization']||'';
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_ref:A,peer_token:primaryNew})});
                 }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v7')){
-                  counts.b7++;lastStandbyAuth=route.request().headers()['authorization']||'';
-                  if(standbyMode==='unauthorized')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED',message:'standby cannot verify old token'})});
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:token('shared'),profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
+                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v8')){
+                  counts.b8++;lastStandbyAuth=req.headers()['authorization']||'';
+                  if(body.action==='signup')return route.fulfill({status:500,contentType:'application/json',body:'{}'});
+                  if(standbyMode==='unauthorized'&&body.action==='bootstrap')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED'})});
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:standby,cloud_tier:'standby',profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
                 }
                 return route.abort();
               });
               const page=await context.newPage();
               await page.goto('http://127.0.0.1:4173/__hot_standby_test.html');
-              await page.evaluate(({uid,old})=>{
+              await page.evaluate(({uid,primaryOld,standby})=>{
                 localStorage.clear();sessionStorage.clear();
-                localStorage.setItem('puplan_session',old);
+                localStorage.setItem('puplan_session',primaryOld);
+                localStorage.setItem('puplan_session_primary_v1',primaryOld);
+                localStorage.setItem('puplan_session_standby_v1',standby);
                 localStorage.setItem('puplan_course_owner',uid);
                 localStorage.setItem('puplan_name','Cached User');
                 localStorage.setItem('puplan_username','cached_user');
                 localStorage.setItem('puplan_courses',JSON.stringify([{id:'local',name:'Local course',day:2,start:2,end:2,teacher:'',room:'L1',color:'gray'}]));
-              },{uid,old:token('old')});
+              },{uid,primaryOld,standby});
               await page.reload({waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
               const requested=`https://${A}.supabase.co/functions/v1/pu-plan-api-v6`;
-              const authHeaders={'Content-Type':'application/json','Authorization':`Bearer ${token('old')}`};
-              const first=await page.evaluate(async({url,headers})=>{const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session'),portable:localStorage.getItem('puplan_portable_session_v1')}} ,{url:requested,headers:authHeaders});
+              const first=await page.evaluate(async url=>{
+                const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});
+                return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),canonical:localStorage.getItem('puplan_session'),primary:localStorage.getItem('puplan_session_primary_v1'),standby:localStorage.getItem('puplan_session_standby_v1')};
+              },requested);
               assert(first.status===200,'standby bootstrap failed');
-              assert(first.active.includes(B),'Tokyo was not selected as active cloud');
+              assert(first.active.includes(B),'Tokyo v8 was not selected');
               assert(first.preferred==='standby','standby preference was not persisted');
-              assert(first.primary===token('old'),'standby bootstrap overwrote the primary session token');
-              assert(first.portable===token('shared'),'standby token was not stored in the portable session slot');
-              assert(counts.a7>=1&&counts.b7>=1,'first request did not try primary then Tokyo');
+              assert(first.canonical===primaryOld,'failover must not replace canonical session fingerprint');
+              assert(first.primary===primaryOld&&first.standby===standby,'tier-local sessions were corrupted');
+              assert(lastStandbyAuth===`Bearer ${standby}`,'Tokyo request did not use Tokyo-local session');
+              assert(counts.a8>=1&&counts.b8>=1,'first request did not try primary v8 then Tokyo v8');
 
-              const aBefore=counts.a7+counts.aCompat,bBefore=counts.b7;
-              const second=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return r.status},requested);
+              const aBefore=counts.a8+counts.aCompat,bBefore=counts.b8;
+              const second=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});return r.status},requested);
               assert(second===200,'preferred Tokyo request failed');
-              assert(counts.b7===bBefore+1,'second request did not go to Tokyo first');
-              assert(counts.a7+counts.aCompat===aBefore,'second request unnecessarily hammered primary');
-              assert(lastStandbyAuth===`Bearer ${token('shared')}`,'Tokyo request did not use the portable session token');
+              assert(counts.b8===bBefore+1,'preferred Tokyo did not run first');
+              assert(counts.a8+counts.aCompat===aBefore,'preferred Tokyo unnecessarily hit primary');
 
-              const bBeforeSignup=counts.b7;
+              const beforeSignup=counts.b8;
               await page.evaluate(async url=>{try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'signup',display_name:'x',username:'xx',email:'x@example.com',password:'12345678'})})}catch{}},requested);
-              assert(counts.b7===bBeforeSignup,'signup was incorrectly allowed to fail over to an unseeded standby');
+              assert(counts.b8===beforeSignup,'primary-only signup was sent to standby');
 
               standbyMode='unauthorized';
-              const oldStored=await page.evaluate(()=>localStorage.getItem('puplan_session'));
-              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),stored:localStorage.getItem('puplan_session')}},requested);
-              assert(protectedResult.status===200&&protectedResult.data.offline===true,'standby 401 did not safely degrade to local offline bootstrap');
-              assert(protectedResult.stored===oldStored,'uncertain standby auth incorrectly cleared or changed the primary session');
+              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),canonical:localStorage.getItem('puplan_session')}},requested);
+              assert(protectedResult.status===200&&protectedResult.data.offline===true,'tier auth failure did not degrade to local safe bootstrap');
+              assert(protectedResult.canonical===primaryOld,'uncertain cloud auth changed canonical session');
 
               standbyMode='ok';
-              await page.evaluate(async url=>{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})})},requested);
-              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=1')});
+              await page.evaluate(async url=>{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale'},body:JSON.stringify({action:'bootstrap'})})},requested);
+              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=2')});
               const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
-              assert(synced===true,'standby -> primary reconciliation did not report success');
-              assert(counts.bSync>=1,'reconciliation did not use the active Tokyo sync endpoint');
-              assert(lastSyncAuth===`Bearer ${token('shared')}`,'standby replication did not use the portable session token');
-              const preferredAfterSync=await page.evaluate(()=>window.NOLU_RESILIENCE.preferredCloud());
-              assert(preferredAfterSync==='primary','client did not permit primary failback after successful replication');
-              console.log('HOT_STANDBY_OK',counts);
+              assert(synced===true,'standby -> primary replica-v2 reconciliation failed');
+              assert(counts.bReplica>=1,'replica-v2 endpoint was not called on active standby');
+              assert(lastReplicaAuth===`Bearer ${standby}`,'replica-v2 did not use the standby-local session');
+              const after=await page.evaluate(()=>({preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session_primary_v1'),canonical:localStorage.getItem('puplan_session')}));
+              assert(after.primary===primaryNew,'peer-local primary session was not prewarmed');
+              assert(after.canonical===primaryOld,'prewarm must not change canonical session fingerprint');
+              assert(after.preferred==='primary','safe failback was not unlocked after peer sync');
+              console.log('HOT_STANDBY_V8_OK',counts);
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
