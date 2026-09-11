@@ -54,11 +54,3 @@ s=s.replace(
     1
 )
 p.write_text(s)
-
-# DOMContentLoaded does not await the module graph's top-level awaits. Wait for the
-# cloud module before using its auth-tab listeners.
-replace_once(
-    '.github/workflows/nolu-regional-session-isolation.yml',
-    "              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});\n              await page.locator('[data-auth-tab=\"login\"]').click();",
-    "              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});\n              await page.waitForFunction(()=>!!window.PUPLAN_CLOUD,{timeout:15000});\n              await page.locator('[data-auth-tab=\"login\"]').click();"
-)
