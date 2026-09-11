@@ -38,7 +38,13 @@ export const PROVIDER_MIRRORS=Object.freeze([
   // Railway is the preferred next independent provider because its app and DB can
   // be bound privately. It stays inert until the account connection and live tests exist.
   Object.freeze({id:'railway-mirror',provider:'railway',kind:'action-api',endpoint:'',enabled:false}),
-  // Netlify Blobs is an additional fourth-provider candidate, never counted until
-  // an authenticated Function + durable Blob read/write path is deployed and tested.
-  Object.freeze({id:'netlify-blobs',provider:'netlify',kind:'action-api',endpoint:'',enabled:false})
+  // Netlify Blobs is independently hosted and registered, but remains excluded from
+  // quorum until the deployed Function passes authenticated production read/write.
+  Object.freeze({
+    id:'netlify-blobs',
+    provider:'netlify',
+    kind:'action-api',
+    endpoint:'https://nolu-mirror.netlify.app/mirror',
+    enabled:false
+  })
 ]);
