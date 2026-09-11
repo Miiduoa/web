@@ -1,0 +1,36 @@
+name: nolu standby replay safety
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/guest-privacy.js'
+      - '.github/tests/standby-replay-safety.cjs'
+      - '.github/workflows/nolu-standby-replay-safety.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/guest-privacy.js'
+      - '.github/tests/standby-replay-safety.cjs'
+      - '.github/workflows/nolu-standby-replay-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standby-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check JavaScript syntax
+        run: |
+          set -euo pipefail
+          node --check pu-plan/resilience.js
+          node --check pu-plan/guest-privacy.js
+          node --check .github/tests/standby-replay-safety.cjs
+      - name: Verify standby writes remain failback-visible
+        run: node .github/tests/standby-replay-safety.cjs
