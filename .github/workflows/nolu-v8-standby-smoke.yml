@@ -31,6 +31,7 @@ jobs:
           grep -q "PBKDF2_ITERATIONS = 210000" "$FILE"
           grep -q "STANDBY_NOT_SEEDED" "$FILE"
           grep -q "PRIMARY_REQUIRED" "$FILE"
+          test "$(grep -c 'return await forwardPrimary(req, body);' "$FILE")" -eq 3
           ! grep -Eq 'SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*"' "$FILE"
           ! grep -Eq 'sb_secret_[A-Za-z0-9_-]+' "$FILE"
 
