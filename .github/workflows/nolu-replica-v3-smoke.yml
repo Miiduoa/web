@@ -35,17 +35,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          file='supabase/functions/pu-plan-replica-v3/index.ts'
-          grep -q "npm:@noble/curves@1.8.2/ed25519" "$file"
-          grep -q "SUPABASE_SERVICE_ROLE_KEY" "$file"
-          grep -q "name: 'HMAC'" "$file"
-          grep -q "SIGNING_KEY_MISMATCH" "$file"
-          grep -q "PRIMARY_ONLY_SEED" "$file"
-          grep -q "failback: 'manual-reconcile'" "$file"
-          grep -q "puplan_replica_v3_nonces" "$file"
-          ! grep -Eq 'SELF_PRIVATE_JWK|BEGIN (EC |RSA |)PRIVATE KEY|"d"[[:space:]]*:' "$file"
-          ! grep -Eq 'sb_secret_|service_role[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9._-]+' "$file"
-          ! grep -q 'console.error(error)' "$file"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path('supabase/functions/pu-plan-replica-v3/index.ts').read_text(encoding='utf-8')
+          required = [
+              "npm:@noble/curves@1.8.2/ed25519",
+              "SUPABASE_SERVICE_ROLE_KEY",
+              "name: 'HMAC'",
+              "SIGNING_KEY_MISMATCH",
+              "PRIMARY_ONLY_SEED",
+              "failback: 'manual-reconcile'",
+              "puplan_replica_v3_nonces",
+          ]
+          missing = [item for item in required if item not in text]
+          assert not missing, f'missing security invariants: {missing}'
+          assert not re.search(r'SELF_PRIVATE_JWK|BEGIN (?:EC |RSA )?PRIVATE KEY|[\"\']d[\"\']\s*:', text), 'private key material must not be embedded'
+          assert 'sb_secret_' not in text
+          assert not re.search(r'service_role\s*[:=]\s*[\"\'][A-Za-z0-9._-]+', text, re.I), 'hardcoded service role secret detected'
+          assert 'console.error(error)' not in text, 'do not log raw error objects from replication paths'
+          PY
 
       - name: Live v3 health and pinned-key checks
         shell: bash
