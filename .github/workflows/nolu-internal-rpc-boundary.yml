@@ -19,7 +19,7 @@ permissions:
 jobs:
   internal-rpc-boundary:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     env:
       PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
       PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
@@ -38,7 +38,38 @@ jobs:
           grep -q 'increment_ai_usage(uuid).*service_role' "$f"
           grep -q 'enqueue_webhook_event(text, jsonb).*service_role' "$f"
 
-      - name: Anonymous Data API must reject internal RPCs
+      - name: Verify course RPC authorization migration
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/migrations/20260911184500_harden_course_rpc_authorization.sql')
+          assert p.exists(), 'course RPC hardening migration is missing'
+          s=p.read_text().lower()
+          required=[
+            'peer_review_responses_one_per_pair_idx',
+            'for update of pr',
+            'v_reviewer is distinct from auth.uid()',
+            "v_status <> 'pending'",
+            "course_member_has_capability(v_course, 'assignments.grade'::text)",
+            'v_pair_reviewer is distinct from auth.uid()',
+            "a.visibility_scope = 'course'",
+            "a.visibility_scope = 'group'",
+            'where auth.uid() is not null',
+            'drop policy if exists announcement_reads_insert_self',
+            'drop policy if exists rubric_scores_insert_self',
+            'drop policy if exists rubric_scores_update_self',
+            'revoke all on function public.submit_peer_review(uuid, jsonb, text) from public, anon',
+            'revoke all on function public.submit_rubric_score(uuid, text, uuid, jsonb, text) from public, anon',
+            'revoke all on function public.mark_announcement_read(uuid) from public, anon',
+            'revoke all on function public.my_calendar_events(timestamptz, timestamptz) from public, anon',
+          ]
+          missing=[x for x in required if x not in s]
+          assert not missing, f'missing course RPC guardrails: {missing}'
+          print('course RPC authorization source guardrails passed')
+          PY
+
+      - name: Anonymous Data API must reject internal and signed-in-only RPCs
         run: |
           set -euo pipefail
           probe() {
@@ -55,7 +86,7 @@ jobs:
               --data "$payload")
             echo "$fn -> HTTP $code"
             if [[ "$code" =~ ^2 ]]; then
-              echo "::error::Anonymous caller executed internal RPC $fn"
+              echo "::error::Anonymous caller executed protected RPC $fn"
               cat "$body"
               exit 1
             fi
@@ -64,7 +95,7 @@ jobs:
               cat "$body"
               exit 1
             fi
-            if ! grep -Eqi 'PGRST202|permission denied|Could not find the function|not found' "$body"; then
+            if ! grep -Eqi 'PGRST202|PGRST301|permission denied|Could not find the function|not found|JWT' "$body"; then
               echo "::error::$fn failed for a reason other than the expected permission/schema boundary"
               cat "$body"
               exit 1
@@ -73,3 +104,7 @@ jobs:
           probe apply_late_penalty '{"p_submission_id":"00000000-0000-4000-8000-000000000000"}'
           probe increment_ai_usage '{"p_uid":"00000000-0000-4000-8000-000000000000"}'
           probe enqueue_webhook_event '{"p_event_type":"__nolu_security_probe_no_subscriber__","p_payload":{}}'
+          probe submit_peer_review '{"p_pair_id":"00000000-0000-4000-8000-000000000000","p_scores":{},"p_comment":""}'
+          probe submit_rubric_score '{"p_rubric_id":"00000000-0000-4000-8000-000000000000","p_target_kind":"submission","p_target_id":"00000000-0000-4000-8000-000000000000","p_scores":{},"p_comment":""}'
+          probe mark_announcement_read '{"p_announcement_id":"00000000-0000-4000-8000-000000000000"}'
+          probe my_calendar_events '{"p_from":null,"p_to":null}'
