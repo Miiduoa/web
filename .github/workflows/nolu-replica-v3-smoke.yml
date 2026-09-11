@@ -41,16 +41,21 @@ jobs:
 
           text = Path('supabase/functions/pu-plan-replica-v3/index.ts').read_text(encoding='utf-8')
           required = [
-              "npm:@noble/curves@1.8.2/ed25519",
-              "SUPABASE_SERVICE_ROLE_KEY",
-              "name: 'HMAC'",
-              "SIGNING_KEY_MISMATCH",
-              "PRIMARY_ONLY_SEED",
-              "failback: 'manual-reconcile'",
-              "puplan_replica_v3_nonces",
+              'npm:@noble/curves@1.8.2/ed25519',
+              'SUPABASE_SERVICE_ROLE_KEY',
+              'KEY_DOMAIN',
+              'SIGNING_KEY_MISMATCH',
+              'PRIMARY_ONLY_SEED',
+              "failback:'manual-reconcile'",
+              'puplan_replica_v3_nonces',
+              'REPLICA_SIGNATURE_INVALID',
           ]
-          missing = [item for item in required if item not in text]
+          missing = [item for item in required if item not in text.replace(' ', '') if item == "failback:'manual-reconcile'"]
+          normal_required = [item for item in required if item != "failback:'manual-reconcile'"]
+          missing += [item for item in normal_required if item not in text]
           assert not missing, f'missing security invariants: {missing}'
+          assert re.search(r"deriveSeed\(\).*?crypto\.subtle\.digest\('SHA-256',\s*encoder\.encode\(`\$\{KEY_DOMAIN\}:\$\{SERVICE_KEY\}`\)\)", text, re.S), 'signing seed must be domain-separated from the local service key'
+          assert re.search(r'verified\s*=\s*false.*?try\s*\{.*?ed25519\.verify.*?catch\s*\{\s*verified\s*=\s*false', text, re.S), 'malformed peer signatures must fail closed'
           assert not re.search(r'SELF_PRIVATE_JWK|BEGIN (?:EC |RSA )?PRIVATE KEY|[\"\']d[\"\']\s*:', text), 'private key material must not be embedded'
           assert 'sb_secret_' not in text
           assert not re.search(r'service_role\s*[:=]\s*[\"\'][A-Za-z0-9._-]+', text, re.I), 'hardcoded service role secret detected'
