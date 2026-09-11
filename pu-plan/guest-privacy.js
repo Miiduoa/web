@@ -1,6 +1,12 @@
+import './session-recovery.js';
+
 const SESSION_KEY='puplan_session';
 const GUEST_KEY='puplan_guest';
 const GUEST_SCOPE_MARKER='nolu_guest_scope_v1';
+const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
+const STANDBY_SESSION_KEY='puplan_session_standby_v1';
+const PORTABLE_SESSION_KEY='puplan_portable_session_v1';
+const PREFERRED_CLOUD_KEY='nolu_preferred_cloud_v1';
 
 const ACCOUNT_DATA_KEYS=[
   'puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner'
@@ -9,7 +15,7 @@ const PROFILE_KEYS=[
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
 const CLOUD_SESSION_KEYS=[
-  'puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1','nolu_preferred_cloud_v1'
+  PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY,PORTABLE_SESSION_KEY,PREFERRED_CLOUD_KEY
 ];
 const RESILIENCE_PREFIXES=[
   'nolu_account_snapshot_v1:','nolu_pending_mutations_v1:',
@@ -30,6 +36,19 @@ function clearResilienceFor(uid=''){
 function clearPrivateCaches(uid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
   clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS,...CLOUD_SESSION_KEYS]);
+  clearResilienceFor(uid||ownerBefore);
+  clearAssistantSession();
+}
+function clearPrivateCachesForLocalGrace(uid='',source=''){
+  const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
+  // The expired credential is only a fingerprint anchor. Scrub every directly
+  // renderable account cache first so an expired token alone can never reveal data.
+  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS,PORTABLE_SESSION_KEY,PREFERRED_CLOUD_KEY]);
+  // Keep at most the regional credential that session-recovery already validated.
+  // The canonical key is intentionally preserved for exact IndexedDB fingerprinting.
+  if(source==='primary-local-grace')localStorage.removeItem(STANDBY_SESSION_KEY);
+  else if(source==='standby-local-grace')localStorage.removeItem(PRIMARY_SESSION_KEY);
+  else clearLocal([PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY]);
   clearResilienceFor(uid||ownerBefore);
   clearAssistantSession();
 }
@@ -70,6 +89,13 @@ function sessionUid(raw=''){
     return /^[A-Za-z0-9._:-]{1,100}$/.test(uid)?uid:'';
   }catch{return''}
 }
+function localGraceRecovery(){
+  const result=globalThis.window?.NOLU_SESSION_RECOVERY?.result;
+  if(result?.status!=='local-grace'||!result?.uid)return null;
+  const parsed=globalThis.window?.NOLU_SESSION_RECOVERY?.parse?.(localStorage.getItem(SESSION_KEY)||'',{allowRecentlyExpired:true});
+  if(!parsed?.expired||parsed.uid!==String(result.uid))return null;
+  return result;
+}
 
 const rawSession=localStorage.getItem(SESSION_KEY)||'';
 const hasSession=!!rawSession;
@@ -79,9 +105,19 @@ const owner=localStorage.getItem('puplan_course_owner')||'';
 if(hasSession){
   const uid=sessionUid(rawSession);
   if(!uid){
-    // Never render account-scoped cache behind a malformed or expired session.
-    clearPrivateAccountState(owner);
-    localStorage.removeItem(GUEST_SCOPE_MARKER);
+    const grace=localGraceRecovery();
+    if(grace){
+      // Preserve only the validated fingerprint anchor. Private account content is
+      // still scrubbed before app.js can render; offline-session-rescue must later
+      // prove an exact IndexedDB fingerprint before restoring any user data.
+      clearPrivateCachesForLocalGrace(String(grace.uid),String(grace.source||''));
+      localStorage.removeItem(GUEST_KEY);
+      localStorage.removeItem(GUEST_SCOPE_MARKER);
+    }else{
+      // Never render account-scoped cache behind a malformed or expired session.
+      clearPrivateAccountState(owner);
+      localStorage.removeItem(GUEST_SCOPE_MARKER);
+    }
   }else{
     // Account switches must be isolated before app.js can render the previous
     // account. Missing ownership is also unsafe because legacy cache may remain.
