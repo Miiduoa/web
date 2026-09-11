@@ -70,7 +70,7 @@ jobs:
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const UID='77777777-7777-4777-8777-777777777777';
-          const payload=Buffer.from(JSON.stringify({v:3,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600})).toString('base64url');
+          const payload=Buffer.from(JSON.stringify({v:4,uid:UID,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'ci-rejected-session'})).toString('base64url');
           const token=`${payload}.forged-signature`;
           const privatePattern=/PRIVATE REJECTED|Secret Teacher|Secret School/;
           (async()=>{
