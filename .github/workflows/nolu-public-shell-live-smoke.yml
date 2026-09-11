@@ -31,8 +31,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '20260911-login-rescue6' pu-plan/index.html
-          grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
+          grep -q '20260911-cloud-reconnect1' pu-plan/index.html
+          grep -q "nolu-shell-20260911-cloud-reconnect1" pu-plan/sw.js
+          grep -q "'./origin-gateway.js'" pu-plan/sw.js
 
       - name: Verify deployed GitHub Pages shell
         if: github.event_name != 'pull_request'
@@ -48,7 +49,7 @@ jobs:
 
           ready=0
           for attempt in $(seq 1 24); do
-            if curl -fsS --max-time 15 "$BASE/" -o "$tmp/index.html" && grep -q '20260911-login-rescue6' "$tmp/index.html"; then
+            if curl -fsS --max-time 15 "$BASE/" -o "$tmp/index.html" && grep -q '20260911-cloud-reconnect1' "$tmp/index.html"; then
               ready=1
               break
             fi
@@ -67,7 +68,8 @@ jobs:
           grep -q "enabled:true" "$tmp/provider-config.js"
 
           curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/sw.js" -o "$tmp/sw.js"
-          grep -q "nolu-shell-20260911-login-rescue6" "$tmp/sw.js"
+          grep -q "nolu-shell-20260911-cloud-reconnect1" "$tmp/sw.js"
+          grep -q "origin-gateway.js" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
           echo 'PUBLIC_SHELL_LIVE_OK'
 
