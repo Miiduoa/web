@@ -2,7 +2,12 @@ import { getStore } from "@netlify/blobs";
 import { createHash, timingSafeEqual, webcrypto } from "node:crypto";
 
 const { subtle } = webcrypto;
-const ALLOWED_ORIGIN = "https://miiduoa.github.io";
+const ALLOWED_ORIGINS = new Set([
+  "https://miiduoa.github.io",
+  "https://nolu.tw",
+  "https://www.nolu.tw",
+  "https://nolu-8r2.pages.dev",
+]);
 const AUDIENCE = "nolu-provider-mesh";
 const ISSUER = "nolu";
 const JWKS_URL = "https://miiduoa.github.io/web/nolu-mesh-jwks.json";
@@ -12,6 +17,16 @@ const HEX64 = /^[0-9a-f]{64}$/i;
 const VERSION_KEY = /^(\d{1,16})-([0-9a-f]{64})$/i;
 const keyCache = new Map<string, { key: CryptoKey; expires: number }>();
 
+function allowedOrigin(origin: string) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && url.hostname.endsWith(".nolu-8r2.pages.dev");
+  } catch {
+    return false;
+  }
+}
 function responseHeaders(origin: string) {
   const headers = new Headers({
     "Content-Type": "application/json; charset=utf-8",
@@ -20,7 +35,7 @@ function responseHeaders(origin: string) {
     "Access-Control-Allow-Headers": "authorization, content-type, x-nolu-mesh-version",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   });
-  if (origin === ALLOWED_ORIGIN) headers.set("Access-Control-Allow-Origin", origin);
+  if (allowedOrigin(origin)) headers.set("Access-Control-Allow-Origin", origin);
   return headers;
 }
 function json(status: number, body: unknown, origin = "") {
@@ -136,7 +151,7 @@ async function health() {
 export default async (request: Request) => {
   const origin = request.headers.get("origin") || "", pathname = new URL(request.url).pathname;
   if (request.method === "OPTIONS") {
-    if (origin && origin !== ALLOWED_ORIGIN) return json(403, { error: "ORIGIN_NOT_ALLOWED" }, origin);
+    if (origin && !allowedOrigin(origin)) return json(403, { error: "ORIGIN_NOT_ALLOWED" }, origin);
     return new Response(null, { status: 204, headers: responseHeaders(origin) });
   }
   if (request.method === "GET" && pathname === "/health") {
@@ -144,7 +159,7 @@ export default async (request: Request) => {
     return json(result.ok ? 200 : 503, result, origin);
   }
   if (request.method !== "POST" || pathname !== "/mirror") return json(404, { error: "NOT_FOUND" }, origin);
-  if (origin !== ALLOWED_ORIGIN) return json(403, { error: "ORIGIN_NOT_ALLOWED" }, origin);
+  if (!allowedOrigin(origin)) return json(403, { error: "ORIGIN_NOT_ALLOWED" }, origin);
   try {
     const authorization = request.headers.get("authorization") || "";
     if (!authorization.startsWith("Bearer ")) throw Object.assign(new Error("missing bearer token"), { status: 401 });
