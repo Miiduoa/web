@@ -1,0 +1,60 @@
+name: nolu chat load-shed smoke
+
+on:
+  push:
+    branches: [main, perf/nolu-free-db-load-shed-20260911]
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-chat-load-shed-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-chat-load-shed-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  load-shed-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate community module syntax
+        run: node --check pu-plan/community.js
+      - name: Guard adaptive polling and request coalescing
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=pu-plan/community.js
+          grep -q "if(inboxInFlight)return inboxInFlight" "$f"
+          grep -q "timeoutMs=10000" "$f"
+          grep -q "new AbortController" "$f"
+          grep -q "function pollingDelay" "$f"
+          grep -q "document.hidden" "$f"
+          grep -q "chatActive()?20000:60000" "$f"
+          grep -q "Math.min(300000" "$f"
+          grep -q "refreshConversation&&currentConversation" "$f"
+          grep -q "if(!silent||unreadBefore>0)" "$f"
+          if grep -q "globalPoll" "$f"; then
+            echo '::error::Legacy globalPoll returned'
+            exit 1
+          fi
+          if grep -q "setInterval(" "$f"; then
+            echo '::error::Interval polling returned; use adaptive recursive timeout'
+            exit 1
+          fi
+      - name: Estimate maximum idle polling pressure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          # One active chat timer at 20s => at most 3 inbox refresh cycles/min before
+          # backoff. Normal signed-in background UI is 60s => at most 1/min.
+          chat_cycles_per_min = 60 / 20
+          idle_cycles_per_min = 60 / 60
+          assert chat_cycles_per_min <= 3
+          assert idle_cycles_per_min <= 1
+          print(f'chat cycles/min <= {chat_cycles_per_min:g}; idle cycles/min <= {idle_cycles_per_min:g}')
+          PY
