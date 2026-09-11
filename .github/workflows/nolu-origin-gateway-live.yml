@@ -16,7 +16,7 @@ permissions:
 jobs:
   live:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v6
 
@@ -31,6 +31,9 @@ jobs:
           grep -q "pu-plan-replica-v3" pu-plan/origin-gateway.js
           grep -q "https://nolu.tw" supabase/functions/nolu-browser-gateway-v1/index.ts
           grep -q "https://nolu-8r2.pages.dev" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "MAX_BODY_BYTES = 512_000" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "TARGET_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
+          grep -q "METHOD_NOT_ALLOWED" supabase/functions/nolu-browser-gateway-v1/index.ts
 
       - name: Verify deployed frontends contain cloud router
         shell: bash
@@ -90,6 +93,54 @@ jobs:
             check_gateway "$PRIMARY" "$origin"
             check_gateway "$STANDBY" "$origin"
           done
+
+      - name: Verify gateway attack boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1'
+          ORIGIN='https://miiduoa.github.io'
+          tmp=$(mktemp)
+          headers=$(mktemp)
+          payload=$(mktemp)
+          trap 'rm -f "$tmp" "$headers" "$payload"' EXIT
+
+          # Unknown function names and traversal-like target strings must never proxy.
+          for target in 'does-not-exist' '../pu-plan-api-v8' '%2e%2e%2fpu-plan-api-v8'; do
+            : > "$headers"
+            code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=${target}" \
+              -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data '{"action":"health"}')
+            echo "[target=$target] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 404
+            grep -q 'TARGET_NOT_ALLOWED' "$tmp"
+          done
+
+          # The public browser gateway deliberately exposes only GET/POST/OPTIONS.
+          code=$(curl -sS --max-time 15 -o "$tmp" -w '%{http_code}' -X PUT "${BASE}?target=pu-plan-api-v8" \
+            -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data '{}')
+          echo "[method PUT] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 405
+          grep -q 'METHOD_NOT_ALLOWED' "$tmp"
+
+          # Oversized browser payloads are rejected before reaching an application API.
+          python3 - <<'PY' > "$payload"
+          import json
+          print(json.dumps({'action':'health','padding':'x'*520000}))
+          PY
+          code=$(curl -sS --max-time 20 -o "$tmp" -w '%{http_code}' -X POST "${BASE}?target=pu-plan-api-v8" \
+            -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data-binary @"$payload")
+          echo "[oversize] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 413
+          grep -q 'PAYLOAD_TOO_LARGE' "$tmp"
+
+          # Browser preflight must be explicit and origin-scoped, never wildcarded.
+          : > "$headers"
+          code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "${BASE}?target=pu-plan-api-v8" \
+            -H "Origin: ${ORIGIN}" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: authorization,content-type')
+          echo "[preflight] HTTP $code"
+          test "$code" = 204
+          tr -d '\r' < "$headers" | grep -Fqi "access-control-allow-origin: ${ORIGIN}"
+          ! tr -d '\r' < "$headers" | grep -Eqi '^access-control-allow-origin:[[:space:]]*\*'
 
       - name: Reject untrusted origins
         shell: bash
