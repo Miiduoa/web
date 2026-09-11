@@ -1,0 +1,25 @@
+name: nolu db health once
+
+on:
+  push:
+    branches: [ops/nolu-v8-e2e-20260911]
+    paths: ['.github/workflows/nolu-db-health-once.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Probe primary Edge to PostgREST data path
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-db-health-v1'
+          body=$(mktemp)
+          code=$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' "$URL")
+          echo "HTTP $code :: $(cat "$body")"
+          test "$code" = 200
+          grep -q '"db":"reachable"' "$body"
