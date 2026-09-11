@@ -55,7 +55,10 @@ jobs:
           assert.match(fn,/digestSnapshot/);
           assert.match(fn,/timingSafeEqual/);
           assert.match(fn,/snapshot\/\$\{uid\}\/\$\{String\(revision\)\.padStart/);
-          assert.match(fn,/origin !== ALLOWED_ORIGIN/);
+          assert.match(fn,/ALLOWED_ORIGINS/);
+          assert.match(fn,/allowedOrigin\(origin\)/);
+          for (const origin of ['https://miiduoa.github.io','https://nolu.tw','https://www.nolu.tw','https://nolu-8r2.pages.dev']) assert.ok(fn.includes(`"${origin}"`),`missing trusted origin ${origin}`);
+          assert.match(fn,/\.nolu-8r2\.pages\.dev/);
           assert.match(fn,/path: \["\/mirror", "\/health"\]/);
           assert.match(fn,/https:\/\/miiduoa\.github\.io\/web\/nolu-mesh-jwks\.json/);
           assert.match(cfg,/provider:'netlify'[\s\S]*?https:\/\/nolu-mirror\.netlify\.app\/mirror[\s\S]*?enabled:true/);
