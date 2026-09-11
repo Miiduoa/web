@@ -210,5 +210,5 @@ jobs:
           grep -q '"cloud_tier":"standby"' /tmp/v8.json
 ''')
 
-# trigger-only comment: the one-time workflow was created after the script's first commit.
+# trigger-only comment: second run commits only ordinary product files; workflow files are updated by the connector.
 print('retired replication / provider security patch applied')
