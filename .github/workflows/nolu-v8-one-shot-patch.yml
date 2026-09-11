@@ -1,0 +1,42 @@
+name: nolu v8 one-shot patch
+
+on:
+  push:
+    branches: [feat/nolu-independent-standby-v8]
+    paths:
+      - '.github/workflows/nolu-v8-one-shot-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'ops(nolu): apply v8 await hotfix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/nolu-independent-standby-v8
+      - name: Patch rejected primary forwarding promises
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/pu-plan-api-v8/index.ts')
+          s=p.read_text()
+          old='return forwardPrimary(req, body);'
+          count=s.count(old)
+          if count != 3:
+              raise SystemExit(f'expected 3 forwardPrimary returns, found {count}')
+          p.write_text(s.replace(old, 'return await forwardPrimary(req, body);'))
+          PY
+          grep -q "PRIMARY_ONLY_ACTIONS.has(action)) return await forwardPrimary" supabase/functions/pu-plan-api-v8/index.ts
+      - name: Commit hotfix
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/pu-plan-api-v8/index.ts
+          git commit -m 'fix(nolu): catch v8 primary forwarding failures'
+          git push origin HEAD:feat/nolu-independent-standby-v8
