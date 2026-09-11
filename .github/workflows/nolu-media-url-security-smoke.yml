@@ -39,6 +39,22 @@ jobs:
             exit 1
           fi
 
+      - name: Verify community sanitizes server media and revalidates lightbox
+        run: |
+          set -euo pipefail
+          node --check pu-plan/community.js
+          grep -q "import {cleanAvatar,cleanMediaUrl}" pu-plan/community.js
+          grep -q "url:cleanMediaUrl(m?.url)" pu-plan/community.js
+          grep -Fq "filter(m=>m.url&&(m.type==='image'||m.type==='video'))" pu-plan/community.js
+          grep -Fq "const safe=cleanMediaUrl(url);if(!safe)return;" pu-plan/community.js
+          grep -Fq 'src="${esc(safe)}"' pu-plan/community.js
+
+          # Local draft previews intentionally use browser-created blob URLs. Those
+          # never come from the server and must keep working after server-media
+          # validation is tightened.
+          grep -q "URL.createObjectURL(f)" pu-plan/community.js
+          grep -Fq 'm.type==='"'"'image'"'"'?`<img src="${m.url}"' pu-plan/community.js
+
       - name: Exercise signed-media allowlist
         run: |
           set -euo pipefail
