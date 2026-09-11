@@ -19,6 +19,11 @@ await import('./session-recovery.js');
 // Apply guest/account isolation before the application can render storage-backed data.
 await import('./guest-privacy.js');
 
+// Once an authenticated owner has been established, any logout, guest transition,
+// or A -> B account switch gets a hard page boundary. This prevents feature-module
+// memory caches and in-flight responses from surviving into another identity.
+await import('./account-boundary.js');
+
 const root=document.querySelector('#app');
 root.innerHTML=authView()+shellView()+dialogsView();
 
