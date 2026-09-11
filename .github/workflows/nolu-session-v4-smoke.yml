@@ -2,7 +2,7 @@ name: nolu session v4 security
 
 on:
   push:
-    branches: [security/nolu-session-v4-20260911, main]
+    branches: [security/nolu-session-v4-20260911, security/nolu-api-hardening-20260911, main]
     paths:
       - 'supabase/functions/_shared/session-v4.ts'
       - 'supabase/functions/_shared/session-v4_test.ts'
@@ -79,8 +79,28 @@ jobs:
           assert 'ORIGIN_NOT_ALLOWED' in legacy, 'legacy evil-origin rejection missing'
           change=legacy[legacy.index("if(action==='change_password')"):]
           assert 'signSessionV4' in change.split("if(action==='rotate_recovery_code')",1)[0], 'password change must return a fresh v4 token'
+
+          # Regression guard for the service-role PostgREST filter-injection path:
+          # untrusted user_id must be validated and never interpolated into .or(...).
+          remove=legacy[legacy.index("if(action==='remove_friend')"):legacy.index("if(action==='create_meetup')")]
+          assert 'validUuid(target)' in remove, 'remove_friend must reject malformed target IDs'
+          assert '.or(' not in remove, 'remove_friend must not interpolate user input into PostgREST .or filters'
+          assert ".eq('requester_id',user.id).eq('addressee_id',target)" in remove
+          assert ".eq('requester_id',target).eq('addressee_id',user.id)" in remove
+
+          # Expensive PBKDF2 checks must reject oversized attacker-controlled inputs first.
+          login=legacy[legacy.index("if(action==='login')"):legacy.index("if(action==='recover_password')")]
+          recovery=legacy[legacy.index("if(action==='recover_password')"):legacy.index('const user=await requireUser(req)')]
+          assert 'password.length>128' in login, 'login password length cap missing'
+          assert 'code.length>64' in recovery, 'recovery-code length cap missing'
+
+          # Rate limiting must fail closed when its backing query/write fails.
+          rate=legacy[legacy.index('async function rateLimit'):legacy.index('function cleanUsername')]
+          assert 'count,error' in rate and 'if(error)throw error' in rate, 'rate-limit read errors must not fail open'
+          assert 'inserted.error' in rate, 'rate-limit write errors must not fail open'
+
           forbidden='contents:'+' write'
           for workflow in Path('.github/workflows').glob('nolu-session-v4*.yml'):
               assert forbidden not in workflow.read_text(), f'temporary write workflow still present: {workflow}'
-          print('active session integration, CORS, and CI permission guard passed')
+          print('active session integration, CORS, injection, PBKDF2, and CI permission guards passed')
           PY

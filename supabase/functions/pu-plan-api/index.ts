@@ -47,14 +47,19 @@ async function checkPassword(password:string,salt:string,expected:string){ if(!s
 async function rateLimit(req:Request,action:string,limit:number,minutes:number){
   const ip=(req.headers.get('x-forwarded-for')||req.headers.get('cf-connecting-ip')||'unknown').split(',')[0].trim();
   const rateKey=b64url(await hmac(`rate:${ip}`)); const since=new Date(Date.now()-minutes*60_000).toISOString();
-  const {count}=await db.from('puplan_app_rate_limits').select('id',{count:'exact',head:true}).eq('rate_key',rateKey).eq('action',action).gte('created_at',since);
-  if((count||0)>=limit)throw new ApiError(429,'操作太頻繁，請稍後再試','RATE_LIMITED'); await db.from('puplan_app_rate_limits').insert({rate_key:rateKey,action});
+  const {count,error}=await db.from('puplan_app_rate_limits').select('id',{count:'exact',head:true}).eq('rate_key',rateKey).eq('action',action).gte('created_at',since);
+  if(error)throw error;
+  if((count||0)>=limit)throw new ApiError(429,'操作太頻繁，請稍後再試','RATE_LIMITED');
+  const inserted=await db.from('puplan_app_rate_limits').insert({rate_key:rateKey,action});
+  if(inserted.error)throw inserted.error;
 }
 function cleanUsername(v:any){ return String(v||'').trim().replace(/^@/,'').toLowerCase(); }
 function cleanName(v:any){ return String(v||'').trim().slice(0,24); }
 function cleanEmail(v:any){ return String(v||'').trim().toLowerCase().slice(0,254); }
 function cleanBio(v:any){ return String(v||'').trim().slice(0,120); }
 function cleanText(v:any,n=80){ return String(v||'').trim().slice(0,n); }
+const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validUuid(v:any){ return UUID_RE.test(String(v||'')); }
 function cleanAvatar(v:any){ const s=String(v||''); if(!s)return ''; if(!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(s))throw new ApiError(400,'頭像格式不正確'); if(s.length>180000)throw new ApiError(400,'頭像檔案太大'); return s; }
 function publicProfile(u:any){ return {id:u.id,display_name:u.display_name,username:u.username,avatar_data:u.avatar_data||'',bio:u.bio||'',discoverable:u.discoverable!==false}; }
 function validateCourses(value:any){
@@ -70,7 +75,15 @@ async function ensureCurrentSemester(uid:string, legacyCourses:any[]=[]){ let ro
 }
 async function semesterBundle(uid:string){ const {data:legacy}=await db.from('puplan_app_schedules').select('courses').eq('user_id',uid).maybeSingle(); const {rows,active}=await ensureCurrentSemester(uid,legacy?.courses||[]); return {semesters:rows.map(semesterPublic),active_semester:semesterPublic(active),courses:Array.isArray(active.courses)?active.courses:[]}; }
 async function mirrorLegacy(uid:string,courses:any[]){ await db.from('puplan_app_schedules').upsert({user_id:uid,courses,updated_at:new Date().toISOString()},{onConflict:'user_id'}); }
-async function areFriends(a:string,b:string){ const {data}=await db.from('puplan_app_friendships').select('id').eq('status','accepted').or(`and(requester_id.eq.${a},addressee_id.eq.${b}),and(requester_id.eq.${b},addressee_id.eq.${a})`).limit(1); return !!data?.length; }
+async function areFriends(a:string,b:string){
+  const [outgoing,incoming]=await Promise.all([
+    db.from('puplan_app_friendships').select('id').eq('status','accepted').eq('requester_id',a).eq('addressee_id',b).limit(1),
+    db.from('puplan_app_friendships').select('id').eq('status','accepted').eq('requester_id',b).eq('addressee_id',a).limit(1),
+  ]);
+  if(outgoing.error)throw outgoing.error;
+  if(incoming.error)throw incoming.error;
+  return !!outgoing.data?.length||!!incoming.data?.length;
+}
 async function social(uid:string){
   const {data:rels,error}=await db.from('puplan_app_friendships').select('id,requester_id,addressee_id,status,created_at,updated_at').or(`requester_id.eq.${uid},addressee_id.eq.${uid}`).order('created_at',{ascending:false}); if(error)throw error;
   const relationships=rels||[]; const ids=[...new Set(relationships.flatMap((r:any)=>[r.requester_id,r.addressee_id]).filter((id:string)=>id!==uid))];
@@ -100,11 +113,13 @@ Deno.serve(async (req:Request)=>{
       const d=defaultSemester(); await Promise.all([db.from('puplan_app_schedules').insert({user_id:u.id,courses:[]}),db.from('puplan_app_semesters').insert({user_id:u.id,...d,courses:[],is_current:true})]); const token=await signSessionV4(u.id,salt,SERVICE_KEY); const bundle=await semesterBundle(u.id); return json({token,profile:publicProfile(u),...bundle,social:{relationships:[],profiles:[],friends:[],meetups:[]}});
     }
     if(action==='login'){
-      await rateLimit(req,'login',20,5); const email=cleanEmail(body.email),password=String(body.password||''); const {data:u}=await db.from('puplan_app_users').select('id,email,display_name,username,avatar_data,bio,discoverable,password_salt,password_hash').ilike('email',email).maybeSingle();
+      await rateLimit(req,'login',20,5); const email=cleanEmail(body.email),password=String(body.password||'');
+      if(!password||password.length>128)throw new ApiError(401,'Email 或密碼錯誤','INVALID_LOGIN');
+      const {data:u,error}=await db.from('puplan_app_users').select('id,email,display_name,username,avatar_data,bio,discoverable,password_salt,password_hash').ilike('email',email).maybeSingle();
       if(!u||!(await checkPassword(password,u.password_salt,u.password_hash)))throw new ApiError(401,'Email 或密碼錯誤','INVALID_LOGIN'); const token=await signSessionV4(u.id,u.password_salt,SERVICE_KEY); const bundle=await semesterBundle(u.id); return json({token,profile:publicProfile(u),...bundle,social:await social(u.id)});
     }
     if(action==='recover_password'){
-      await rateLimit(req,'recover',8,15); const email=cleanEmail(body.email),code=String(body.recovery_code||'').trim().toUpperCase(),newPassword=String(body.new_password||''); if(newPassword.length<8||newPassword.length>128)throw new ApiError(400,'新密碼至少 8 個字元'); const {data:u}=await db.from('puplan_app_users').select('id,recovery_salt,recovery_hash').ilike('email',email).maybeSingle(); if(!u||!u.recovery_salt||!u.recovery_hash||!(await checkPassword(code,u.recovery_salt,u.recovery_hash)))throw new ApiError(400,'Email 或救援碼不正確','INVALID_RECOVERY'); const salt=randomSalt(),hash=await passwordHash(newPassword,salt); await db.from('puplan_app_users').update({password_salt:salt,password_hash:hash,recovery_salt:null,recovery_hash:null,recovery_created_at:null,updated_at:new Date().toISOString()}).eq('id',u.id); return json({ok:true,message:'密碼已重設，請使用新密碼登入'});
+      await rateLimit(req,'recover',8,15); const email=cleanEmail(body.email),code=String(body.recovery_code||'').trim().toUpperCase(),newPassword=String(body.new_password||''); if(newPassword.length<8||newPassword.length>128)throw new ApiError(400,'新密碼至少 8 個字元'); if(!code||code.length>64)throw new ApiError(400,'Email 或救援碼不正確','INVALID_RECOVERY'); const {data:u}=await db.from('puplan_app_users').select('id,recovery_salt,recovery_hash').ilike('email',email).maybeSingle(); if(!u||!u.recovery_salt||!u.recovery_hash||!(await checkPassword(code,u.recovery_salt,u.recovery_hash)))throw new ApiError(400,'Email 或救援碼不正確','INVALID_RECOVERY'); const salt=randomSalt(),hash=await passwordHash(newPassword,salt); await db.from('puplan_app_users').update({password_salt:salt,password_hash:hash,recovery_salt:null,recovery_hash:null,recovery_created_at:null,updated_at:new Date().toISOString()}).eq('id',u.id); return json({ok:true,message:'密碼已重設，請使用新密碼登入'});
     }
     const user=await requireUser(req);
     if(action==='bootstrap'){ const bundle=await semesterBundle(user.id); return json({profile:publicProfile(user),...bundle,social:await social(user.id)}); }
@@ -128,7 +143,7 @@ Deno.serve(async (req:Request)=>{
       const bundle=await semesterBundle(user.id); await mirrorLegacy(user.id,bundle.courses); return json(bundle);
     }
     if(action==='save_schedule'){ const courses=validateCourses(body.courses); const key=cleanText(body.semester_key,24); let target:any=null; if(key){ const {data}=await db.from('puplan_app_semesters').select('id').eq('user_id',user.id).eq('semester_key',key).maybeSingle(); target=data; } if(!target){ const {active}=await ensureCurrentSemester(user.id); target=active; } const {error}=await db.from('puplan_app_semesters').update({courses,updated_at:new Date().toISOString()}).eq('id',target.id).eq('user_id',user.id); if(error)throw error; if(target.is_current!==false)await mirrorLegacy(user.id,courses); return json({ok:true}); }
-    if(action==='change_password'){ const current=String(body.current_password||''),next=String(body.new_password||''); if(next.length<8||next.length>128)throw new ApiError(400,'新密碼至少 8 個字元'); if(!(await checkPassword(current,user.password_salt,user.password_hash)))throw new ApiError(400,'目前密碼不正確'); const salt=randomSalt(),hash=await passwordHash(next,salt); await db.from('puplan_app_users').update({password_salt:salt,password_hash:hash,updated_at:new Date().toISOString()}).eq('id',user.id); return json({ok:true,token:await signSessionV4(user.id,salt,SERVICE_KEY)}); }
+    if(action==='change_password'){ const current=String(body.current_password||''),next=String(body.new_password||''); if(next.length<8||next.length>128)throw new ApiError(400,'新密碼至少 8 個字元'); if(!current||current.length>128||!(await checkPassword(current,user.password_salt,user.password_hash)))throw new ApiError(400,'目前密碼不正確'); const salt=randomSalt(),hash=await passwordHash(next,salt); await db.from('puplan_app_users').update({password_salt:salt,password_hash:hash,updated_at:new Date().toISOString()}).eq('id',user.id); return json({ok:true,token:await signSessionV4(user.id,salt,SERVICE_KEY)}); }
     if(action==='rotate_recovery_code'){ const code=recoveryCode(),salt=randomSalt(),hash=await passwordHash(code,salt); await db.from('puplan_app_users').update({recovery_salt:salt,recovery_hash:hash,recovery_created_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',user.id); return json({recovery_code:code}); }
     if(action==='search_people'){
       await rateLimit(req,'search',120,5); const term=String(body.query||'').trim().replace(/^@/,'').replace(/[%,()]/g,'').slice(0,24); if(term.length<2)return json({people:[]});
@@ -136,7 +151,7 @@ Deno.serve(async (req:Request)=>{
     }
     if(action==='social')return json({social:await social(user.id)});
     if(action==='send_request'){
-      const target=String(body.user_id||''); if(!/^[0-9a-f-]{36}$/i.test(target)||target===user.id)throw new ApiError(400,'好友資料不正確'); const {data:targetUser}=await db.from('puplan_app_users').select('id,discoverable').eq('id',target).maybeSingle(); if(!targetUser||targetUser.discoverable===false)throw new ApiError(404,'找不到這個使用者');
+      const target=String(body.user_id||''); if(!validUuid(target)||target===user.id)throw new ApiError(400,'好友資料不正確'); const {data:targetUser}=await db.from('puplan_app_users').select('id,discoverable').eq('id',target).maybeSingle(); if(!targetUser||targetUser.discoverable===false)throw new ApiError(404,'找不到這個使用者');
       const {error}=await db.from('puplan_app_friendships').insert({requester_id:user.id,addressee_id:target,status:'pending'}); if(error){if(error.code==='23505')throw new ApiError(409,'你們已經有好友關係或邀請','RELATION_EXISTS');throw error;} return json({ok:true,social:await social(user.id)});
     }
     if(action==='accept_request'){
@@ -146,10 +161,20 @@ Deno.serve(async (req:Request)=>{
       const id=Number(body.friendship_id); const {error}=await db.from('puplan_app_friendships').delete().eq('id',id).eq('addressee_id',user.id).eq('status','pending'); if(error)throw error; return json({ok:true,social:await social(user.id)});
     }
     if(action==='remove_friend'){
-      const target=String(body.user_id||''); const {data:rels}=await db.from('puplan_app_friendships').select('id').or(`and(requester_id.eq.${user.id},addressee_id.eq.${target}),and(requester_id.eq.${target},addressee_id.eq.${user.id})`); const ids=(rels||[]).map((r:any)=>r.id); if(ids.length)await db.from('puplan_app_friendships').delete().in('id',ids); return json({ok:true,social:await social(user.id)});
+      const target=String(body.user_id||'');
+      if(!validUuid(target)||target===user.id)throw new ApiError(400,'好友資料不正確');
+      const [outgoing,incoming]=await Promise.all([
+        db.from('puplan_app_friendships').select('id').eq('requester_id',user.id).eq('addressee_id',target),
+        db.from('puplan_app_friendships').select('id').eq('requester_id',target).eq('addressee_id',user.id),
+      ]);
+      if(outgoing.error)throw outgoing.error;
+      if(incoming.error)throw incoming.error;
+      const ids=[...(outgoing.data||[]),...(incoming.data||[])].map((r:any)=>r.id);
+      if(ids.length){const removed=await db.from('puplan_app_friendships').delete().in('id',ids);if(removed.error)throw removed.error;}
+      return json({ok:true,social:await social(user.id)});
     }
     if(action==='create_meetup'){
-      await rateLimit(req,'meetup',30,10); const target=String(body.user_id||''); if(!/^[0-9a-f-]{36}$/i.test(target)||target===user.id)throw new ApiError(400,'好友資料不正確'); if(!(await areFriends(user.id,target)))throw new ApiError(403,'只有好友可以互相發邀約');
+      await rateLimit(req,'meetup',30,10); const target=String(body.user_id||''); if(!validUuid(target)||target===user.id)throw new ApiError(400,'好友資料不正確'); if(!(await areFriends(user.id,target)))throw new ApiError(403,'只有好友可以互相發邀約');
       const kind=String(body.kind||''); const day=Number(body.day),start=Number(body.start_period),end=Number(body.end_period),note=String(body.note||'').trim().slice(0,120); if(!['meal','study'].includes(kind))throw new ApiError(400,'邀約類型不正確'); if(!Number.isInteger(day)||day<1||day>5||!Number.isInteger(start)||start<1||start>13||!Number.isInteger(end)||end<start||end>13)throw new ApiError(400,'邀約時間不正確');
       const {error}=await db.from('puplan_app_meetups').insert({creator_id:user.id,invitee_id:target,kind,day,start_period:start,end_period:end,note,status:'pending'}); if(error)throw error; return json({ok:true,social:await social(user.id)});
     }
