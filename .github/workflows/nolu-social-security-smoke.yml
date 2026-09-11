@@ -1,0 +1,41 @@
+name: nolu social security smoke
+
+on:
+  push:
+    branches: [security/nolu-social-hardening-20260911]
+    paths:
+      - 'supabase/functions/pu-plan-social/index.ts'
+      - '.github/workflows/nolu-social-security-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social/index.ts'
+      - '.github/workflows/nolu-social-security-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  social-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify fail-closed social rate limits and friendship filter guards
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('supabase/functions/pu-plan-social/index.ts').read_text()
+          rate=s[s.index('async function rateLimit'):s.index('async function signedMedia')]
+          compact=''.join(rate.split())
+          assert 'const{count,error}=await' in compact, 'rate-limit read errors are ignored'
+          assert 'if(error)throwerror' in compact, 'rate-limit reads must fail closed'
+          assert 'inserted.error' in rate or 'insertError' in rate, 'rate-limit writes must fail closed'
+
+          friends=s[s.index('async function areFriends'):s.index('async function friendsAmong')]
+          relation=s[s.index('async function friendship'):s.index('async function memberOf')]
+          assert 'validUuid' in friends, 'areFriends must enforce UUID-only filter operands'
+          assert 'validUuid' in relation, 'friendship must enforce UUID-only filter operands'
+          print('SOCIAL_SECURITY_CONTRACT_OK')
+          PY
