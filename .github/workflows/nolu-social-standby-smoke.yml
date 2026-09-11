@@ -1,0 +1,41 @@
+name: nolu social standby smoke
+
+on:
+  push:
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-social-standby-smoke.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-social-standby-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify regional social routing
+        run: |
+          set -euo pipefail
+          node --experimental-default-type=module --check pu-plan/community.js
+          node <<'NODE'
+          const fs=require('node:fs');
+          const assert=require('node:assert/strict');
+          const c=fs.readFileSync('pu-plan/community.js','utf8');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          assert.match(c,/hrrmkrayvrgnwcroyttp\.supabase\.co\/functions\/v1\/pu-plan-social/);
+          assert.match(c,/ltfurqaspqsvswmebyzw\.supabase\.co\/functions\/v1\/pu-plan-social/);
+          assert.match(c,/puplan_session_primary_v1/);
+          assert.match(c,/puplan_session_standby_v1/);
+          assert.match(c,/tokenFor=api=>api===SOCIAL_STANDBY\?standbyToken\(\):primaryToken\(\)/);
+          assert.match(c,/for\(const api of candidates\)/);
+          assert.doesNotMatch(c,/const token=\(\)=>localStorage\.getItem\('puplan_session_primary_v1'\)/);
+          assert.doesNotMatch(c,/setItem\('puplan_session_primary_v1',[^)]*standby/i);
+          assert.match(sw,/\.\/community\.js/,'community must remain in the installed shell');
+          console.log('NOLU_SOCIAL_STANDBY_OK');
+          NODE

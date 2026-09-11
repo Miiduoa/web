@@ -1,27 +1,46 @@
 import {cleanAvatar} from './core/state.js';
-const SOCIAL_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+const SOCIAL_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+const SOCIAL_STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social';
 const SUPABASE_URL='https://hrrmkrayvrgnwcroyttp.supabase.co';
 const SUPABASE_KEY='sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
 const esc=s=>app?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const token=()=>localStorage.getItem('puplan_session_primary_v1')||'';
-const signedIn=()=>!!token()&&window.PUPLAN_CLOUD?.isSignedIn?.();
+const primaryToken=()=>localStorage.getItem('puplan_session_primary_v1')||'';
+const standbyToken=()=>localStorage.getItem('puplan_session_standby_v1')||'';
+const tokenFor=api=>api===SOCIAL_STANDBY?standbyToken():primaryToken();
+const socialCandidates=()=>{
+  const out=[];
+  if(primaryToken())out.push(SOCIAL_PRIMARY);
+  if(standbyToken())out.push(SOCIAL_STANDBY);
+  return out;
+};
+const signedIn=()=>socialCandidates().length>0&&window.PUPLAN_CLOUD?.isSignedIn?.();
 const profile=()=>window.PUPLAN_CLOUD?.getProfile?.()||{id:'',display_name:'我',username:''};
 let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0,lastConversationRefreshAt=0;
 
 async function request(action,payload={},timeoutMs=10000){
   if(!signedIn())throw new Error('請先登入');
-  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
-  try{
-    const res=await fetch(SOCIAL_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload}),signal:ctrl.signal,cache:'no-store'});
-    const data=await res.json().catch(()=>({}));
-    if(!res.ok)throw new Error(data.message||'目前無法完成這個操作');
-    return data;
-  }catch(e){
-    if(e?.name==='AbortError')throw new Error('雲端回應逾時，稍後自動重試');
-    throw e;
-  }finally{clearTimeout(timer)}
+  const candidates=socialCandidates();
+  if(!candidates.length)throw new Error('目前沒有可用的雲端登入憑證');
+  let lastError=null;
+  for(const api of candidates){
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+    try{
+      const res=await fetch(api,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${tokenFor(api)}`},body:JSON.stringify({action,...payload}),signal:ctrl.signal,cache:'no-store'});
+      const data=await res.json().catch(()=>({}));
+      if(res.ok){
+        localStorage.setItem('nolu_social_cloud_v1',api===SOCIAL_STANDBY?'standby':'primary');
+        return data;
+      }
+      if((res.status>=500||res.status===401||res.status===410)&&api!==candidates[candidates.length-1]){lastError=new Error(data.message||`雲端服務錯誤 (${res.status})`);continue}
+      throw new Error(data.message||'目前無法完成這個操作');
+    }catch(e){
+      lastError=e?.name==='AbortError'?new Error('雲端回應逾時，正在嘗試備援'):e;
+      if(api===candidates[candidates.length-1])throw lastError;
+    }finally{clearTimeout(timer)}
+  }
+  throw lastError||new Error('目前無法完成這個操作');
 }
 function avatar(p,cls='avatar'){
   const src=cleanAvatar(p?.avatar_data||'');
