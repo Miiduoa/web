@@ -42,6 +42,7 @@ jobs:
           cleanup = text('supabase/migrations/20260911154004_nolu_hot_standby_primary_cleanup.sql')
           standby_tables = text('supabase/standby/20260911_nolu_hot_standby_tables.sql')
           standby_apply = text('supabase/standby/20260911_nolu_hot_standby_apply.sql')
+          social_apply = text('supabase/standby/20260911_nolu_social_replica_apply.sql')
           failback_snapshot = text('supabase/standby/20260911_nolu_failback_snapshot.sql')
           relay = text('supabase/functions/pu-plan-replica-relay-v2/index.ts')
           ingest = text('supabase/functions/pu-plan-replica-ingest-v3/index.ts')
@@ -68,6 +69,19 @@ jobs:
           assert 'FOR UPDATE' in standby_apply
           assert 'last_revision' in standby_apply
           assert 'FROM PUBLIC,anon,authenticated' in standby_apply
+
+          # Later social rollout extends the core standby apply. Keep the target
+          # source explicit and ensure the previously duplicated chat upserts do
+          # not return.
+          assert 'puplan_apply_server_replica' in social_apply
+          for field in ('friendships','meetups','posts','post_likes','conversations','conversation_members','messages','feed_preferences','author_affinity'):
+              assert f"'{{bundle,{field}}}'" in social_apply
+          assert social_apply.count('insert into public.puplan_app_conversations select *') == 1
+          assert social_apply.count('insert into public.puplan_app_conversation_members select *') == 1
+          assert 'puplan_apply_replica_media' in social_apply
+          assert 'text-only standby social path' in social_apply
+          assert 'FROM PUBLIC, anon, authenticated' in social_apply
+          assert 'TO service_role' in social_apply
 
           # Failback must be reproducible from Git, not only from dashboard history.
           assert 'puplan_build_failback_snapshot' in failback_snapshot
