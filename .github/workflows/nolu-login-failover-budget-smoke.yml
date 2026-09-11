@@ -1,0 +1,88 @@
+name: nolu login failover budget smoke
+
+on:
+  push:
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-login-failover-budget-smoke.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-login-failover-budget-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  timing-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate login failover timing contract
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const vm=require('vm');
+          const assert=require('assert');
+
+          const main=fs.readFileSync('pu-plan/main.js','utf8');
+          const patience=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
+          const budget=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+          const resilience=fs.readFileSync('pu-plan/resilience.js','utf8');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+
+          assert(main.includes("await import('./resilience.js')"));
+          assert(main.includes("await import('./login-failover-budget.js')"));
+          assert(main.indexOf("await import('./resilience.js')") < main.indexOf("await import('./login-failover-budget.js')"));
+          assert(main.indexOf("await import('./login-failover-budget.js')") < main.indexOf("await import('./offline-session-rescue.js')"));
+          assert(sw.includes("'./login-failover-budget.js'"));
+          assert(sw.includes('nolu-shell-20260911-login-failover2'));
+
+          assert(patience.includes('hrrmkrayvrgnwcroyttp.supabase.co'));
+          assert(patience.includes('ltfurqaspqsvswmebyzw.supabase.co'));
+          assert(patience.includes('nolu-browser-gateway-v1'));
+          assert(patience.includes('primaryLoginTimeoutMs:5000'));
+          assert(patience.includes('standbyLoginTimeoutMs:6500'));
+          assert(budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'));
+          assert(budget.includes('nolu-browser-gateway-v1'));
+          assert(resilience.includes("const base=preferredCloud()==='standby'?[STANDBY,PRIMARY]:[PRIMARY,STANDBY]"));
+          assert(!/NO_STANDBY_ACTIONS[^;]*login/.test(resilience));
+
+          function context(baseFetch){
+            const window={fetch:baseFetch};
+            window.window=window;
+            return vm.createContext({window,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,console});
+          }
+
+          for(const host of ['hrrmkrayvrgnwcroyttp.supabase.co','ltfurqaspqsvswmebyzw.supabase.co']){
+            const caller=new AbortController();
+            let observedSignal=null;
+            const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});
+            vm.runInContext(patience,ctx);
+            ctx.window.fetch(`https://${host}/functions/v1/nolu-browser-gateway-v1?target=pu-plan-api-v8`,{
+              method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal
+            });
+            assert(observedSignal && observedSignal!==caller.signal, `${host} must replace the HA short-hop signal`);
+          }
+
+          {
+            const caller=new AbortController();
+            let observedSignal=null;
+            const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});
+            vm.runInContext(budget,ctx);
+            ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1?target=pu-plan-api-v6',{
+              method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal
+            });
+            assert(observedSignal && observedSignal!==caller.signal,'overall budget must replace cloud.js legacy 6.5s signal');
+          }
+
+          console.log('regional login failover budget: ok');
+          NODE
