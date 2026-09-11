@@ -1,0 +1,178 @@
+name: nolu regional session isolation
+
+on:
+  push:
+    branches: [main, fix/nolu-provider-mesh-security-final3-20260911]
+    paths:
+      - 'pu-plan/transport-bridge.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - '.github/workflows/nolu-regional-session-isolation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/transport-bridge.js'
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - '.github/workflows/nolu-regional-session-isolation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regional-session-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Static session boundaries
+        run: |
+          set -euo pipefail
+          for f in pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud.js pu-plan/cloud-replication.js pu-plan/guest-privacy.js pu-plan/durable-bridge.js pu-plan/offline-session-rescue.js; do node --check "$f"; done
+          grep -q 'pu-plan-api-v8' pu-plan/transport-bridge.js
+          grep -q 'pu-plan-api-v8' pu-plan/resilience.js
+          grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
+          grep -q 'puplan_standby_session_v2' pu-plan/cloud.js
+          grep -q 'sessionConflict' pu-plan/guest-privacy.js
+          ! grep -q 'puplan_portable_session_v1' pu-plan/transport-bridge.js
+          ! grep -q 'puplan_portable_session_v1' pu-plan/resilience.js
+          ! grep -q 'puplan_portable_session_v1' pu-plan/cloud-replication.js
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-regional init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-regional install playwright >/dev/null 2>&1
+          cd /tmp/nolu-regional && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Tokyo login, reload and replica failback keep tokens isolated
+        env:
+          NODE_PATH: /tmp/nolu-regional/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-regional-http.log 2>&1 &
+          cat >/tmp/nolu-regional/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const uid='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+          const other='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+          const mkToken=id=>`${b64(JSON.stringify({v:4,uid:id,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'cv-test'}))}.test-signature`;
+          const PRIMARY=mkToken(uid), STANDBY=mkToken(uid), OTHER=mkToken(other);
+          const PRIMARY_V8='hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+          const STANDBY_V8='ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
+          const PRIMARY_REPLICA='hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-replica-v2';
+          const STANDBY_REPLICA='ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-replica-v2';
+          const profile={id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true,role:'user',profile_visibility:'public'};
+          const bundle={profile,courses:[{id:'c1',name:'TOKYO COURSE',day:1,start:1,end:2,teacher:'T',room:'R'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[]}};
+          let replicaEnabled=false;
+          let wrongRegionAuth=[];
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              await page.route('https://**/*',async route=>{
+                const req=route.request(),url=req.url();
+                if(!url.includes('supabase.co'))return route.continue();
+                let body={};try{body=JSON.parse(req.postData()||'{}')}catch{}
+                const auth=req.headers()['authorization']||'';
+                if(auth===`Bearer ${STANDBY}`&&url.includes('hrrmkrayvrgnwcroyttp.supabase.co'))wrongRegionAuth.push({url,action:body.action});
+                if(auth===`Bearer ${PRIMARY}`&&url.includes('ltfurqaspqsvswmebyzw.supabase.co'))wrongRegionAuth.push({url,action:body.action});
+
+                if(url.includes(PRIMARY_REPLICA)||url.includes(STANDBY_REPLICA)){
+                  if(!replicaEnabled)return route.fulfill({status:503,contentType:'application/json',body:'{"error":"TEST_REPLICA_OFF"}'});
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,peer_synced:true,peer_token:PRIMARY,peer_ref:'hrrmkrayvrgnwcroyttp'})});
+                }
+                if(url.includes(PRIMARY_V8))return route.fulfill({status:503,contentType:'application/json',body:'{"error":"PRIMARY_DOWN"}'});
+                if(url.includes(STANDBY_V8)){
+                  if(body.action==='login')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...bundle,token:STANDBY})});
+                  if(body.action==='bootstrap')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(bundle)});
+                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,...bundle})});
+                }
+                return route.fulfill({status:503,contentType:'application/json',body:'{"error":"COMPAT_DOWN"}'});
+              });
+
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              await page.fill('#loginEmail','tokyo@example.invalid');
+              await page.fill('#loginPassword','not-a-real-password');
+              await page.locator('#loginForm').evaluate(form=>form.requestSubmit());
+              await page.waitForFunction(()=>localStorage.getItem('puplan_standby_session_v2'),{timeout:15000});
+              let state=await page.evaluate(()=>({
+                primary:localStorage.getItem('puplan_session'),
+                standby:localStorage.getItem('puplan_standby_session_v2'),
+                preferred:localStorage.getItem('nolu_preferred_cloud_v1'),
+                owner:localStorage.getItem('puplan_course_owner'),
+                name:localStorage.getItem('puplan_name')
+              }));
+              console.log('TOKYO_LOGIN',state);
+              assert(state.primary===null,'Tokyo login polluted Mumbai puplan_session');
+              assert(state.standby===STANDBY,'Tokyo session was not stored in dedicated key');
+              assert(state.preferred==='standby','Tokyo success did not become preferred cloud');
+              assert(state.owner===uid&&state.name==='Tokyo User','Tokyo account cache was not hydrated');
+
+              await page.reload({waitUntil:'domcontentloaded',timeout:30000});
+              await page.waitForFunction(()=>document.body.innerText.includes('TOKYO COURSE'),{timeout:15000});
+              state=await page.evaluate(()=>({
+                primary:localStorage.getItem('puplan_session'),
+                standby:localStorage.getItem('puplan_standby_session_v2'),
+                owner:localStorage.getItem('puplan_course_owner'),
+                courses:localStorage.getItem('puplan_courses'),
+                gateOff:document.querySelector('#authGate')?.classList.contains('off')
+              }));
+              console.log('TOKYO_RELOAD',state);
+              assert(state.primary===null,'Reload copied Tokyo token into Mumbai key');
+              assert(state.standby===STANDBY,'Reload lost Tokyo regional session');
+              assert(state.owner===uid&&/TOKYO COURSE/.test(state.courses||''),'Reload lost Tokyo account cache');
+              assert(state.gateOff===true,'Standby-only session was treated as signed out after reload');
+
+              wrongRegionAuth=[];
+              await page.evaluate(()=>window.PUPLAN_CLOUD.searchPeople('zz'));
+              await page.waitForTimeout(200);
+              assert(wrongRegionAuth.length===0,`regional token leaked to wrong provider: ${JSON.stringify(wrongRegionAuth)}`);
+
+              await page.evaluate(()=>localStorage.setItem('puplan_portable_session_v1','portable.mesh.sentinel'));
+              replicaEnabled=true;
+              const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci-failback',true));
+              state=await page.evaluate(()=>({
+                primary:localStorage.getItem('puplan_session'),
+                standby:localStorage.getItem('puplan_standby_session_v2'),
+                portable:localStorage.getItem('puplan_portable_session_v1'),
+                preferred:localStorage.getItem('nolu_preferred_cloud_v1')
+              }));
+              console.log('REPLICA_FAILBACK',synced,state);
+              assert(synced===true,'replica-v2 failback did not succeed');
+              assert(state.primary===PRIMARY,'replica-v2 peer token was not stored as Mumbai session');
+              assert(state.standby===STANDBY,'replica-v2 overwrote Tokyo session');
+              assert(state.portable==='portable.mesh.sentinel','replica-v2 touched provider-mesh portable token');
+              assert(state.preferred==='primary','successful standby to primary replication did not unlock failback');
+
+              const conflict=await browser.newContext({serviceWorkers:'block'});
+              const conflictPage=await conflict.newPage();
+              await conflictPage.addInitScript(({PRIMARY,OTHER,uid})=>{
+                localStorage.setItem('puplan_session',PRIMARY);
+                localStorage.setItem('puplan_standby_session_v2',OTHER);
+                localStorage.setItem('puplan_course_owner',uid);
+                localStorage.setItem('puplan_name','PRIVATE SHOULD CLEAR');
+                localStorage.setItem('puplan_courses','[{"name":"PRIVATE SHOULD CLEAR"}]');
+              },{PRIMARY,OTHER,uid});
+              await conflictPage.route('https://**/*',route=>route.request().url().includes('supabase.co')?route.fulfill({status:503,contentType:'application/json',body:'{}'}):route.continue());
+              await conflictPage.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              const conflictState=await conflictPage.evaluate(()=>({primary:localStorage.getItem('puplan_session'),standby:localStorage.getItem('puplan_standby_session_v2'),owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:localStorage.getItem('puplan_courses')}));
+              console.log('CONFLICT_FAIL_CLOSED',conflictState);
+              assert(!conflictState.primary&&!conflictState.standby&&!conflictState.owner&&!conflictState.name&&!conflictState.courses,'cross-account regional session conflict did not fail closed');
+              await conflict.close();
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 100s node /tmp/nolu-regional/check.cjs
