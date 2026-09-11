@@ -1,0 +1,36 @@
+name: nolu v8 rebase copy
+
+on:
+  push:
+    branches:
+      - feat/nolu-v8-rebased-20260911
+    paths:
+      - '.github/workflows/nolu-v8-rebase-copy.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/nolu-v8-rebased-20260911
+          fetch-depth: 0
+      - name: Copy validated v8 files from staging branch
+        run: |
+          set -euo pipefail
+          git fetch origin feat/nolu-independent-standby-v8
+          git checkout origin/feat/nolu-independent-standby-v8 -- supabase/functions/pu-plan-api-v8/index.ts .github/workflows/nolu-v8-standby-smoke.yml
+          grep -q "PRIMARY_ONLY_ACTIONS.has(action)) return await forwardPrimary" supabase/functions/pu-plan-api-v8/index.ts
+          test "$(grep -c 'return await forwardPrimary(req, body);' supabase/functions/pu-plan-api-v8/index.ts)" -eq 3
+      - name: Commit rebased files
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/pu-plan-api-v8/index.ts .github/workflows/nolu-v8-standby-smoke.yml
+          git commit -m 'feat(nolu): add independently signed standby v8'
+          git push origin HEAD:feat/nolu-v8-rebased-20260911
