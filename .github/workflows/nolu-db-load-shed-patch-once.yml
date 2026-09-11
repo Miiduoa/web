@@ -1,0 +1,146 @@
+name: nolu chat load-shed patch once
+
+on:
+  push:
+    branches: [perf/nolu-free-db-load-shed-20260911]
+    paths:
+      - '.github/workflows/nolu-db-load-shed-patch-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/nolu-free-db-load-shed-20260911
+      - name: Reduce chat database polling load
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('pu-plan/community.js')
+          s=p.read_text()
+
+          old="""let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,globalPoll=null,storageClient=null;
+
+async function request(action,payload={}){
+  if(!signedIn())throw new Error('請先登入');
+  const res=await fetch(SOCIAL_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload})});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok)throw new Error(data.message||'目前無法完成這個操作');
+  return data;
+}
+"""
+          new="""let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0;
+
+async function request(action,payload={},timeoutMs=10000){
+  if(!signedIn())throw new Error('請先登入');
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{
+    const res=await fetch(SOCIAL_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload}),signal:ctrl.signal,cache:'no-store'});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.message||'目前無法完成這個操作');
+    return data;
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('雲端回應逾時，稍後自動重試');
+    throw e;
+  }finally{clearTimeout(timer)}
+}
+"""
+          assert old in s, 'request block not found'
+          s=s.replace(old,new,1)
+
+          old="""async function loadInbox(silent=false,notificationCheck=false){
+  try{const previous=inboxData.slice(),data=await request('inbox',{limit:30});inboxData=data.conversations||[];updateBadges(totalUnread());if(notificationCheck)await maybeNotify(inboxData,previous);renderInbox();if(currentConversation&&$('#chatPanel'))await openConversation(currentConversation,true)}catch(e){if(!silent&&$('#inboxList'))$('#inboxList').innerHTML=`<div class=\"activity-empty\">${esc(e.message)}</div>`}
+}
+"""
+          new="""async function loadInbox(silent=false,notificationCheck=false,refreshConversation=false){
+  if(inboxInFlight)return inboxInFlight;
+  inboxInFlight=(async()=>{
+    try{
+      const previous=inboxData.slice(),data=await request('inbox',{limit:30});
+      inboxData=data.conversations||[];pollFailures=0;lastInboxAt=Date.now();updateBadges(totalUnread());
+      if(notificationCheck)await maybeNotify(inboxData,previous);renderInbox();
+      if(refreshConversation&&currentConversation&&$('#chatPanel'))await openConversation(currentConversation,true);
+    }catch(e){
+      pollFailures=Math.min(5,pollFailures+1);
+      if(!silent&&$('#inboxList'))$('#inboxList').innerHTML=`<div class=\"activity-empty\">${esc(e.message)}</div>`;
+    }finally{inboxInFlight=null}
+  })();
+  return inboxInFlight;
+}
+"""
+          assert old in s, 'loadInbox block not found'
+          s=s.replace(old,new,1)
+
+          old="currentConversation=id;const data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;"
+          new="currentConversation=id;const unreadBefore=Number(inboxData.find(x=>x.id===id)?.unread||0),data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;"
+          assert old in s, 'openConversation start not found'
+          s=s.replace(old,new,1)
+
+          old="const msg=$('#chatMessages');if(msg)msg.scrollTop=msg.scrollHeight;await request('mark_read',{conversation_id:id});const row=inboxData.find(x=>x.id===id);if(row)row.unread=0;updateBadges(totalUnread());renderInbox();"
+          new="const msg=$('#chatMessages');if(msg)msg.scrollTop=msg.scrollHeight;if(!silent||unreadBefore>0){await request('mark_read',{conversation_id:id});const row=inboxData.find(x=>x.id===id);if(row)row.unread=0;updateBadges(totalUnread());renderInbox()}"
+          assert old in s, 'mark_read block not found'
+          s=s.replace(old,new,1)
+
+          old="""function startPolling(){
+  clearInterval(pollTimer);
+  pollTimer=setInterval(()=>{
+    if(document.hidden)return;
+    if($('#community')?.classList.contains('on')&&currentTab==='chat')loadInbox(true,true);
+  },12000);
+}
+function startGlobalPolling(){clearInterval(globalPoll);globalPoll=setInterval(()=>{if(signedIn())loadInbox(true,true)},12000);setTimeout(()=>signedIn()&&loadInbox(true,false),1500)}
+async function openHashChat(){const m=location.hash.match(/chat=([^&]+)/);if(!m||!signedIn())return;const id=decodeURIComponent(m[1]);history.replaceState(null,'',location.pathname);showCommunity();switchTab('chat');await loadInbox(true);await openConversation(id)}
+
+installSection();startGlobalPolling();setTimeout(openHashChat,1500);
+document.addEventListener('puplan:profile-changed',()=>{installNotificationSetting();if($('#community')?.classList.contains('on'))switchTab(currentTab)});
+window.addEventListener('focus',()=>signedIn()&&loadInbox(true,true));
+window.PUPLAN_COMMUNITY={show:showCommunity,openChatWith:async userId=>{showCommunity();switchTab('chat');const data=await request('create_chat',{user_ids:[userId]});await loadInbox();await openConversation(data.conversation.id)},refreshInbox:()=>loadInbox(true,true),reloadFeed:()=>loadFeed(true)};
+"""
+          new="""function chatActive(){return !document.hidden&&$('#community')?.classList.contains('on')&&currentTab==='chat'}
+function pollingDelay(){
+  if(document.hidden||!signedIn())return 60000;
+  const base=chatActive()?20000:60000;
+  return Math.min(300000,base*Math.pow(2,Math.min(pollFailures,4)));
+}
+function stopPolling(){clearTimeout(pollTimer);pollTimer=null}
+function schedulePolling(delay=pollingDelay()){
+  stopPolling();
+  pollTimer=setTimeout(async()=>{
+    if(!document.hidden&&signedIn())await loadInbox(true,true,chatActive()).catch(()=>{});
+    schedulePolling();
+  },delay);
+}
+function startPolling(){schedulePolling(1000)}
+function startGlobalPolling(){schedulePolling(1500)}
+async function openHashChat(){const m=location.hash.match(/chat=([^&]+)/);if(!m||!signedIn())return;const id=decodeURIComponent(m[1]);history.replaceState(null,'',location.pathname);showCommunity();switchTab('chat');await loadInbox(true);await openConversation(id)}
+
+installSection();startGlobalPolling();setTimeout(openHashChat,1500);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)return stopPolling();if(signedIn()&&Date.now()-lastInboxAt>15000)loadInbox(true,true,chatActive()).catch(()=>{});startPolling()});
+document.addEventListener('puplan:profile-changed',()=>{installNotificationSetting();if($('#community')?.classList.contains('on'))switchTab(currentTab);startPolling()});
+window.addEventListener('focus',()=>{if(!signedIn())return;if(Date.now()-lastInboxAt>15000)loadInbox(true,true,chatActive()).catch(()=>{});startPolling()});
+window.PUPLAN_COMMUNITY={show:showCommunity,openChatWith:async userId=>{showCommunity();switchTab('chat');const data=await request('create_chat',{user_ids:[userId]});await loadInbox();await openConversation(data.conversation.id)},refreshInbox:()=>loadInbox(true,true,chatActive()),reloadFeed:()=>loadFeed(true)};
+"""
+          assert old in s, 'polling block not found'
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+
+          node --check pu-plan/community.js
+          grep -q 'inboxInFlight' pu-plan/community.js
+          grep -q 'pollingDelay' pu-plan/community.js
+          ! grep -q 'globalPoll' pu-plan/community.js
+          ! grep -q 'setInterval(' pu-plan/community.js
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'Miiduoa'
+          git config user.email '107848266+Miiduoa@users.noreply.github.com'
+          git add pu-plan/community.js
+          git commit -m 'perf(nolu): shed chat polling database load'
+          git push origin HEAD:perf/nolu-free-db-load-shed-20260911
