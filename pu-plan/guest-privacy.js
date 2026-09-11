@@ -18,7 +18,9 @@ const CLOUD_SESSION_KEYS=[
 ];
 const RESILIENCE_PREFIXES=[
   'nolu_account_snapshot_v1:','nolu_pending_mutations_v1:',
-  'nolu_standby_dirty_v1:','nolu_standby_seeded_v1:','nolu_standby_dirty_v2:','nolu_standby_seeded_v2:'
+  'nolu_standby_dirty_v1:','nolu_standby_seeded_v1:',
+  'nolu_standby_dirty_v2:','nolu_standby_seeded_v2:',
+  'nolu_standby_dirty_v3:','nolu_standby_seeded_v3:'
 ];
 
 function clearLocal(keys){for(const key of keys)localStorage.removeItem(key)}
