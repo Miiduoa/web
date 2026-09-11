@@ -1,17 +1,19 @@
 import {cleanAvatar} from './core/state.js';
 
-const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
-const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v7';
+const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
 const COMPAT_V6='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const COMPAT_CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,STANDBY,COMPAT_V6,COMPAT_CORE];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260911-ha2';
+const VERSION='20260911-ha3';
 const BASE_COOLDOWN=15000;
 const MAX_COOLDOWN=60000;
 const PREFERRED_KEY='nolu_preferred_cloud_v1';
 const PORTABLE_KEY='puplan_portable_session_v1';
-const NO_STANDBY_ACTIONS=new Set(['signup','recover_password']);
+const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
+const STANDBY_SESSION_KEY='puplan_session_standby_v1';
+const NO_STANDBY_ACTIONS=new Set(['signup','recover_password','change_password','rotate_recovery_code','search_people','send_request','accept_request','decline_request','remove_friend','create_meetup','respond_meetup','cancel_meetup','social']);
 const state={mode:'online',tier:'primary',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION,endpoints:{}};
 let requestSequence=0,newestOfflineSequence=0;
 
@@ -86,7 +88,12 @@ function earliestProbe(requested,action=''){const all=allApiCandidates(requested
 function requestBody(options){if(typeof options?.body!=='string')return null;return safeJson(options.body,null)}
 function isCoreUrl(url){return CORE_APIS.includes(String(url))||(Array.isArray(window.NOLU_SECONDARY_APIS)&&window.NOLU_SECONDARY_APIS.includes(String(url)))}
 function hasAuthorization(options){try{return new Headers(options?.headers||{}).has('Authorization')}catch{return false}}
-function authTokenFor(api){return api===PRIMARY||api===STANDBY?portableToken()||token():token()}
+function tierSession(api){
+  const current=token(),uid=parseTokenUid(current),key=api===STANDBY?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,specific=localStorage.getItem(key)||'';
+  if(uid&&parseTokenUid(specific)===uid)return specific;
+  return current;
+}
+function authTokenFor(api){return api===STANDBY?tierSession(STANDBY):api===PRIMARY||api===COMPAT_V6||api===COMPAT_CORE?tierSession(PRIMARY):token()}
 function freshOptions(api,options={}){
   if(!hasAuthorization(options))return options;const fresh=authTokenFor(api);if(!fresh)return options;
   const headers=new Headers(options.headers||{});headers.set('Authorization',`Bearer ${fresh}`);return {...options,headers};
@@ -107,10 +114,14 @@ function syntheticMutation(action,payload){
 function offlineResponse(action,body,sequence){if(action==='bootstrap'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticBootstrap()}if(action==='save_schedule'||action==='update_profile'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticMutation(action,body)}return null}
 function clearMatchingPending(uid,action,body){const q=readPending(uid);if(action==='save_schedule'&&q.schedule){const sent=Array.isArray(body?.courses)?body.courses.slice(0,80):[];if(sameJson(q.schedule.courses,sent)){delete q.schedule;writePending(uid,q)}}if(action==='update_profile'&&q.profile&&sameJson(q.profile.payload,body)){delete q.profile;writePending(uid,q)}}
 function storeResponseTokens(data,api){
-  const portable=typeof data?.portable_token==='string'?data.portable_token:api===STANDBY&&typeof data?.token==='string'?data.token:'';
-  if(portable&&portable.split('.').length===2)localStorage.setItem(PORTABLE_KEY,portable);
-  if(api!==STANDBY&&typeof data?.token==='string'&&data.token.split('.').length===2&&data.token!==token())localStorage.setItem('puplan_session',data.token);
-  if(portable||api!==STANDBY&&data?.token)document.dispatchEvent(new CustomEvent('nolu:session-rotated',{detail:{api,tier:api===STANDBY?'standby':'primary'}}));
+  const portable=typeof data?.portable_token==='string'?data.portable_token:'';
+  if(portable&&portable.split('.').length===3)localStorage.setItem(PORTABLE_KEY,portable);
+  const session=typeof data?.token==='string'&&data.token.split('.').length===2?data.token:'';
+  if(session){
+    const tier=api===STANDBY?'standby':'primary';
+    localStorage.setItem(tier==='standby'?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,session);
+    document.dispatchEvent(new CustomEvent('nolu:session-rotated',{detail:{api,tier}}));
+  }
 }
 async function captureSuccess(res,body,api,sequence){
   if(!res?.ok)return;state.activeApi=api;if(api===STANDBY)setPreferredCloud('standby');if(sequence>=newestOfflineSequence)setMode('online',api);
@@ -119,19 +130,19 @@ async function captureSuccess(res,body,api,sequence){
 
 window.fetch=async function noluResilientFetch(input,options={}){
   const url=typeof input==='string'?input:input?.url;if(!isCoreUrl(url))return nativeFetch(input,options);
-  const sequence=++requestSequence,body=requestBody(options),action=String(body?.action||'');let lastError=null,lastResponse=null,standby401=null;
+  const sequence=++requestSequence,body=requestBody(options),action=String(body?.action||'');let lastError=null,lastResponse=null,tierAuth401=null;
   const candidates=apiCandidates(String(url),{action});if(!candidates.length){state.lastError='all cloud circuits are temporarily open';const local=offlineResponse(action,body,sequence);if(local)return local;throw new TypeError('Nolu cloud temporarily unavailable')}
   for(const api of candidates){
     if(options?.signal?.aborted)break;
     try{
       const res=await timedFetch(api,options,1800);lastResponse=res;
-      if(api===STANDBY&&res.status===401&&hasAuthorization(options)){standby401=res;lastError=new Error('standby authorization unavailable');markFailure(api,lastError);continue}
+      if((api===PRIMARY||api===STANDBY)&&res.status===401&&hasAuthorization(options)){tierAuth401=res;lastError=new Error('tier-local authorization unavailable');continue}
       if(res.status<500){markSuccess(api);await captureSuccess(res,body,api,sequence);return res}
       lastError=new Error(`HTTP ${res.status}`);markFailure(api,lastError);
     }catch(e){lastError=e;markFailure(api,e)}
   }
   state.lastError=String(lastError||'cloud unavailable');const local=offlineResponse(action,body,sequence);if(local)return local;
-  if(standby401&&hasAuthorization(options))return new Response(JSON.stringify({error:'STANDBY_AUTH_UNCERTAIN',message:'主雲端暫時無法驗證登入狀態，已保留本機登入資料'}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+  if(tierAuth401&&hasAuthorization(options))return new Response(JSON.stringify({error:'TIER_AUTH_UNCERTAIN',message:'雲端暫時無法驗證這個裝置的登入狀態，已保留本機資料'}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
   if(lastResponse)return lastResponse;throw lastError||new TypeError('Nolu cloud unavailable');
 };
 
@@ -166,4 +177,4 @@ async function recover(){
   setInterval(recover,30000);
 })();
 
-window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,portableToken,PRIMARY,STANDBY};
+window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,portableToken,tierSession,PRIMARY,STANDBY,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY};

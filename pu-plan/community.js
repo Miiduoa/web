@@ -5,7 +5,7 @@ const SUPABASE_KEY='sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
 const esc=s=>app?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const token=()=>localStorage.getItem('puplan_session')||'';
+const token=()=>localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session')||'';
 const signedIn=()=>!!token()&&window.PUPLAN_CLOUD?.isSignedIn?.();
 const profile=()=>window.PUPLAN_CLOUD?.getProfile?.()||{id:'',display_name:'我',username:''};
 let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0,lastConversationRefreshAt=0;

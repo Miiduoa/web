@@ -8,7 +8,13 @@ const ACCOUNT_DATA_KEYS=[
 const PROFILE_KEYS=[
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
-const RESILIENCE_PREFIXES=['nolu_account_snapshot_v1:','nolu_pending_mutations_v1:'];
+const CLOUD_SESSION_KEYS=[
+  'puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1','nolu_preferred_cloud_v1'
+];
+const RESILIENCE_PREFIXES=[
+  'nolu_account_snapshot_v1:','nolu_pending_mutations_v1:',
+  'nolu_standby_dirty_v1:','nolu_standby_seeded_v1:','nolu_standby_dirty_v2:','nolu_standby_seeded_v2:'
+];
 
 function clearLocal(keys){for(const key of keys)localStorage.removeItem(key)}
 function clearAssistantSession(){
@@ -23,7 +29,7 @@ function clearResilienceFor(uid=''){
 }
 function clearPrivateCaches(uid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
-  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
+  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS,...CLOUD_SESSION_KEYS]);
   clearResilienceFor(uid||ownerBefore);
   clearAssistantSession();
 }

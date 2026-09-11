@@ -127,9 +127,15 @@ jobs:
                 const action=body.action||'';
                 const respond=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
 
-                // Production currently keeps v7 retired. Exercise the same 410 ->
-                // compatibility fallback path deterministically on both regions.
-                if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v7'))return respond({error:'DISABLED'},410);
+                // v8 is the active regional API. Exercise Mumbai v8 directly and
+                // keep Tokyo unavailable so this avatar-focused test stays isolated.
+                if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v8')){
+                  if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'){
+                    if(action==='login'||action==='bootstrap')return respond(bundle());
+                    if(action==='social')return respond({social:bundle().social});
+                  }
+                  return respond({message:'standby not seeded in avatar test'},503);
+                }
 
                 if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&url.includes('/functions/v1/pu-plan-admin')){
                   if(action==='whoami')return respond({is_admin:true,profile:{id:USER_ID,email:'admin@example.invalid',display_name:'Admin',username:'admin',role:'admin'}});

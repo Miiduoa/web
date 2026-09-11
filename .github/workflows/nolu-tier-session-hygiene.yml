@@ -1,0 +1,44 @@
+name: nolu tier session hygiene
+
+on:
+  push:
+    branches: [main, fix/nolu-replica-v2-client]
+    paths:
+      - 'pu-plan/auth.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/community.js'
+      - 'pu-plan/discover.js'
+      - 'pu-plan/privacy.js'
+      - 'pu-plan/admin.js'
+      - '.github/workflows/nolu-tier-session-hygiene.yml'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  session-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify account boundaries and regional auth routing
+        run: |
+          set -euo pipefail
+          for file in pu-plan/auth.js pu-plan/guest-privacy.js pu-plan/cloud-replication.js pu-plan/community.js pu-plan/discover.js pu-plan/privacy.js pu-plan/admin.js; do
+            node --check "$file"
+          done
+          for key in puplan_session_primary_v1 puplan_session_standby_v1 puplan_portable_session_v1 nolu_preferred_cloud_v1; do
+            grep -q "$key" pu-plan/auth.js
+            grep -q "$key" pu-plan/guest-privacy.js
+          done
+          grep -q 'nolu_standby_dirty_v2:' pu-plan/auth.js
+          grep -q 'nolu_standby_seeded_v2:' pu-plan/auth.js
+          grep -q 'nolu_standby_dirty_v2:' pu-plan/guest-privacy.js
+          grep -q 'nolu_standby_seeded_v2:' pu-plan/guest-privacy.js
+          ! grep -q 'rememberCurrentTierSession' pu-plan/cloud-replication.js
+          for file in pu-plan/community.js pu-plan/discover.js pu-plan/privacy.js pu-plan/admin.js; do
+            grep -q "puplan_session_primary_v1" "$file"
+          done
