@@ -5,6 +5,7 @@ on:
     branches: [fix/nolu-strict-regional-credentials-20260911]
     paths:
       - '.github/scripts/patch-strict-regional-credentials.py'
+      - '.github/strict-regional-trigger'
   workflow_dispatch:
 
 permissions:
