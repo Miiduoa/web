@@ -1,0 +1,76 @@
+name: nolu API authorization boundary smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - 'supabase/functions/_shared/session-v4.ts'
+      - '.github/workflows/nolu-api-authz-boundary-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social/**'
+      - 'supabase/functions/pu-plan-admin/**'
+      - 'supabase/functions/_shared/session-v4.ts'
+      - '.github/workflows/nolu-api-authz-boundary-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authz-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      BASE: https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1
+      GOOD_ORIGIN: https://miiduoa.github.io
+      EVIL_ORIGIN: https://evil.example
+    steps:
+      - uses: actions/checkout@v6
+      - name: Source authorization guardrails
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          social=Path('supabase/functions/pu-plan-social/index.ts').read_text()
+          admin=Path('supabase/functions/pu-plan-admin/index.ts').read_text()
+          assert "session=await verifySignedSessionV4" in social
+          assert "await assertCredentialCurrent" in social
+          assert "const member=await memberOf(id,uid);if(!member)throw new ApiError(403" in social
+          assert "if(!(await memberOf(id,u.id)))throw new ApiError(403" in social
+          assert "if(viewer.role!=='admin'&&r.author_id!==viewer.id)throw new ApiError(403" in social
+          assert "const admin = await requireAdmin(req);" in admin
+          assert "if (user.role !== 'admin')" in admin
+          assert "verifySignedSessionV4(token, SERVICE_KEY)" in admin
+          assert "await assertCredentialCurrent(session, user.password_salt || '')" in admin
+          print('API authorization source guardrails passed')
+          PY
+      - name: Anonymous and forged sessions must be rejected
+        run: |
+          set -euo pipefail
+          probe(){
+            local endpoint="$1" body="$2" auth="${3:-}"
+            local args=(-sS --connect-timeout 3 --max-time 8 -o /tmp/body -w '%{http_code}' -X POST "$BASE/$endpoint" -H "Origin: $GOOD_ORIGIN" -H 'Content-Type: application/json' --data "$body")
+            if [ -n "$auth" ]; then args+=(-H "Authorization: Bearer $auth"); fi
+            code=$(curl "${args[@]}")
+            echo "$endpoint $body -> $code"
+            test "$code" = 401
+          }
+          probe pu-plan-social '{"action":"profile_view","username":"someone"}'
+          probe pu-plan-social '{"action":"conversation","conversation_id":"00000000-0000-4000-8000-000000000000"}' forged.session
+          probe pu-plan-social '{"action":"send_message","conversation_id":"00000000-0000-4000-8000-000000000000","body":"x"}' forged.session
+          probe pu-plan-admin '{"action":"overview"}'
+          probe pu-plan-admin '{"action":"user_detail","user_id":"00000000-0000-4000-8000-000000000000"}' forged.session
+          probe pu-plan-admin '{"action":"moderate_post","id":"00000000-0000-4000-8000-000000000000","mode":"remove"}' forged.session
+          probe pu-plan-admin '{"action":"remove_message","id":"00000000-0000-4000-8000-000000000000"}' forged.session
+      - name: Cross-origin browser calls must be rejected
+        run: |
+          set -euo pipefail
+          for endpoint in pu-plan-social pu-plan-admin; do
+            code=$(curl -sS --connect-timeout 3 --max-time 8 -o /tmp/body -w '%{http_code}' -X OPTIONS "$BASE/$endpoint" -H "Origin: $EVIL_ORIGIN" -H 'Access-Control-Request-Method: POST')
+            echo "$endpoint evil preflight -> $code"
+            test "$code" = 403
+          done
