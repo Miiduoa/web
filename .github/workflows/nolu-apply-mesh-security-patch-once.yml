@@ -1,0 +1,34 @@
+name: nolu apply mesh security patch once
+
+on:
+  push:
+    branches: [fix/nolu-provider-mesh-security-final2-20260911]
+    paths:
+      - '.github/scripts/patch-mesh-security.py'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-provider-mesh-security-final2-20260911
+          fetch-depth: 0
+      - name: Apply product patch
+        run: python3 .github/scripts/patch-mesh-security.py
+      - name: Validate syntax
+        run: |
+          node --check pu-plan/provider-mesh.js
+          node --check pu-plan/cloud-replication.js
+          node --check pu-plan/provider-status.js
+      - name: Commit product patch
+        run: |
+          set -euo pipefail
+          git config user.name 'Miiduoa'
+          git config user.email '107848266+Miiduoa@users.noreply.github.com'
+          git add pu-plan/provider-mesh.js pu-plan/cloud-replication.js pu-plan/provider-status.js
+          git commit -m 'fix(nolu): harden mirror recovery and retired replication'
+          git push origin HEAD:fix/nolu-provider-mesh-security-final2-20260911
