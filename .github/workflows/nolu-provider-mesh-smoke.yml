@@ -42,16 +42,22 @@ jobs:
           cp -R pu-plan /tmp/nolu-provider-app
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           p=Path('/tmp/nolu-provider-app/provider-config.js')
           s=p.read_text()
           s=s.replace(
               "https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1",
               "https://neon.test/rest/v1"
           )
-          s=s.replace(
-              "Object.freeze({id:'render-mirror',provider:'render',kind:'action-api',endpoint:'',enabled:false})",
-              "Object.freeze({id:'render-mirror',provider:'render',kind:'action-api',endpoint:'https://render.test/mirror',enabled:true})"
+          s,n=re.subn(
+              r"(id:'render-singapore',\s*provider:'render',\s*kind:'action-api',\s*endpoint:)'[^']*'(,\s*enabled:)false",
+              r"\1'https://render.test/mirror'\2true",
+              s,
+              count=1
           )
+          if n != 1:
+              raise SystemExit('Render candidate fixture could not be enabled')
           p.write_text(s)
           Path('/tmp/nolu-provider-app/mesh-test.html').write_text('''<!doctype html><html><body><script>
           window.__localSnapshot=null;

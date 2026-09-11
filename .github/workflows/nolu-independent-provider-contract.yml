@@ -1,0 +1,67 @@
+name: nolu independent provider contract
+
+on:
+  push:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'services/nolu-render-mirror/**'
+      - '.github/workflows/nolu-independent-provider-contract.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'services/nolu-render-mirror/**'
+      - '.github/workflows/nolu-independent-provider-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check portable mirror service
+        run: node --check services/nolu-render-mirror/server.mjs
+
+      - name: Verify independent-provider safety contract
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const cfg = fs.readFileSync('pu-plan/provider-config.js', 'utf8');
+          const mesh = fs.readFileSync('pu-plan/provider-mesh.js', 'utf8');
+          const mirror = fs.readFileSync('services/nolu-render-mirror/server.mjs', 'utf8');
+
+          assert.match(cfg, /REQUIRED_REMOTE_PROVIDERS\s*=\s*3\s*;/, 'remote provider target must stay at 3');
+          assert.match(cfg, /MIRROR_READ_QUORUM\s*=\s*2\s*;/, 'recovery quorum must stay at 2 or stronger');
+          assert.match(cfg, /provider:'neon'[\s\S]*?enabled:true/, 'Neon must remain the verified independent mirror');
+          assert.match(cfg, /provider:'render'[\s\S]*?enabled:false/, 'Render must not count before live DB binding passes');
+          assert.match(cfg, /provider:'railway'[\s\S]*?enabled:false/, 'Railway must not count before live deployment passes');
+          assert.match(cfg, /provider:'netlify'[\s\S]*?enabled:false/, 'Netlify must not count before live storage passes');
+          assert.match(cfg, /https:\/\/nolu-render-mirror\.onrender\.com\/mirror/, 'Render candidate must use its public mirror endpoint');
+
+          assert.match(mesh, /seen\.has\(item\.provider\)/, 'provider mesh must deduplicate failure domains');
+          assert.match(mesh, /item\.provider==='supabase'/, 'Supabase mirrors must not be double-counted as external providers');
+          assert.match(mesh, /MIRROR_READ_QUORUM/, 'remote recovery must use quorum');
+          assert.match(mesh, /digestSnapshot/, 'mirror snapshots must be content-digested');
+
+          assert.match(mirror, /process\.env\.DATABASE_URL/, 'DB connection must come from server environment');
+          assert.match(mirror, /process\.env\.NOLU_PROVIDER_ID/, 'mirror provider identity must be environment-driven');
+          assert.match(mirror, /process\.env\.NOLU_STORAGE_LABEL/, 'storage identity must be environment-driven');
+          assert.match(mirror, /verifyPortable/, 'mirror must verify portable auth');
+          assert.match(mirror, /authorization/, 'mirror must require Authorization');
+          assert.match(mirror, /timingSafeEqual/, 'digest comparison must be timing-safe');
+          assert.match(mirror, /revision conflict/, 'same-revision conflicts must be rejected');
+
+          const publicText = `${cfg}\n${mesh}\n${mirror}`;
+          assert.doesNotMatch(publicText, /postgres(?:ql)?:\/\/[^\s'"`]+/i, 'database URL must never be committed');
+          assert.doesNotMatch(publicText, /DATABASE_URL\s*=\s*['"][^'"]+['"]/, 'database credential must never be hard-coded');
+          assert.doesNotMatch(cfg, /(?:password|passwd|service_role|private[_-]?key)\s*[:=]/i, 'public provider config must not contain secrets');
+
+          console.log('Independent provider contract OK: 3-provider target, 2-vote recovery, no committed DB credentials.');
+          NODE

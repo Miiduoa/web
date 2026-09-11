@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260911-replica2';
+const CACHE='nolu-shell-20260911-replica2-mesh3';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
@@ -60,5 +60,5 @@ self.addEventListener('notificationclick',event=>{
   event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(async windows=>{
     for(const win of windows){try{await win.navigate(target);return win.focus()}catch{}}
     return clients.openWindow(target);
-  }));
+  })());
 });
