@@ -1,0 +1,94 @@
+name: nolu outage mirror continuity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/outage-mirror-bridge.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'supabase/functions/pu-plan-portable-v2/**'
+      - '.github/workflows/nolu-outage-mirror-continuity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/outage-mirror-bridge.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'supabase/functions/pu-plan-portable-v2/**'
+      - '.github/workflows/nolu-outage-mirror-continuity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  continuity-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax checks
+        run: |
+          set -euo pipefail
+          node --check pu-plan/outage-mirror-bridge.js
+          node --check pu-plan/provider-config.js
+          node --check pu-plan/main.js
+          node --check pu-plan/pwa.js
+          node --check pu-plan/sw.js
+          cp supabase/functions/pu-plan-portable-v2/index.ts /tmp/portable-v2.mjs
+          node --check /tmp/portable-v2.mjs
+      - name: Verify outage mint is fail-closed outside DB outage
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-portable-v2/index.ts
+          grep -Fq 'OUTAGE_GRACE_SECONDS=7*24*60*60' "$f"
+          grep -Fq "credential.status!=='unavailable'" "$f"
+          grep -Fq "outage_recovery:true,purpose:'mirror-continuity'" "$f"
+          grep -Fq "source_session_fp:await sessionFingerprint(source.raw)" "$f"
+          grep -Fq "claims.exp-claims.iat>45*24*60*60" "$f"
+          ! grep -Eq 'password_hash|recovery_hash|service_role.*payload' "$f"
+      - name: Verify local bridge cannot recover identity or overwrite newer mirror
+        run: |
+          set -euo pipefail
+          f=pu-plan/outage-mirror-bridge.js
+          grep -Fq "recovery?.status!=='local-grace'" "$f"
+          grep -Fq "String(snap.sessionFingerprint||'')!==fp" "$f"
+          grep -Fq "if(Number(remote?.revision||0)>snap.revision)" "$f"
+          grep -Fq "action:'get_snapshot'" "$f"
+          grep -Fq "action:'put_snapshot'" "$f"
+          ! grep -Eq "create_user|signup|login|password|recover_password" "$f"
+      - name: Verify production wiring uses portable v2 and caches bridge
+        run: |
+          set -euo pipefail
+          grep -Fq 'pu-plan-portable-v2' pu-plan/provider-config.js
+          ! grep -Fq 'pu-plan-portable-v1' pu-plan/provider-config.js
+          grep -Fq "await import('./outage-mirror-bridge.js')" pu-plan/main.js
+          grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
+          grep -Fq 'nolu-shell-20260911-outage-mesh5' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260911_outage_mesh5' pu-plan/pwa.js
+      - name: Verify live portable v2 endpoints
+        run: |
+          set -euo pipefail
+          ORIGIN='https://miiduoa.github.io'
+          for spec in 'hrrmkrayvrgnwcroyttp:mesh-mumbai-20260911-5' 'ltfurqaspqsvswmebyzw:mesh-tokyo-20260911-5'; do
+            REF=${spec%%:*}; KID=${spec#*:}; URL="https://${REF}.supabase.co/functions/v1/pu-plan-portable-v2"
+            tmp=$(mktemp)
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' "$URL" -H "Origin: $ORIGIN")
+            echo "[$REF jwk] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 200
+            grep -Fq "\"kid\":\"$KID\"" "$tmp"
+            grep -Fq '"outage_grace_seconds":604800' "$tmp"
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{}')
+            echo "[$REF unauth] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 401
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+            echo "[$REF evil origin] HTTP $code"
+            test "$code" = 403
+          done
+          grep -Fq 'mesh-mumbai-20260911-5' pu-plan/nolu-mesh-jwks.json
+          grep -Fq 'mesh-tokyo-20260911-5' pu-plan/nolu-mesh-jwks.json

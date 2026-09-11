@@ -1,8 +1,8 @@
-const CACHE='nolu-shell-20260911-device-rescue2-mesh4';
+const CACHE='nolu-shell-20260911-outage-mesh5';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
-  './main.js','./app.js','./guest-privacy.js','./session-recovery.js','./durable-store.js','./durable-bridge.js','./transport-bridge.js','./resilience.js','./offline-session-rescue.js','./cloud.js','./cloud-replication.js','./provider-config.js','./provider-mesh.js','./provider-status.js','./auth.js','./social-ui.js','./import.js','./semesters.js','./community.js','./discover.js','./pwa.js','./admin.js','./privacy.js',
+  './main.js','./app.js','./guest-privacy.js','./session-recovery.js','./durable-store.js','./durable-bridge.js','./transport-bridge.js','./resilience.js','./offline-session-rescue.js','./cloud.js','./cloud-replication.js','./provider-config.js','./provider-mesh.js','./outage-mirror-bridge.js','./provider-status.js','./auth.js','./social-ui.js','./import.js','./semesters.js','./community.js','./discover.js','./pwa.js','./admin.js','./privacy.js',
   './core/state.js','./features/analysis.js','./features/friends.js','./features/navigation.js','./features/planner.js','./features/schedule.js','./features/settings.js','./features/share.js',
   './views/assistant.js','./views/auth.js','./views/dialogs.js','./views/friends.js','./views/schedule.js','./views/settings.js','./views/shell.js',
   './styles/base.css','./styles/auth.css','./styles/layout.css','./styles/schedule.css','./styles/assistant.css','./styles/dialogs.css','./styles/schedule-ownership.css','./friends.css','./community.css','./discover.css','./admin.css','./pwa.css'
