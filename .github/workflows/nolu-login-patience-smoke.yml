@@ -41,7 +41,9 @@ jobs:
           grep -Fq "standbyLoginTimeoutMs:6500" pu-plan/login-transport-patience.js
           grep -Fq "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
           grep -Fq "actionOf(options)!=='login'" pu-plan/login-transport-patience.js
-          grep -Fq "const {signal:_ignored,...rest}=options||{}" pu-plan/login-transport-patience.js
+          grep -Fq "DEADLINE_FIELD='__noluLoginDeadline'" pu-plan/login-transport-patience.js
+          grep -Fq "delete rest[DEADLINE_FIELD]" pu-plan/login-transport-patience.js
+          grep -Fq "remaining=deadline>0?deadline-Date.now():Infinity" pu-plan/login-transport-patience.js
           ! grep -Eq "password_hash|recovery_hash|service_role|PRIVATE KEY" pu-plan/login-transport-patience.js pu-plan/login-failover-budget.js
           test "$(grep -o '<script' pu-plan/index.html | wc -l)" -eq 1
           grep -Fq "import './login-transport-patience.js';" pu-plan/main.js
@@ -55,5 +57,6 @@ jobs:
           if((patience.match(/baseFetch\(/g)||[]).length<2)throw Error('patience wrapper must delegate ordinary and login traffic');
           if(/setInterval|while\s*\(/.test(patience))throw Error('login patience must not retry or loop');
           if(!budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'))throw Error('missing bounded whole-login failover budget');
+          if(!patience.includes('deadlineAware:true'))throw Error('regional patience must honor the whole-login deadline');
           console.log('NOLU_REGIONAL_LOGIN_PATIENCE_OK');
           NODE
