@@ -2,7 +2,7 @@ name: nolu social security smoke
 
 on:
   push:
-    branches: [security/nolu-social-hardening-20260911]
+    branches: [main]
     paths:
       - 'supabase/functions/pu-plan-social/index.ts'
       - '.github/workflows/nolu-social-security-smoke.yml'
