@@ -2,17 +2,19 @@ name: nolu replica v3 live smoke
 
 on:
   push:
-    branches: [main, fix/nolu-replica-v3-main-smoke-20260911]
+    branches: [main, feat/nolu-replica-v3-client-final-20260911]
     paths:
       - '.github/workflows/nolu-replica-v3-live-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
       - 'supabase/migrations/20260911_nolu_replica_v3_nonces.sql'
+      - 'pu-plan/cloud-replication.js'
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/nolu-replica-v3-live-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
       - 'supabase/migrations/20260911_nolu_replica_v3_nonces.sql'
+      - 'pu-plan/cloud-replication.js'
   workflow_dispatch:
 
 permissions:
