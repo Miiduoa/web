@@ -5,13 +5,17 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/main.js'
       - 'pu-plan/index.html'
+      - 'pu-plan/sw.js'
       - '.github/workflows/nolu-login-patience-smoke.yml'
   push:
     branches: [main]
     paths:
       - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/main.js'
       - 'pu-plan/index.html'
+      - 'pu-plan/sw.js'
       - '.github/workflows/nolu-login-patience-smoke.yml'
 
 permissions:
@@ -27,12 +31,15 @@ jobs:
         run: |
           set -euo pipefail
           node --check pu-plan/login-transport-patience.js
+          node --experimental-default-type=module --check pu-plan/main.js
           grep -Fq "PRIMARY_LOGIN_TIMEOUT_MS=5500" pu-plan/login-transport-patience.js
           grep -Fq "url.hostname!==PRIMARY_HOST" pu-plan/login-transport-patience.js
           grep -Fq "actionOf(options)!=='login'" pu-plan/login-transport-patience.js
           grep -Fq "const {signal:_ignored,...rest}=options||{}" pu-plan/login-transport-patience.js
           ! grep -Eq "password|password_hash|recovery_hash|service_role" pu-plan/login-transport-patience.js
-          grep -Fq '<script src="login-transport-patience.js?v=20260911-login-rescue6"></script>' pu-plan/index.html
+          test "$(grep -o '<script' pu-plan/index.html | wc -l)" -eq 1
+          grep -Fq "import './login-transport-patience.js';" pu-plan/main.js
+          grep -Fq "'./login-transport-patience.js'" pu-plan/sw.js
           node <<'NODE'
           const fs=require('node:fs');
           const src=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
