@@ -60,6 +60,13 @@ await import('./cloud-replication.js');
 // two non-Supabase mirrors to agree on the exact revision+digest before it can
 // replace a local copy, so one corrupted provider cannot silently overwrite data.
 await import('./provider-mesh.js');
+
+// If the authoritative Supabase database is unreachable and the device only has
+// a recently-expired, still-cryptographically-valid regional session, keep the
+// exact fingerprint-bound IndexedDB snapshot backed up to independent mirrors.
+// This bridge is write-only continuity: it cannot create an account or authenticate
+// against the app APIs, and it never replaces local state from a single mirror.
+await import('./outage-mirror-bridge.js');
 await startModule('./provider-status.js');
 
 // Bind account controls first. The remaining modules all depend only on the shell,
