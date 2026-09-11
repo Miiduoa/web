@@ -6,6 +6,7 @@ on:
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/origin-gateway.js'
       - 'pu-plan/transport-bridge.js'
       - 'pu-plan/resilience.js'
       - 'pu-plan/main.js'
@@ -29,6 +30,7 @@ jobs:
         run: |
           node --check pu-plan/durable-store.js
           node --check pu-plan/durable-bridge.js
+          node --check pu-plan/origin-gateway.js
           node --check pu-plan/transport-bridge.js
           node --check pu-plan/resilience.js
           node --check pu-plan/main.js
@@ -148,8 +150,11 @@ jobs:
               await context.route('https://*.supabase.co/functions/v1/**',async route=>{
                 const url=new URL(route.request().url());
                 if(!url.host.startsWith(MUMBAI)&&!url.host.startsWith(TOKYO))return route.continue();
-                attempts.push(`${url.host}${url.pathname}`);
-                if(url.host.startsWith(MUMBAI)&&url.pathname.endsWith('/pu-plan-api'))return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-fifth-path"}'});
+                const target=url.pathname.endsWith('/nolu-browser-gateway-v1')
+                  ? String(url.searchParams.get('target')||'')
+                  : String(url.pathname.split('/').filter(Boolean).pop()||'');
+                attempts.push(`${url.host}:${target}`);
+                if(url.host.startsWith(MUMBAI)&&target==='pu-plan-api')return route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"via":"legacy-fifth-path"}'});
                 return route.fulfill({status:503,contentType:'application/json',body:'{"message":"simulated unavailable"}'});
               });
               const page=await context.newPage();
@@ -163,11 +168,11 @@ jobs:
               });
               console.log('FAILOVER_RESULT',result,'ATTEMPTS',attempts);
               assert(result.status===200&&result.data?.via==='legacy-fifth-path','legacy request should reach the final compatibility path');
-              assert(attempts.some(x=>x.includes(`${MUMBAI}.supabase.co/functions/v1/pu-plan-api-v8`)),'Mumbai v8 should be attempted');
-              assert(attempts.some(x=>x.includes(`${TOKYO}.supabase.co/functions/v1/pu-plan-api-v8`)),'Tokyo standby should be attempted');
-              assert(attempts.some(x=>x.endsWith('/pu-plan-api-v6')),'v6 compatibility path should be attempted');
-              assert(attempts.some(x=>x.endsWith('/pu-plan-core-v1')),'core compatibility path should be attempted');
-              assert(attempts.some(x=>x.endsWith('/pu-plan-api')),'legacy final path should be attempted');
+              assert(attempts.includes(`${MUMBAI}.supabase.co:pu-plan-api-v8`),'Mumbai v8 should be attempted');
+              assert(attempts.includes(`${TOKYO}.supabase.co:pu-plan-api-v8`),'Tokyo standby should be attempted');
+              assert(attempts.some(x=>x.endsWith(':pu-plan-api-v6')),'v6 compatibility path should be attempted');
+              assert(attempts.some(x=>x.endsWith(':pu-plan-core-v1')),'core compatibility path should be attempted');
+              assert(attempts.some(x=>x.endsWith(':pu-plan-api')),'legacy final path should be attempted');
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
