@@ -44,6 +44,11 @@ await import('./transport-bridge.js');
 // and the signed-in user's own durable local cache.
 await import('./resilience.js');
 
+// A login may legitimately spend several seconds waiting on Mumbai before Tokyo
+// is attempted. Preserve a bounded end-to-end window so cloud.js's legacy request
+// timeout cannot abort the standby leg before it has a fair chance to authenticate.
+await import('./login-failover-budget.js');
+
 // If the database is unreachable, a previously authenticated device can still
 // prove possession of its exact session-bound IndexedDB snapshot. This wrapper
 // only rescues bootstrap/profile/schedule requests; it never accepts a password
