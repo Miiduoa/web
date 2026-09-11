@@ -1,0 +1,76 @@
+name: nolu origin gateway live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-origin-gateway-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify browser router contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "import './origin-gateway.js'" pu-plan/main.js
+          grep -q "nolu-browser-gateway-v1" pu-plan/origin-gateway.js
+          grep -q "pu-plan-social" pu-plan/origin-gateway.js
+          grep -q "pu-plan-portable-v2" pu-plan/origin-gateway.js
+          grep -q "pu-plan-replica-v3" pu-plan/origin-gateway.js
+
+      - name: Verify primary and standby gateways from production origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp)
+          headers=$(mktemp)
+          trap 'rm -f "$tmp" "$headers"' EXIT
+
+          check_gateway() {
+            local base="$1"
+            local origin="$2"
+            local code
+            code=$(curl -sS --retry 3 --retry-delay 2 --max-time 20 -D "$headers" -o "$tmp" -w '%{http_code}' \
+              -X POST "${base}?target=pu-plan-api-v8" \
+              -H "Origin: ${origin}" \
+              -H 'Content-Type: application/json' \
+              --data '{"action":"health"}')
+            echo "[$base][$origin] HTTP $code :: $(cat "$tmp")"
+            test "$code" = 200
+            grep -q '"ok":true' "$tmp"
+            grep -qi "^access-control-allow-origin: ${origin}\r\?$" "$headers"
+            grep -qi '^cache-control: no-store' "$headers"
+          }
+
+          PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1'
+          STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/nolu-browser-gateway-v1'
+          for origin in 'https://nolu.tw' 'https://nolu-8r2.pages.dev' 'https://miiduoa.github.io'; do
+            check_gateway "$PRIMARY" "$origin"
+            check_gateway "$STANDBY" "$origin"
+          done
+
+      - name: Reject untrusted origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1?target=pu-plan-api-v8'
+          tmp=$(mktemp)
+          headers=$(mktemp)
+          trap 'rm -f "$tmp" "$headers"' EXIT
+          code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" \
+            -H 'Origin: https://evil.example' \
+            -H 'Access-Control-Request-Method: POST')
+          echo "[evil] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 403
+          ! grep -qi '^access-control-allow-origin: https://evil.example' "$headers"
