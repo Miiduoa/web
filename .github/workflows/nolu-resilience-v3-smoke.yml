@@ -137,7 +137,7 @@ jobs:
               await page.goto('http://127.0.0.1:4173/__circuit_v3_test.html',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
               requests=0;seen.length=0;
-              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
+              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
               const opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bootstrap'})};
               const first=await page.evaluate(async({primary,opts})=>{const t=performance.now();const r=await fetch(primary,opts);return {ms:performance.now()-t,data:await r.json()}},{primary,opts});
               const afterFirst=requests,firstSeen=[...seen];
