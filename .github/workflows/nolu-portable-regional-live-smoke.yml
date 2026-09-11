@@ -1,0 +1,48 @@
+name: nolu portable regional live smoke
+
+on:
+  push:
+    branches: [fix/nolu-portable-regional-signers-20260911]
+    paths:
+      - '.github/workflows/nolu-portable-regional-live-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nolu-portable-regional-live-smoke.yml'
+      - 'pu-plan/nolu-mesh-jwks.json'
+      - 'services/nolu-render-mirror/server.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  regional-portable-signers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify public keys and fail-closed auth boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          MUMBAI='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-portable-v1'
+          TOKYO='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1'
+          for name in mumbai tokyo; do
+            if [ "$name" = mumbai ]; then url="$MUMBAI"; expected='mesh-mumbai-v2'; else url="$TOKYO"; expected='mesh-tokyo-v2'; fi
+            code=$(curl -sS --max-time 15 -o "/tmp/${name}.json" -w '%{http_code}' "$url")
+            echo "$name public-key HTTP $code"
+            cat "/tmp/${name}.json"
+            test "$code" = 200
+            node -e "const j=require('/tmp/${name}.json');if(!j.ok||j.kid!=='${expected}'||j.jwk?.kid!=='${expected}'||j.jwk?.alg!=='ES256'||j.jwk?.kty!=='EC'||j.jwk?.crv!=='P-256'||!j.jwk?.x||!j.jwk?.y)process.exit(1)"
+            code=$(curl -sS --max-time 15 -o "/tmp/${name}-unauth.json" -w '%{http_code}' -X POST "$url" -H 'Origin: https://miiduoa.github.io' -H 'Content-Type: application/json' -d '{}')
+            echo "$name unauth HTTP $code"
+            test "$code" = 401
+            code=$(curl -sS --max-time 15 -o "/tmp/${name}-evil.json" -w '%{http_code}' -X OPTIONS "$url" -H 'Origin: https://evil.invalid' -H 'Access-Control-Request-Method: POST')
+            echo "$name evil-origin HTTP $code"
+            test "$code" = 403
+          done
+          node <<'NODE'
+          const m=require('/tmp/mumbai.json'),t=require('/tmp/tokyo.json');
+          if(m.jwk.kid===t.jwk.kid||m.jwk.x===t.jwk.x||m.jwk.y===t.jwk.y)throw new Error('regional signer keys are not independent');
+          console.log('COMBINED_JWKS='+JSON.stringify({keys:[m.jwk,t.jwk]}));
+          NODE
