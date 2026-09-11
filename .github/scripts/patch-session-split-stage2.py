@@ -30,8 +30,8 @@ replace_once(
 # the exact-token durable snapshot fingerprint so offline rescue does not go stale.
 replace_once(
     'pu-plan/durable-bridge.js',
-    "document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')void mirror('connectivity-online')});",
-    "document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')void mirror('connectivity-online')});\ndocument.addEventListener('nolu:session-rotated',()=>{void bindSession({allowHydrate:false}).then(()=>mirror('session-rotated'))});"
+    "document.addEventListener('nolu:connectivity',e=>{if(e.detail?.mode==='online')void bindCurrentSession({allowHydrate:false}).then(()=>mirror(true));else if(state.bound)void mirror(false)});",
+    "document.addEventListener('nolu:connectivity',e=>{if(e.detail?.mode==='online')void bindCurrentSession({allowHydrate:false}).then(()=>mirror(true));else if(state.bound)void mirror(false)});\ndocument.addEventListener('nolu:session-rotated',()=>{void bindCurrentSession({allowHydrate:false}).then(()=>mirror(false))});"
 )
 
 # Provider portable-token minting is currently disabled, but when restored it must
@@ -55,8 +55,8 @@ s=s.replace(
 )
 p.write_text(s)
 
-# The browser smoke must wait for the module graph (including cloud.js) to finish
-# before it switches auth tabs; DOMContentLoaded alone does not await module TLA.
+# DOMContentLoaded does not await the module graph's top-level awaits. Wait for the
+# cloud module before using its auth-tab listeners.
 replace_once(
     '.github/workflows/nolu-regional-session-isolation.yml',
     "              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});\n              await page.locator('[data-auth-tab=\"login\"]').click();",
