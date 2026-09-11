@@ -3,13 +3,19 @@ const cloud=window.PUPLAN_CLOUD;
 if(!cloud)throw new Error('帳號功能載入失敗');
 
 const ACCOUNT_KEYS=[
-  'puplan_session','puplan_portable_session_v1','nolu_preferred_cloud_v1','puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
+  'puplan_session','puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1','nolu_preferred_cloud_v1',
+  'puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
+const ACCOUNT_PREFIXES=['nolu_standby_dirty_v1:','nolu_standby_seeded_v1:','nolu_standby_dirty_v2:','nolu_standby_seeded_v2:'];
 let loggingOut=false;
 
 function clearAccountCache(){
   for(const key of ACCOUNT_KEYS)localStorage.removeItem(key);
+  for(let i=localStorage.length-1;i>=0;i--){
+    const key=localStorage.key(i)||'';
+    if(ACCOUNT_PREFIXES.some(prefix=>key.startsWith(prefix)))localStorage.removeItem(key);
+  }
   for(let i=sessionStorage.length-1;i>=0;i--){
     const key=sessionStorage.key(i)||'';
     if(key.startsWith('puplan_assistant_')||key==='puplan_assistant_history')sessionStorage.removeItem(key);
