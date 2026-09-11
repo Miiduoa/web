@@ -13,6 +13,7 @@ const PREFERRED_KEY='nolu_preferred_cloud_v1';
 const PORTABLE_KEY='puplan_portable_session_v1';
 const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
 const STANDBY_SESSION_KEY='puplan_session_standby_v1';
+const STANDBY_DIRTY_PREFIX='nolu_standby_dirty_v3:';
 const NO_STANDBY_ACTIONS=new Set(['signup','recover_password','change_password','rotate_recovery_code','search_people','send_request','accept_request','decline_request','remove_friend','create_meetup','respond_meetup','cancel_meetup','social']);
 const state={mode:'online',tier:'primary',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION,endpoints:{}};
 let requestSequence=0,newestOfflineSequence=0;
@@ -123,6 +124,11 @@ function syntheticMutation(action,payload){
 }
 function offlineResponse(action,body,sequence){if(action==='bootstrap'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticBootstrap()}if(action==='save_schedule'||action==='update_profile'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticMutation(action,body)}return null}
 function clearMatchingPending(uid,action,body){const q=readPending(uid);if(action==='save_schedule'&&q.schedule){const sent=Array.isArray(body?.courses)?body.courses.slice(0,80):[];if(sameJson(q.schedule.courses,sent)){delete q.schedule;writePending(uid,q)}}if(action==='update_profile'&&q.profile&&sameJson(q.profile.payload,body)){delete q.profile;writePending(uid,q)}}
+function markStandbyMutation(uid,action){
+  if(!uid||!['save_schedule','update_profile'].includes(action))return;
+  localStorage.setItem(`${STANDBY_DIRTY_PREFIX}${uid}`,'1');
+  document.dispatchEvent(new CustomEvent('nolu:standby-write',{detail:{source:`resilience:${action}`,at:now()}}));
+}
 function storeResponseTokens(data,api){
   const portable=typeof data?.portable_token==='string'?data.portable_token:'';
   if(portable&&portable.split('.').length===3)localStorage.setItem(PORTABLE_KEY,portable);
@@ -165,8 +171,8 @@ async function directJson(api,action,payload={},auth=true,ms=3600){
 }
 async function flushPending(api){
   const uid=currentUid();if(!uid)return false;let q=readPending(uid);
-  if(q.profile?.payload){const sent=q.profile,{res}=await directJson(api,'update_profile',sent.payload,true);if(!res.ok)return false;const latest=readPending(uid);if(latest.profile?.changedAt===sent.changedAt&&sameJson(latest.profile.payload,sent.payload)){delete latest.profile;writePending(uid,latest)}}
-  q=readPending(uid);if(q.schedule?.courses){const sent=q.schedule,{res}=await directJson(api,'save_schedule',{courses:sent.courses},true);if(!res.ok)return false;const latest=readPending(uid);if(latest.schedule?.changedAt===sent.changedAt&&sameJson(latest.schedule.courses,sent.courses)){delete latest.schedule;writePending(uid,latest)}}
+  if(q.profile?.payload){const sent=q.profile,{res}=await directJson(api,'update_profile',sent.payload,true);if(!res.ok)return false;if(api===STANDBY)markStandbyMutation(uid,'update_profile');const latest=readPending(uid);if(latest.profile?.changedAt===sent.changedAt&&sameJson(latest.profile.payload,sent.payload)){delete latest.profile;writePending(uid,latest)}}
+  q=readPending(uid);if(q.schedule?.courses){const sent=q.schedule,{res}=await directJson(api,'save_schedule',{courses:sent.courses},true);if(!res.ok)return false;if(api===STANDBY)markStandbyMutation(uid,'save_schedule');const latest=readPending(uid);if(latest.schedule?.changedAt===sent.changedAt&&sameJson(latest.schedule.courses,sent.courses)){delete latest.schedule;writePending(uid,latest)}}
   snapshot(uid);const remaining=readPending(uid);return !remaining.profile?.payload&&!remaining.schedule?.courses;
 }
 let recovering=false;
