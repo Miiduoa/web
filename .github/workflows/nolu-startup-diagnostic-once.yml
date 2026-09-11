@@ -46,8 +46,9 @@ jobs:
               });
               await page.addInitScript(()=>{localStorage.clear();sessionStorage.clear()});
               await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              let elapsed=0;
               for(const ms of [1000,3000,10000]){
-                await page.waitForTimeout(ms-(globalThis.__elapsed||0)); globalThis.__elapsed=ms;
+                await page.waitForTimeout(ms-elapsed); elapsed=ms;
                 const state=await page.evaluate(()=>({
                   readyState:document.readyState,
                   app:!!window.PUPLAN_APP,
@@ -70,4 +71,3 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
           node /tmp/nolu-startup/check.cjs
-NODE
