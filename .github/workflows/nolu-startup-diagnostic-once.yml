@@ -1,0 +1,73 @@
+name: nolu startup diagnostic once
+
+on:
+  push:
+    branches:
+      - fix/nolu-avatar-ha-harness-20260911
+    paths:
+      - '.github/workflows/nolu-startup-diagnostic-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-startup init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-startup install playwright >/dev/null 2>&1
+          cd /tmp/nolu-startup && npx playwright install --with-deps chromium >/dev/null
+      - name: Trace startup modules
+        env:
+          NODE_PATH: /tmp/nolu-startup/node_modules
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-startup-http.log 2>&1 &
+          cat >/tmp/nolu-startup/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext({serviceWorkers:'block'});
+              const page=await context.newPage();
+              const errors=[]; const failed=[]; const responses=[];
+              page.on('pageerror',e=>errors.push(`pageerror: ${e.message}`));
+              page.on('console',m=>{if(m.type()==='error'||m.type()==='warning')errors.push(`${m.type()}: ${m.text()}`)});
+              page.on('requestfailed',r=>failed.push(`${r.url()} :: ${r.failure()?.errorText||''}`));
+              page.on('response',r=>{if(r.status()>=400)responses.push(`${r.status()} ${r.url()}`)});
+              await page.route('https://*.supabase.co/**',async route=>{
+                const u=new URL(route.request().url());
+                if(u.pathname.endsWith('/pu-plan-api-v7'))return route.fulfill({status:410,contentType:'application/json',body:'{"error":"DISABLED"}'});
+                return route.fulfill({status:401,contentType:'application/json',body:'{"message":"diagnostic unauthorized"}'});
+              });
+              await page.addInitScript(()=>{localStorage.clear();sessionStorage.clear()});
+              await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:30000});
+              for(const ms of [1000,3000,10000]){
+                await page.waitForTimeout(ms-(globalThis.__elapsed||0)); globalThis.__elapsed=ms;
+                const state=await page.evaluate(()=>({
+                  readyState:document.readyState,
+                  app:!!window.PUPLAN_APP,
+                  durable:!!window.NOLU_DURABLE,
+                  transport:!!window.NOLU_TRANSPORT,
+                  resilience:!!window.NOLU_RESILIENCE,
+                  offlineRescue:!!window.NOLU_OFFLINE_RESCUE,
+                  cloud:!!window.PUPLAN_CLOUD,
+                  replication:!!window.NOLU_REPLICATION,
+                  bodyText:document.body.innerText.slice(0,160)
+                }));
+                console.log('STARTUP_STATE',ms,JSON.stringify(state));
+              }
+              console.log('ERRORS',JSON.stringify(errors));
+              console.log('FAILED_REQUESTS',JSON.stringify(failed));
+              console.log('HTTP_ERRORS',JSON.stringify(responses.slice(0,30)));
+              const ok=await page.evaluate(()=>!!window.PUPLAN_CLOUD);
+              if(!ok)process.exitCode=1;
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          node /tmp/nolu-startup/check.cjs
+NODE
