@@ -122,6 +122,25 @@ const privateSeed={
   assert.equal(x.localStorage.getItem('puplan_session'),null);
 }
 
+// If the server rejects a syntactically valid session, the UID tracked before
+// quarantine must still be available to remove recovery snapshots and pending data.
+{
+  const session=tokenFor(UID_A);
+  const x=boot({
+    ...privateSeed,
+    puplan_session:session,
+    puplan_session_primary_v1:session,
+    [`nolu_account_snapshot_v1:${UID_A}`]:'{"private":true}',
+    [`nolu_pending_mutations_v1:${UID_A}`]:'{"private":true}'
+  });
+  assert.equal(x.localStorage.getItem(`nolu_account_snapshot_v1:${UID_A}`),'{"private":true}');
+  x.localStorage.removeItem('puplan_session');
+  x.listeners['puplan:profile-changed'].fn({detail:null});
+  assert.equal(x.localStorage.getItem(`nolu_account_snapshot_v1:${UID_A}`),null);
+  assert.equal(x.localStorage.getItem(`nolu_pending_mutations_v1:${UID_A}`),null);
+  assert.equal(x.localStorage.getItem('puplan_session_primary_v1'),null);
+}
+
 {
   const session=tokenFor(UID_A);
   const x=boot({...privateSeed,puplan_session:session,puplan_session_primary_v1:session,[`nolu_account_snapshot_v1:${UID_A}`]:'{}'});
