@@ -4,9 +4,17 @@ const CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
 const token=()=>localStorage.getItem('puplan_session_primary_v1')||'';
 const esc=s=>window.PUPLAN_APP?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const profileCache=new Map();
+let profileCacheSession='';
+function syncProfileCache(){
+  const current=token();
+  if(current!==profileCacheSession){profileCache.clear();profileCacheSession=current}
+  return current;
+}
+function dropCachedProfile(username){syncProfileCache();profileCache.delete(String(username||'').toLowerCase())}
 
 async function call(url,action,payload={}){
-  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload})});
+  const regional=token();if(!regional)throw new Error('請先登入');
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${regional}`},body:JSON.stringify({action,...payload})});
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.message||'目前無法完成這個操作');
   return d;
@@ -14,7 +22,7 @@ async function call(url,action,payload={}){
 function usernameFrom(node){const s=node?.querySelector?.('small')?.textContent||'';return (s.match(/@([a-z0-9_.]{2,24})/i)||[])[1]?.toLowerCase()||''}
 function avatar(p){const src=cleanAvatar(p?.avatar_data||'');return src?`<img src="${esc(src)}" alt="">`:`<span>${esc((p?.display_name||'?').slice(0,1))}</span>`}
 function media(items=[]){if(!items.length)return'';return`<div class="profile-post-media">${items.slice(0,4).map(m=>m.type==='video'?`<video src="${esc(m.url)}" muted playsinline preload="metadata"></video>`:`<img src="${esc(m.url)}" alt="">`).join('')}</div>`}
-async function getProfile(username,force=false){if(!force&&profileCache.has(username))return profileCache.get(username);const d=await call(SOCIAL,'profile_view',{username});profileCache.set(username,d);return d}
+async function getProfile(username,force=false){syncProfileCache();const key=String(username||'').toLowerCase();if(!force&&profileCache.has(key))return profileCache.get(key);const d=await call(SOCIAL,'profile_view',{username:key});profileCache.set(key,d);return d}
 
 function ensureProfileDialog(){
   let d=document.querySelector('#memberProfileDialog');
@@ -41,7 +49,7 @@ async function openProfile(username){
     body.querySelector('.profile-close').onclick=()=>d.close();
     body.querySelector('[data-profile-add]')?.addEventListener('click',async e=>{
       const b=e.currentTarget;b.disabled=true;
-      try{await call(CORE,'send_request',{user_id:p.id});profileCache.delete(username);await window.PUPLAN_CLOUD?.loadSocial?.();await openProfile(username)}catch(err){b.disabled=false;window.PUPLAN_APP?.toast?.(err.message)}
+      try{await call(CORE,'send_request',{user_id:p.id});dropCachedProfile(username);await window.PUPLAN_CLOUD?.loadSocial?.();await openProfile(username)}catch(err){b.disabled=false;window.PUPLAN_APP?.toast?.(err.message)}
     });
     body.querySelector('[data-profile-message]')?.addEventListener('click',async e=>{
       const b=e.currentTarget;b.disabled=true;
@@ -89,6 +97,8 @@ function enhance(){
     if(u&&!card.querySelector('.feed-tune')&&u!==window.PUPLAN_CLOUD?.getProfile?.()?.username){const b=document.createElement('button');b.type='button';b.className='feed-tune';b.textContent='•••';b.setAttribute('aria-label','調整推薦');b.onclick=e=>{e.stopPropagation();openPreference(u,card)};author.appendChild(b)}
   });
 }
+document.addEventListener('puplan:profile-changed',()=>syncProfileCache());
+window.addEventListener('storage',event=>{if(event.key==='puplan_session_primary_v1')syncProfileCache()});
 new MutationObserver(enhance).observe(document.body,{childList:true,subtree:true});
 document.addEventListener('click',e=>{const t=e.target.closest?.('[data-profile-username]');if(t)openProfile(t.dataset.profileUsername)});
 setTimeout(enhance,0);
