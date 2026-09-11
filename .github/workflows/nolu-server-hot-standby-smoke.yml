@@ -6,6 +6,7 @@ on:
       - 'supabase/migrations/*_nolu_hot_standby_primary_*.sql'
       - 'supabase/standby/**'
       - 'supabase/functions/pu-plan-replica-*/**'
+      - 'supabase/functions/pu-plan-failback-*/**'
       - 'pu-plan/cloud-replication.js'
       - '.github/workflows/nolu-server-hot-standby-smoke.yml'
   pull_request:
@@ -13,6 +14,7 @@ on:
       - 'supabase/migrations/*_nolu_hot_standby_primary_*.sql'
       - 'supabase/standby/**'
       - 'supabase/functions/pu-plan-replica-*/**'
+      - 'supabase/functions/pu-plan-failback-*/**'
       - 'pu-plan/cloud-replication.js'
       - '.github/workflows/nolu-server-hot-standby-smoke.yml'
 
@@ -23,7 +25,7 @@ jobs:
   invariants:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate replication invariants
         shell: python
         run: |
@@ -40,9 +42,12 @@ jobs:
           cleanup = text('supabase/migrations/20260911154004_nolu_hot_standby_primary_cleanup.sql')
           standby_tables = text('supabase/standby/20260911_nolu_hot_standby_tables.sql')
           standby_apply = text('supabase/standby/20260911_nolu_hot_standby_apply.sql')
+          failback_snapshot = text('supabase/standby/20260911_nolu_failback_snapshot.sql')
           relay = text('supabase/functions/pu-plan-replica-relay-v2/index.ts')
           ingest = text('supabase/functions/pu-plan-replica-ingest-v3/index.ts')
           worker = text('supabase/functions/pu-plan-replica-worker-v1/index.ts')
+          failback = text('supabase/functions/pu-plan-failback-v1/index.ts')
+          failback_ingest = text('supabase/functions/pu-plan-failback-ingest-v1/index.ts')
           client = text('pu-plan/cloud-replication.js')
 
           assert 'gen_random_bytes(32)' in tables
@@ -63,6 +68,21 @@ jobs:
           assert 'FOR UPDATE' in standby_apply
           assert 'last_revision' in standby_apply
           assert 'FROM PUBLIC,anon,authenticated' in standby_apply
+
+          # Failback must be reproducible from Git, not only from dashboard history.
+          assert 'puplan_build_failback_snapshot' in failback_snapshot
+          assert "'base_primary_revision'" in failback_snapshot
+          for field in ('friendships','meetups','posts','post_likes','post_media','conversations','conversation_members','messages','feed_preferences','author_affinity'):
+              assert f"'{field}'" in failback_snapshot
+          assert 'FROM PUBLIC, anon, authenticated' in failback_snapshot
+          assert 'TO service_role' in failback_snapshot
+          assert 'verifySignedSessionV4' in failback
+          assert 'assertCredentialCurrent' in failback
+          assert 'puplan_build_failback_snapshot' in failback
+          assert 'puplan_failback_nonces' in failback_ingest
+          assert 'puplan_apply_failback_snapshot' in failback_ingest
+          assert 'BROWSER_ORIGIN_NOT_ALLOWED' in failback_ingest
+          assert 'req.body.getReader()' in failback_ingest
 
           for source in (relay, ingest, worker):
               assert 'BROWSER_ORIGIN_NOT_ALLOWED' in source
