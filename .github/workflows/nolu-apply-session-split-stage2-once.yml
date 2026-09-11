@@ -1,0 +1,43 @@
+name: nolu apply session split stage2 once
+
+on:
+  push:
+    branches: [fix/nolu-provider-mesh-security-final3-20260911]
+    paths:
+      - '.github/scripts/patch-session-split-stage2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-provider-mesh-security-final3-20260911
+          fetch-depth: 0
+      - name: Apply stage2 product patch
+        run: python3 .github/scripts/patch-session-split-stage2.py
+      - name: Validate syntax and region token separation
+        run: |
+          set -euo pipefail
+          for f in pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud-replication.js pu-plan/cloud.js pu-plan/guest-privacy.js pu-plan/durable-bridge.js pu-plan/offline-session-rescue.js; do node --check "$f"; done
+          grep -q "puplan_standby_session_v2" pu-plan/cloud.js
+          grep -q "preferredStoredToken" pu-plan/cloud.js
+          grep -q "sessionConflict" pu-plan/guest-privacy.js
+          grep -q "puplan_standby_session_v2" pu-plan/durable-bridge.js
+          grep -q "puplan_standby_session_v2" pu-plan/offline-session-rescue.js
+          grep -q "if(hasAuth(options)&&!authTokenFor(endpoint))continue" pu-plan/transport-bridge.js
+          grep -q "if(hasAuthorization(options)&&!authTokenFor(api))continue" pu-plan/resilience.js
+          ! grep -q "portableToken()||token()" pu-plan/resilience.js
+      - name: Commit stage2 product patch
+        run: |
+          set -euo pipefail
+          git config user.name 'Miiduoa'
+          git config user.email '107848266+Miiduoa@users.noreply.github.com'
+          git add pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud.js pu-plan/guest-privacy.js pu-plan/durable-bridge.js pu-plan/offline-session-rescue.js
+          git commit -m 'fix(nolu): keep regional sessions isolated across reloads'
+          git push origin HEAD:fix/nolu-provider-mesh-security-final3-20260911
