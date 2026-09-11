@@ -57,7 +57,8 @@ jobs:
           assert.match(fn,/snapshot\/\$\{uid\}\/\$\{String\(revision\)\.padStart/);
           assert.match(fn,/origin !== ALLOWED_ORIGIN/);
           assert.match(fn,/path: \["\/mirror", "\/health"\]/);
-          assert.match(cfg,/provider:'netlify'[\s\S]*?https:\/\/nolu-mirror\.netlify\.app\/mirror[\s\S]*?enabled:false/);
+          assert.match(fn,/https:\/\/miiduoa\.github\.io\/web\/nolu-mesh-jwks\.json/);
+          assert.match(cfg,/provider:'netlify'[\s\S]*?https:\/\/nolu-mirror\.netlify\.app\/mirror[\s\S]*?enabled:true/);
           assert.doesNotMatch(fn,/(?:postgres(?:ql)?:\/\/|service_role|PRIVATE KEY|password\s*=)/i);
           console.log('NETLIFY_MIRROR_CONTRACT_OK');
           NODE
