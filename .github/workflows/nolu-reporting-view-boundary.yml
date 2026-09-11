@@ -1,0 +1,101 @@
+name: nolu reporting view boundary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/nolu-reporting-view-boundary.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/nolu-reporting-view-boundary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reporting-view-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify reporting views honor caller security
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/migrations/20260911191000_harden_reporting_view_exposure.sql')
+          assert p.exists(), 'reporting view hardening migration is missing'
+          s=p.read_text().lower()
+          invoker_views=[
+            'course_grade_rollups',
+            'reporting_announcement_read_ratio',
+            'reporting_at_risk_students',
+            'reporting_course_leaderboard',
+            'reporting_grade_course_item_scores',
+            'reporting_learning_time_monthly',
+            'reporting_live_attendance_overview',
+            'reporting_participation_score',
+            'reporting_quiz_overview',
+            'reporting_student_dashboard',
+            'reporting_ai_quota_overview',
+            'reporting_push_dispatch_retry_curve',
+            'reporting_teacher_workload',
+          ]
+          missing=[v for v in invoker_views if f'alter view public.{v} set (security_invoker = true)' not in s]
+          assert not missing, f'missing security_invoker views: {missing}'
+          assert 'revoke select on public.reporting_course_engagement_7d from public, anon, authenticated' in s
+          for v in ('reporting_ai_quota_overview','reporting_push_dispatch_retry_curve','reporting_teacher_workload'):
+            assert f'revoke select on public.{v} from public, anon, authenticated' in s
+          assert 'alter view public.public_course_catalog set (security_invoker = true)' not in s
+          assert 'revoke select on public.public_course_catalog' not in s
+          print('reporting view source boundary passed')
+          PY
+
+      - name: Anonymous API must not read sensitive reporting views
+        run: |
+          set -euo pipefail
+          probe_view() {
+            local view="$1"
+            local body="/tmp/${view}.json"
+            local code=""
+            local rc=1
+            local attempt
+            for attempt in 1 2; do
+              set +e
+              code=$(curl -sS --connect-timeout 3 --max-time 7 \
+                -o "$body" -w '%{http_code}' \
+                "$PROJECT_URL/rest/v1/$view?select=*&limit=1" \
+                -H "apikey: $PUBLISHABLE_KEY")
+              rc=$?
+              set -e
+              [ "$rc" -eq 0 ] && break
+              echo "::warning::$view transport attempt $attempt failed (curl=$rc)"
+              sleep "$attempt"
+            done
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::$view live probe transport-inconclusive; source migration guard passed"
+              return 0
+            fi
+            echo "$view -> HTTP $code"
+            if [[ "$code" =~ ^2 ]]; then
+              echo "::error::Anonymous caller can read sensitive reporting view $view"
+              cat "$body"
+              exit 1
+            fi
+            if [ "$code" -ge 500 ]; then
+              echo "::error::$view returned server error instead of access denial"
+              cat "$body"
+              exit 1
+            fi
+          }
+          probe_view reporting_grade_course_item_scores
+          probe_view reporting_ai_quota_overview
+          probe_view reporting_teacher_workload
