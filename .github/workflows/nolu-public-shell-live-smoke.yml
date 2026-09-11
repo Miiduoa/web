@@ -25,18 +25,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify source shell contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '20260911-login-rescue6' pu-plan/index.html
+          grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
+
       - name: Verify deployed GitHub Pages shell
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
           # pu-plan-pages.yml uploads ./pu-plan as the Pages artifact root, so the
-          # deployed app is at /web/, not /web/pu-plan/.
+          # deployed app is at /web/. Wait for the Pages deployment from this push
+          # instead of racing it.
           BASE='https://miiduoa.github.io/web'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/" -o "$tmp/index.html"
-          grep -q '20260911-outage-mesh5' "$tmp/index.html"
+          ready=0
+          for attempt in $(seq 1 24); do
+            if curl -fsS --max-time 15 "$BASE/" -o "$tmp/index.html" && grep -q '20260911-login-rescue6' "$tmp/index.html"; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
           grep -q 'https://nolu-mirror.netlify.app' "$tmp/index.html"
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
@@ -49,7 +67,7 @@ jobs:
           grep -q "enabled:true" "$tmp/provider-config.js"
 
           curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/sw.js" -o "$tmp/sw.js"
-          grep -q "nolu-shell-20260911-outage-mesh5" "$tmp/sw.js"
+          grep -q "nolu-shell-20260911-login-rescue6" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
           echo 'PUBLIC_SHELL_LIVE_OK'
 

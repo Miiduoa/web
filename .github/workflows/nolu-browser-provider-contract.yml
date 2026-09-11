@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify browser provider and cache safety contract
         run: |
@@ -52,9 +52,9 @@ jobs:
 
           const versions=[...html.matchAll(/\?v=([^"']+)/g)].map(m=>m[1]);
           assert(versions.length>=10,'expected versioned shell assets');
-          assert.deepEqual([...new Set(versions)],['20260911-outage-mesh5'],'all shell assets must roll together');
-          assert.match(sw,/const CACHE='nolu-shell-20260911-outage-mesh5'/);
-          assert.match(pwa,/nolu_shell_reload_20260911_outage_mesh5/);
+          assert.deepEqual([...new Set(versions)],['20260911-login-rescue6'],'all shell assets must roll together');
+          assert.match(sw,/const CACHE='nolu-shell-20260911-login-rescue6'/);
+          assert.match(pwa,/nolu_shell_reload_20260911_login_rescue6/);
 
           const publicText=`${html}\n${cfg}`;
           assert.doesNotMatch(publicText,/(?:service_role|PRIVATE KEY|postgres(?:ql)?:\/\/)/i,'browser files must not contain server secrets');

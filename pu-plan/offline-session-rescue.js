@@ -26,25 +26,36 @@ async function fingerprint(raw){
     return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
   }catch{return''}
 }
+function rebindFromDurable(id,snap){
+  const p=snap?.profile||{};
+  localStorage.setItem('puplan_course_owner',id);
+  if(p.display_name)localStorage.setItem('puplan_name',String(p.display_name).slice(0,80));else localStorage.removeItem('puplan_name');
+  if(p.username!==undefined)localStorage.setItem('puplan_username',String(p.username).slice(0,24));else localStorage.removeItem('puplan_username');
+  if(p.bio!==undefined)localStorage.setItem('puplan_bio',String(p.bio).slice(0,120));else localStorage.removeItem('puplan_bio');
+  if(p.discoverable!==undefined)localStorage.setItem('puplan_discoverable',p.discoverable===false?'0':'1');else localStorage.removeItem('puplan_discoverable');
+  if(p.avatar_data&&String(p.avatar_data).length<=180000)localStorage.setItem('puplan_avatar',String(p.avatar_data));else localStorage.removeItem('puplan_avatar');
+  if(Array.isArray(snap?.courses))localStorage.setItem('puplan_courses',JSON.stringify(snap.courses.slice(0,80)));else localStorage.removeItem('puplan_courses');
+  if(snap?.meta&&typeof snap.meta==='object')localStorage.setItem('puplan_schedule_meta',JSON.stringify(snap.meta));else localStorage.removeItem('puplan_schedule_meta');
+}
 async function trustedSnapshot(){
   const raw=localStorage.getItem('puplan_session')||'';const session=parseSession(raw);if(!session)return null;
   if(session.exp*1000+MAX_EXPIRED_GRACE_MS<Date.now())return null;
   const id=String(session.uid),owner=localStorage.getItem('puplan_course_owner')||'';
-  if(owner&&owner!==id)return null;
   const fp=await fingerprint(raw);if(!fp)return null;
   let durable=null;try{durable=await window.NOLU_DURABLE?.getSnapshot?.(id)}catch{}
   const local=safeJson(localStorage.getItem(`nolu_account_snapshot_v1:${id}`),null);
   const exact=x=>x?.uid===id&&x?.profile?.id===id&&x?.sessionFingerprint===fp&&Date.now()-Number(x?.savedAt||0)<=MAX_SNAPSHOT_AGE_MS;
   const candidates=[];
+  // IndexedDB is session-fingerprint bound. An exact durable match is allowed to
+  // repair a stale/wrong owner key left by a prior failed auth/cache transition.
   if(exact(durable))candidates.push({snap:durable,durable:true});
-  // The localStorage mirror is accepted only when the account owner binding still
-  // exists. If that binding was purged by an uncertain cloud-auth response, only
-  // the exact IndexedDB session fingerprint may restore the owner.
+  // localStorage is not allowed to repair ownership; it is trusted only if the
+  // owner already matches the signed session uid.
   if(owner===id&&exact(local))candidates.push({snap:local,durable:false});
   candidates.sort((a,b)=>Number(b.snap?.savedAt||0)-Number(a.snap?.savedAt||0));
   const best=candidates[0];if(!best)return null;
-  if(!owner&&best.durable)localStorage.setItem('puplan_course_owner',id);
-  return {session,raw,snap:best.snap};
+  if(best.durable&&owner!==id)rebindFromDurable(id,best.snap);
+  return {session,raw,snap:best.snap,ownerRebound:best.durable&&owner!==id};
 }
 function queue(uid,action,body,snap){
   const key=`nolu_pending_mutations_v1:${uid}`,q=safeJson(localStorage.getItem(key),{})||{},changedAt=Date.now();
@@ -77,6 +88,18 @@ function activate(){
 function bootstrapResponse(snap){
   return new Response(JSON.stringify({profile:profileFromStorage(snap.uid,snap),courses:Array.isArray(snap.courses)?snap.courses.slice(0,80):[],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true},offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 }
+function loginResponse(trusted){
+  const uid=String(trusted.session.uid),snap=trusted.snap;
+  return new Response(JSON.stringify({token:trusted.raw,profile:profileFromStorage(uid,snap),courses:Array.isArray(snap.courses)?snap.courses.slice(0,80):[],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true},offline:true,local_recovery:true,login_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+}
+function outageLoginFailure(){
+  const recovery=window.NOLU_SESSION_RECOVERY?.result||{};
+  const hadAnchor=!!(localStorage.getItem('puplan_session')||localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session_standby_v1'));
+  const message=hadAnchor||recovery?.status==='local-grace'
+    ?'主雲端目前無法連線；這台裝置有舊登入資料，但目前找不到可安全驗證的本機快照。請勿清除 nolu 網站資料。'
+    :'主雲端目前無法連線，而且東京備援尚未有這個帳號；這台裝置也沒有可驗證的舊登入狀態。請勿重新註冊同一個 Email。';
+  return new Response(JSON.stringify({error:'AUTHORITY_UNAVAILABLE',message,local_recovery:false}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+}
 function mutationResponse(uid,action,body,snap){
   queue(uid,action,body,snap);activate();
   if(action==='update_profile')return new Response(JSON.stringify({profile:profileFromStorage(uid,snap),queued:true,offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -87,6 +110,15 @@ window.fetch=async function noluOfflineSessionRescue(input,options={}){
   const url=requestUrl(input);if(!isNoluCore(url))return wrappedFetch(input,options);
   const body=requestBody(options),action=String(body?.action||'');let response=null,error=null;
   try{response=await wrappedFetch(input,options);if(response.status<500&&response.status!==410)return response}catch(e){error=e}
+  if(action==='login'){
+    const trusted=await trustedSnapshot();
+    const recovery=window.NOLU_SESSION_RECOVERY?.result||{};
+    if(trusted&&String(recovery?.uid||'')===String(trusted.session.uid)&&['canonical-ok','recovered','local-grace'].includes(String(recovery.status||''))){
+      activate();
+      return loginResponse(trusted);
+    }
+    return outageLoginFailure();
+  }
   if(action==='bootstrap'||action==='save_schedule'||action==='update_profile'){
     const trusted=await trustedSnapshot();
     if(trusted){activate();const snap=trusted.snap;if(action==='bootstrap')return bootstrapResponse(snap);return mutationResponse(String(trusted.session.uid),action,body,snap)}
