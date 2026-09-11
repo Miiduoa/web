@@ -5,6 +5,7 @@ const assert=require('assert');
 const source=fs.readFileSync('pu-plan/guest-privacy.js','utf8');
 const UID_A='11111111-1111-4111-8111-111111111111';
 const UID_B='22222222-2222-4222-8222-222222222222';
+const PURGE_KEY='nolu_guest_durable_purge_uid_v1';
 const now=()=>Math.floor(Date.now()/1000);
 function tokenFor(uid,exp=now()+3600,version=4,iat=null){
   const issued=iat??Math.min(now(),Number(exp)-3600);
@@ -52,6 +53,7 @@ const privateSeed={
   assert.equal(data.nolu_guest_scope_v1,'1');
   for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`legacy guest leaked ${key}`);
   assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
+  assert.equal(x.sessionStorage.getItem(PURGE_KEY),UID_A,'guest boot must hand durable purge uid to durable bridge');
 }
 
 {
@@ -64,6 +66,7 @@ const privateSeed={
   const data=x.localStorage.dump();
   assert.equal(data.puplan_guest,'1');
   assert.equal(data.puplan_session,undefined);
+  assert.equal(x.sessionStorage.getItem(PURGE_KEY),UID_A);
   for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`guest/token conflict leaked ${key}`);
 }
 
@@ -152,6 +155,7 @@ const privateSeed={
   assert.equal(data.puplan_session,undefined);
   assert.equal(data.puplan_session_primary_v1,undefined);
   assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],undefined);
+  assert.equal(x.sessionStorage.getItem(PURGE_KEY),UID_A,'guest click must request durable purge');
 }
 
 console.log('guest privacy isolation: ok');
