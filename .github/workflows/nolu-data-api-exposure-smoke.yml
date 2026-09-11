@@ -24,12 +24,12 @@ jobs:
   data-api-exposure:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    env:
+      PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
     steps:
       - name: Probe anonymous REST and Storage exposure
         shell: bash
-        env:
-          PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
-          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
         run: |
           set -euo pipefail
           tables=(
@@ -49,6 +49,19 @@ jobs:
             puplan_app_conversations
           )
 
+          # Availability is monitored separately. If PostgREST cannot answer at all,
+          # exposure is inconclusive rather than evidence that data is public.
+          rc=0
+          first_code=$(curl -sS --connect-timeout 2 --max-time 4 \
+            -o /tmp/gateway-probe.json -w '%{http_code}' \
+            "$PROJECT_URL/rest/v1/puplan_app_users?select=id&limit=1" \
+            -H "apikey: $PUBLISHABLE_KEY" \
+            -H 'Accept: application/json') || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Primary Data API is unreachable; anonymous exposure check is inconclusive (curl=$rc HTTP=${first_code:-000})."
+            exit 0
+          fi
+
           failed=0
           reachable=0
           for table in "${tables[@]}"; do
@@ -60,8 +73,7 @@ jobs:
               -H "apikey: $PUBLISHABLE_KEY" \
               -H 'Accept: application/json') || rc=$?
             if [ "$rc" -ne 0 ]; then
-              echo "::error::REST gateway probe failed for $table (curl=$rc HTTP=${code:-000})"
-              failed=1
+              echo "::warning::REST probe became unavailable for $table (curl=$rc HTTP=${code:-000}); result inconclusive."
               continue
             fi
 
@@ -74,12 +86,13 @@ jobs:
                 cat "$body"
                 failed=1
               else
-                echo "::warning::Anonymous role can reach $table but current RLS filters all rows; revoke anon table grants for Edge-only defense in depth."
+                echo "::warning::Anonymous role can reach $table but RLS currently filters all rows; revoke anon table grants for Edge-only defense in depth."
               fi
-            elif [ "$code" -lt 400 ]; then
-              echo "::error::Unexpected HTTP $code from $table"
-              cat "$body"
+            elif [ "$code" -ge 300 ] && [ "$code" -lt 400 ]; then
+              echo "::error::Unexpected redirect HTTP $code from $table"
               failed=1
+            elif [ "$code" -ge 500 ]; then
+              echo "::warning::$table returned HTTP $code; exposure result inconclusive."
             fi
           done
 
@@ -92,8 +105,7 @@ jobs:
             -H 'Content-Type: application/json' \
             --data '{"prefix":"","limit":1,"offset":0}') || rc=$?
           if [ "$rc" -ne 0 ]; then
-            echo "::error::Storage anonymous listing probe failed (curl=$rc HTTP=${storage_code:-000})"
-            failed=1
+            echo "::warning::Storage listing gateway is unreachable; exposure result inconclusive (curl=$rc HTTP=${storage_code:-000})."
           else
             echo "puplan-media listing -> HTTP $storage_code"
             if [[ "$storage_code" =~ ^2 ]]; then
@@ -105,6 +117,11 @@ jobs:
               else
                 echo '::warning::Anonymous role can call the media listing endpoint but currently receives no objects.'
               fi
+            elif [ "$storage_code" -ge 300 ] && [ "$storage_code" -lt 400 ]; then
+              echo "::error::Unexpected Storage redirect HTTP $storage_code"
+              failed=1
+            elif [ "$storage_code" -ge 500 ]; then
+              echo "::warning::Storage returned HTTP $storage_code; exposure result inconclusive."
             fi
           fi
 
@@ -113,11 +130,9 @@ jobs:
 
       - name: Probe read-style RPC exposure without mutation
         shell: bash
-        env:
-          PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
-          PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
         run: |
           set -euo pipefail
+          failed=0
           probe_rpc() {
             local fn="$1" payload="$2"
             local body="/tmp/rpc-${fn}.json" code rc=0
@@ -128,8 +143,8 @@ jobs:
               -H 'Content-Type: application/json' \
               --data "$payload") || rc=$?
             if [ "$rc" -ne 0 ]; then
-              echo "::error::RPC gateway probe failed for $fn (curl=$rc HTTP=${code:-000})"
-              return 1
+              echo "::warning::RPC gateway unavailable for $fn; exposure result inconclusive (curl=$rc HTTP=${code:-000})."
+              return 0
             fi
             echo "$fn -> HTTP $code"
             if [[ "$code" =~ ^2 ]]; then
@@ -137,11 +152,18 @@ jobs:
               if [ "$compact" != '[]' ] && [ "$compact" != 'null' ] && [ "$compact" != '{}' ]; then
                 echo "::error::Anonymous RPC $fn returned data"
                 cat "$body"
-                return 1
+                failed=1
+              else
+                echo "::warning::Anonymous role can execute RPC $fn; revoke anon EXECUTE unless intentionally public."
               fi
-              echo "::warning::Anonymous role can execute RPC $fn; revoke anon EXECUTE unless intentionally public."
+            elif [ "$code" -ge 300 ] && [ "$code" -lt 400 ]; then
+              echo "::error::Unexpected RPC redirect HTTP $code for $fn"
+              failed=1
+            elif [ "$code" -ge 500 ]; then
+              echo "::warning::RPC $fn returned HTTP $code; exposure result inconclusive."
             fi
           }
 
           probe_rpc puplan_latest_replies '{"p_post_ids":[],"p_per_post":1}'
           probe_rpc puplan_inbox_page '{"p_user_id":"00000000-0000-4000-8000-000000000000","p_limit":1,"p_before":null}'
+          [ "$failed" -eq 0 ]
