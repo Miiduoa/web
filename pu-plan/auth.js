@@ -7,7 +7,11 @@ const ACCOUNT_KEYS=[
   'puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
-const ACCOUNT_PREFIXES=['nolu_standby_dirty_v1:','nolu_standby_seeded_v1:','nolu_standby_dirty_v2:','nolu_standby_seeded_v2:'];
+const ACCOUNT_PREFIXES=[
+  'nolu_standby_dirty_v1:','nolu_standby_seeded_v1:',
+  'nolu_standby_dirty_v2:','nolu_standby_seeded_v2:',
+  'nolu_standby_dirty_v3:','nolu_standby_seeded_v3:'
+];
 let loggingOut=false;
 
 function clearAccountCache(){
