@@ -2,14 +2,16 @@ name: nolu replica v3 live smoke
 
 on:
   push:
-    branches: [main, fix/nolu-replica-v3-main-smoke-20260911]
+    branches: [main, feat/nolu-replica-v3-client-20260911]
     paths:
+      - 'pu-plan/cloud-replication.js'
       - '.github/workflows/nolu-replica-v3-live-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
       - 'supabase/migrations/20260911_nolu_replica_v3_nonces.sql'
   pull_request:
     branches: [main]
     paths:
+      - 'pu-plan/cloud-replication.js'
       - '.github/workflows/nolu-replica-v3-live-smoke.yml'
       - 'supabase/functions/pu-plan-replica-v3/**'
       - 'supabase/migrations/20260911_nolu_replica_v3_nonces.sql'
@@ -24,12 +26,15 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v6
-      - name: Verify migration is fail-closed for browser roles
+      - name: Verify migration and client routing invariants
         run: |
           set -euo pipefail
           grep -q 'puplan_replica_v3_nonces' supabase/migrations/20260911_nolu_replica_v3_nonces.sql
           grep -q 'enable row level security' supabase/migrations/20260911_nolu_replica_v3_nonces.sql
           grep -q 'revoke all.*anon, authenticated' supabase/migrations/20260911_nolu_replica_v3_nonces.sql
+          grep -q 'pu-plan-replica-v3' pu-plan/cloud-replication.js
+          ! grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
+          grep -q 'manualReconcileRequired' pu-plan/cloud-replication.js
 
       - name: Verify both live replica-v3 endpoints and signed peer probes
         shell: bash
@@ -41,7 +46,6 @@ jobs:
           for REF in "$A" "$B"; do
             URL="https://${REF}.supabase.co/functions/v1/pu-plan-replica-v3"
             tmp=$(mktemp)
-
             code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' "$URL" -H "Origin: $ORIGIN")
             echo "[$REF health] HTTP $code :: $(cat "$tmp")"
             test "$code" = 200
