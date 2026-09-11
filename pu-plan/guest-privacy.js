@@ -1,6 +1,9 @@
 const SESSION_KEY='puplan_session';
 const GUEST_KEY='puplan_guest';
 const GUEST_SCOPE_MARKER='nolu_guest_scope_v1';
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_SESSION_SECONDS=45*24*60*60;
+const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
 
 const ACCOUNT_DATA_KEYS=[
   'puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner'
@@ -33,11 +36,18 @@ function clearPrivateCaches(uid=''){
   clearResilienceFor(uid||ownerBefore);
   clearAssistantSession();
 }
+function quarantineRenderableCache(candidateUid=''){
+  const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
+  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
+  clearAssistantSession();
+  if(ownerBefore&&candidateUid&&ownerBefore!==candidateUid){
+    clearResilienceFor(ownerBefore);
+    clearLocal(CLOUD_SESSION_KEYS);
+  }
+}
 function clearPrivateRuntime(uid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
   clearPrivateCaches(uid||ownerBefore);
-  // Runtime state is storage-backed. Re-render after the purge so data that was
-  // already painted before an authoritative 401 cannot remain visible.
   globalThis.window?.PUPLAN_APP?.setSelectedFriend?.(null);
   globalThis.window?.PUPLAN_APP?.render?.();
 }
@@ -46,9 +56,6 @@ function clearPrivateAccountState(uid=''){
   clearPrivateRuntime(uid);
 }
 
-// Decode only enough of the custom session payload to partition local cache before
-// any UI renders. This is NOT authentication: the server remains authoritative.
-// Treat malformed/expired payloads as unsafe and clear private local state.
 function decodeBase64UrlAscii(raw=''){
   const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const s=String(raw).replace(/-/g,'+').replace(/_/g,'/').replace(/=+$/,'');
@@ -60,53 +67,51 @@ function decodeBase64UrlAscii(raw=''){
   }
   return out;
 }
-function sessionUid(raw=''){
+function sessionInfo(raw='',{allowRecentlyExpired=false}={}){
   try{
     const [payload,signature,...extra]=String(raw).split('.');
-    if(!payload||!signature||extra.length)return'';
+    if(!payload||!signature||extra.length)return null;
     const data=JSON.parse(decodeBase64UrlAscii(payload));
-    if(!data?.uid||!data?.exp||Number(data.exp)*1000<=Date.now())return'';
-    const uid=String(data.uid);
-    return /^[A-Za-z0-9._:-]{1,100}$/.test(uid)?uid:'';
-  }catch{return''}
+    const now=Math.floor(Date.now()/1000);
+    if(data?.v!==4||!UUID.test(String(data?.uid||'')))return null;
+    if(!Number.isFinite(data?.iat)||!Number.isFinite(data?.exp)||data.exp<=data.iat)return null;
+    if(data.iat>now+300||data.exp-data.iat>MAX_SESSION_SECONDS)return null;
+    if(data.exp<=now&&(!allowRecentlyExpired||now-data.exp>LOCAL_EXPIRED_GRACE_SECONDS))return null;
+    if(!data.cv||String(data.cv).length>160)return null;
+    return {uid:String(data.uid),iat:data.iat,exp:data.exp,expired:data.exp<=now};
+  }catch{return null}
 }
+function sessionUid(raw=''){return sessionInfo(raw,{allowRecentlyExpired:true})?.uid||''}
 
 const rawSession=localStorage.getItem(SESSION_KEY)||'';
 const hasSession=!!rawSession;
 const isGuest=localStorage.getItem(GUEST_KEY)==='1';
 const owner=localStorage.getItem('puplan_course_owner')||'';
 
-if(hasSession){
-  const uid=sessionUid(rawSession);
-  if(!uid){
-    // Never render account-scoped cache behind a malformed or expired session.
-    clearPrivateAccountState(owner);
-    localStorage.removeItem(GUEST_SCOPE_MARKER);
-  }else{
-    // Account switches must be isolated before app.js can render the previous
-    // account. Missing ownership is also unsafe because legacy cache may remain.
-    if(owner!==uid)clearPrivateCaches(owner);
-    localStorage.removeItem(GUEST_KEY);
-    localStorage.removeItem(GUEST_SCOPE_MARKER);
-  }
-}else if(isGuest){
-  // One-time migration for guest sessions created by older builds. Those builds could
-  // leave the previous account's profile/schedule cache behind, so start from a clean
-  // guest scope once. If an account owner somehow survives, scrub it again even when
-  // the migration marker already exists; genuine guest-created data has no owner.
-  if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner){
-    clearPrivateAccountState(owner);
+if(isGuest){
+  if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner||hasSession){
+    clearPrivateAccountState(owner||sessionUid(rawSession));
     localStorage.setItem(GUEST_KEY,'1');
     localStorage.setItem(GUEST_SCOPE_MARKER,'1');
   }
+}else if(hasSession){
+  const current=sessionInfo(rawSession);
+  const recovery=globalThis.window?.NOLU_SESSION_RECOVERY?.result||null;
+  const grace=sessionInfo(rawSession,{allowRecentlyExpired:true});
+  const localGrace=recovery?.status==='local-grace'&&grace?.expired&&recovery.uid===grace.uid?grace:null;
+  const candidate=current||localGrace;
+  if(!candidate){
+    clearPrivateAccountState(owner);
+    localStorage.removeItem(GUEST_SCOPE_MARKER);
+  }else{
+    quarantineRenderableCache(candidate.uid);
+    localStorage.removeItem(GUEST_SCOPE_MARKER);
+  }
 }else{
-  // No authenticated or guest session means no private account data should be visible.
   clearPrivateAccountState(owner);
   localStorage.removeItem(GUEST_SCOPE_MARKER);
 }
 
-// Run before cloud.js' guest button handler. This guarantees that updateAccountUI()
-// cannot repopulate guest mode from the account that was active moments earlier.
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
   const uid=localStorage.getItem('puplan_course_owner')||sessionUid(localStorage.getItem(SESSION_KEY)||'');
@@ -115,10 +120,6 @@ document.addEventListener('click',event=>{
   localStorage.setItem(GUEST_SCOPE_MARKER,'1');
 },true);
 
-// A syntactically valid token can still be forged, revoked, or otherwise rejected by
-// the server. cloud.js removes the session before emitting this event on a 401. Keep
-// offline cache when a session still exists, but once authoritative auth rejects it,
-// scrub the browser state and repaint from empty storage immediately.
 document.addEventListener('puplan:profile-changed',event=>{
   if(event.detail)return;
   if(localStorage.getItem(SESSION_KEY)||localStorage.getItem(GUEST_KEY)==='1')return;
