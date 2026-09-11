@@ -82,10 +82,40 @@ function mutationResponse(uid,action,body,snap){
   if(action==='update_profile')return new Response(JSON.stringify({profile:profileFromStorage(uid,snap),queued:true,offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
   return new Response(JSON.stringify({ok:true,queued:true,offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 }
+function localGraceToken(){
+  const state=window.NOLU_SESSION_RECOVERY?.result;
+  if(state?.status!=='local-grace'||!state?.uid)return'';
+  const raw=localStorage.getItem('puplan_session')||'',session=parseSession(raw);
+  if(!session||session.exp*1000>Date.now()||String(session.uid)!==String(state.uid))return'';
+  if(session.exp*1000+MAX_EXPIRED_GRACE_MS<Date.now())return'';
+  return raw;
+}
+function authorizationToken(options={}){
+  try{
+    const raw=new Headers(options.headers||{}).get('Authorization')||'';
+    const match=raw.match(/^Bearer\s+(.+)$/i);return match?match[1]:'';
+  }catch{return''}
+}
+function localOnlyBlockedResponse(){
+  return new Response(JSON.stringify({error:'LOCAL_RECOVERY_ONLY',message:'此裝置目前使用本機救援憑證，需重新登入後才能連線雲端功能'}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+}
 
 window.fetch=async function noluOfflineSessionRescue(input,options={}){
-  const url=requestUrl(input);if(!isNoluCore(url))return wrappedFetch(input,options);
-  const body=requestBody(options),action=String(body?.action||'');let response=null,error=null;
+  const url=requestUrl(input),body=requestBody(options),action=String(body?.action||'');
+  const grace=localGraceToken(),presented=authorizationToken(options);
+  // A recently expired Session v4 is a local fingerprint anchor only. Never send
+  // it to Supabase, social/admin APIs, portable-token minting, or any other remote
+  // endpoint. Re-authentication requests carry no old Authorization header and are
+  // therefore still allowed to reach the cloud normally.
+  if(grace&&presented===grace){
+    if(isNoluCore(url)&&(action==='bootstrap'||action==='save_schedule'||action==='update_profile')){
+      const trusted=await trustedSnapshot();
+      if(trusted){activate();const snap=trusted.snap;if(action==='bootstrap')return bootstrapResponse(snap);return mutationResponse(String(trusted.session.uid),action,body,snap)}
+    }
+    return localOnlyBlockedResponse();
+  }
+  if(!isNoluCore(url))return wrappedFetch(input,options);
+  let response=null,error=null;
   try{response=await wrappedFetch(input,options);if(response.status<500&&response.status!==410)return response}catch(e){error=e}
   if(action==='bootstrap'||action==='save_schedule'||action==='update_profile'){
     const trusted=await trustedSnapshot();
@@ -94,4 +124,4 @@ window.fetch=async function noluOfflineSessionRescue(input,options={}){
   if(response)return response;throw error||new TypeError('Nolu cloud unavailable');
 };
 
-window.NOLU_OFFLINE_RESCUE={trustedSnapshot,active:()=>document.documentElement.dataset.noluLocalRescue==='1'};
+window.NOLU_OFFLINE_RESCUE={trustedSnapshot,active:()=>document.documentElement.dataset.noluLocalRescue==='1',localGraceToken};
