@@ -1,0 +1,42 @@
+name: nolu login patience smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-login-patience-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-transport-patience.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-login-patience-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify bounded primary login patience
+        run: |
+          set -euo pipefail
+          node --check pu-plan/login-transport-patience.js
+          grep -Fq "PRIMARY_LOGIN_TIMEOUT_MS=5500" pu-plan/login-transport-patience.js
+          grep -Fq "url.hostname!==PRIMARY_HOST" pu-plan/login-transport-patience.js
+          grep -Fq "actionOf(options)!=='login'" pu-plan/login-transport-patience.js
+          grep -Fq "const {signal:_ignored,...rest}=options||{}" pu-plan/login-transport-patience.js
+          ! grep -Eq "password|password_hash|recovery_hash|service_role" pu-plan/login-transport-patience.js
+          grep -Fq '<script src="login-transport-patience.js?v=20260911-login-rescue6"></script>' pu-plan/index.html
+          node <<'NODE'
+          const fs=require('node:fs');
+          const src=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
+          if((src.match(/baseFetch\(/g)||[]).length<2)throw Error('wrapper must delegate untouched traffic and bounded login traffic');
+          if(/setInterval|while\s*\(|for\s*\(/.test(src))throw Error('login patience must not retry or loop');
+          console.log('NOLU_LOGIN_PATIENCE_OK');
+          NODE
