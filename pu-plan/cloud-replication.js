@@ -1,13 +1,14 @@
 const PRIMARY_REF='hrrmkrayvrgnwcroyttp';
 const STANDBY_REF='ltfurqaspqsvswmebyzw';
 const PRIMARY_SYNC=`https://${PRIMARY_REF}.supabase.co/functions/v1/pu-plan-replica-v3`;
+const FAILBACK_SYNC=`https://${STANDBY_REF}.supabase.co/functions/v1/pu-plan-failback-v1`;
 const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
 const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const DIRTY_PREFIX='nolu_standby_dirty_v3:';
 const SEEDED_PREFIX='nolu_standby_seeded_v3:';
 const state={
-  version:'20260911-replica3-failback-guard',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,
-  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false,manualReconcileRequired:false
+  version:'20260911-replica4-auto-failback',busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,lastFailbackAt:0,
+  lastError:'',lastReason:'',lastTier:'',peerSynced:false,peerSessionReady:false,manualReconcileRequired:false,failbackInFlight:false
 };
 let debounceTimer=null;
 
@@ -61,33 +62,53 @@ function storeStandbyToken(raw){
 }
 function dirtyKey(id=uid()){return id?`${DIRTY_PREFIX}${id}`:''}
 function hasStandbyDirty(id=uid()){const key=dirtyKey(id);return !!key&&localStorage.getItem(key)==='1'}
+function clearStandbyDirty(id=uid()){const key=dirtyKey(id);if(key)localStorage.removeItem(key);state.manualReconcileRequired=false}
 function requireManualReconcile(reason='standby-dirty'){
   state.manualReconcileRequired=true;state.peerSynced=false;
-  state.lastError='standby has unsafely divergent changes; manual reconciliation required';
+  state.lastError='standby has changes awaiting trusted failback reconciliation';
   document.dispatchEvent(new CustomEvent('nolu:replica-manual-reconcile-required',{detail:{uid:uid(),reason,at:Date.now()}}));
 }
-function markStandbyDirty(){
-  const id=uid();if(!id||activeTier()!=='standby')return false;
-  localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1');requireManualReconcile('standby-write');return true;
+function markStandbyDirty(source='standby-write',force=false){
+  const id=uid();if(!id||(!force&&activeTier()!=='standby'))return false;
+  localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1');
+  state.manualReconcileRequired=true;state.peerSynced=false;state.lastError=`standby changes pending (${source})`;
+  return true;
 }
 function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
+
+async function reconcileStandby(reason='failback'){
+  const id=uid(),session=sessionFor('standby');
+  if(!id||!session||!hasStandbyDirty(id)||state.failbackInFlight)return !hasStandbyDirty(id);
+  state.failbackInFlight=true;state.lastReason=reason;
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),12000);
+  try{
+    const response=await fetch(FAILBACK_SYNC,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session}`},body:JSON.stringify({action:'reconcile'}),cache:'no-store',signal:ctrl.signal});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||data.reconciled!==true){state.lastError=data.message||data.error||`failback HTTP ${response.status}`;requireManualReconcile('automatic-failback-failed');return false}
+    clearStandbyDirty(id);state.lastFailbackAt=Date.now();state.lastError='';
+    document.dispatchEvent(new CustomEvent('nolu:replica-failback-complete',{detail:{uid:id,at:state.lastFailbackAt}}));
+    return true;
+  }catch(error){state.lastError=String(error?.message||error||'failback unavailable');requireManualReconcile('automatic-failback-unavailable');return false}
+  finally{clearTimeout(timer);state.failbackInFlight=false}
+}
 
 async function sync(reason='periodic',force=false){
   const id=uid();
   if(!id||localStorage.getItem('puplan_guest')==='1'||state.busy)return false;
   const tier=activeTier();state.lastTier=tier;state.lastReason=reason;
   if(tier!=='primary'){
-    // Replica v3 intentionally supports trusted primary -> standby replication only.
-    // Never send a Tokyo session to the primary endpoint or pretend reverse replication succeeded.
+    // Any authenticated use of the standby may include writes from schedule, profile,
+    // community or messaging code. Conservatively mark it dirty so failback can merge
+    // the trusted Tokyo snapshot before Mumbai resumes as the source of truth.
+    if(sessionFor('standby')&&(localStorage.getItem('nolu_social_cloud_v1')==='standby'||tier==='standby'))markStandbyDirty('standby-active',true);
     state.peerSynced=false;
     if(hasStandbyDirty(id))requireManualReconcile('standby-dirty');
-    else state.lastError='standby active; reverse replication is intentionally disabled';
+    else state.lastError='standby active';
     return false;
   }
   if(hasStandbyDirty(id)){
-    // A previous Tokyo-side write is newer/independent state. Do not overwrite it
-    // merely because Mumbai became reachable again; explicit conflict resolution is required.
-    requireManualReconcile('primary-failback-blocked');return false;
+    const reconciled=await reconcileStandby('primary-returned');
+    if(!reconciled)return false;
   }
   seedPrimarySessionFromCanonical();
   const session=primarySession();if(!session)return false;
@@ -95,10 +116,7 @@ async function sync(reason='periodic',force=false){
   state.busy=true;state.lastAttemptAt=at;state.peerSessionReady=false;
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),8000);
   try{
-    const response=await fetch(PRIMARY_SYNC,{
-      method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session}`},
-      body:JSON.stringify({action:'sync_and_prewarm'}),cache:'no-store',signal:ctrl.signal
-    });
+    const response=await fetch(PRIMARY_SYNC,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session}`},body:JSON.stringify({action:'sync_and_prewarm'}),cache:'no-store',signal:ctrl.signal});
     const data=await response.json().catch(()=>({}));
     if(!response.ok){state.lastError=data.message||data.error||`HTTP ${response.status}`;state.peerSynced=false;return false}
     if(data.peer_synced!==true||!storeStandbyToken(data.peer_token)){
@@ -112,8 +130,8 @@ async function sync(reason='periodic',force=false){
   finally{clearTimeout(timer);state.busy=false}
 }
 
-document.addEventListener('puplan:courses-changed',()=>{markStandbyDirty();schedule('schedule-change',1400)});
-document.addEventListener('puplan:profile-changed',()=>{markStandbyDirty();schedule('profile-change',900)});
+document.addEventListener('puplan:courses-changed',()=>{markStandbyDirty('schedule-change');schedule('schedule-change',1400)});
+document.addEventListener('puplan:profile-changed',()=>{markStandbyDirty('profile-change');schedule('profile-change',900)});
 document.addEventListener('nolu:session-rotated',()=>schedule('session-rotated',250));
 document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')schedule('connectivity-online',450)});
 document.addEventListener('nolu:peer-session-needed',()=>schedule('peer-session-needed',50));
@@ -125,6 +143,6 @@ setInterval(()=>void sync('periodic'),30000);
 seedPrimarySessionFromCanonical();
 if(window.PUPLAN_CLOUD?.isSignedIn?.()||uid())schedule('startup',400);
 window.NOLU_REPLICATION={
-  state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,hasStandbyDirty,
+  state,sync:(reason='manual',force=true)=>sync(reason,force),reconcileStandby,activeTier,markStandbyDirty,hasStandbyDirty,
   sessionFor,seedPrimarySessionFromCanonical,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
 };
