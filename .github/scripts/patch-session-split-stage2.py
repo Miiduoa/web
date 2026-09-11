@@ -88,3 +88,5 @@ replace_once('pu-plan/durable-bridge.js',
 replace_once('pu-plan/offline-session-rescue.js',
 "  const raw=localStorage.getItem('puplan_session')||'';const session=parseSession(raw);if(!session)return null;",
 "  const primary=localStorage.getItem('puplan_session')||'',standby=localStorage.getItem('puplan_standby_session_v2')||'';\n  const raw=localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standby||primary):(primary||standby);const session=parseSession(raw);if(!session)return null;")
+
+# Touch v2: workflow must exist before this push so the one-shot runner triggers.
