@@ -1,0 +1,65 @@
+name: nolu social core failover smoke
+
+on:
+  push:
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/social-core-failover.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-social-core-failover-smoke.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/main.js'
+      - 'pu-plan/social-core-failover.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-social-core-failover-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax and wiring
+        run: |
+          set -euo pipefail
+          node --check pu-plan/social-core-failover.js
+          node --check pu-plan/sw.js
+          grep -q "await import('./social-core-failover.js')" pu-plan/main.js
+          grep -q "'./social-core-failover.js'" pu-plan/sw.js
+          grep -q "puplan_session_standby_v1" pu-plan/social-core-failover.js
+          grep -q "pu-plan-social-core-v1" pu-plan/social-core-failover.js
+          ! grep -Eiq 'password_hash|recovery_hash|service_role|PRIVATE KEY' pu-plan/social-core-failover.js
+      - name: Verify Tokyo routing contract
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const code=fs.readFileSync('pu-plan/social-core-failover.js','utf8');
+          const store=new Map([
+            ['puplan_session_standby_v1','tokyo-session'],
+            ['nolu_preferred_cloud_v1','standby']
+          ]);
+          const calls=[],events=[];
+          const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,String(v)),removeItem:k=>store.delete(k)};
+          class CE{constructor(type,init={}){this.type=type;this.detail=init.detail}}
+          const document={dispatchEvent:e=>{events.push(e);return true}};
+          const base=async(url,opts={})=>{
+            calls.push({url:String(url),auth:new Headers(opts.headers||{}).get('Authorization')||'',body:String(opts.body||'')});
+            if(String(url).includes('ltfurqaspqsvswmebyzw'))return new Response('{"social":{"friends":[]}}',{status:200,headers:{'Content-Type':'application/json'}});
+            return new Response('{"error":"PRIMARY_DOWN"}',{status:503,headers:{'Content-Type':'application/json'}});
+          };
+          const window={fetch:base};window.window=window;
+          vm.runInNewContext(code,{window,localStorage,document,CustomEvent:CE,Headers,Response,TypeError,Date,Set,JSON,URL,console});
+          (async()=>{
+            let r=await window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',{method:'POST',headers:{Authorization:'Bearer mumbai-session','Content-Type':'application/json'},body:JSON.stringify({action:'social'})});
+            assert.equal(r.status,200);assert.equal(calls[0].auth,'Bearer tokyo-session');assert(calls[0].url.includes('pu-plan-social-core-v1'));
+            calls.length=0;
+            r=await window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',{method:'POST',headers:{Authorization:'Bearer mumbai-session','Content-Type':'application/json'},body:JSON.stringify({action:'send_request',user_id:'00000000-0000-4000-8000-000000000002'})});
+            assert.equal(r.status,200);assert(events.some(e=>e.type==='nolu:standby-write'&&e.detail.action==='send_request'));
+            assert.equal(store.get('nolu_social_core_cloud_v1'),'standby');
+            console.log('NOLU_SOCIAL_CORE_FAILOVER_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
