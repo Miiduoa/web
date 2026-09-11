@@ -86,6 +86,6 @@ function recover(){
 const result=recover();
 window.NOLU_SESSION_RECOVERY={
   result,recover,parse,
-  version:'20260911-startup-trust1',
+  version:'20260911-device-rescue2',
   localExpiredGraceSeconds:LOCAL_EXPIRED_GRACE_SECONDS
 };
