@@ -77,6 +77,18 @@ function activate(){
 function bootstrapResponse(snap){
   return new Response(JSON.stringify({profile:profileFromStorage(snap.uid,snap),courses:Array.isArray(snap.courses)?snap.courses.slice(0,80):[],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true},offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 }
+function loginResponse(trusted){
+  const uid=String(trusted.session.uid),snap=trusted.snap;
+  return new Response(JSON.stringify({token:trusted.raw,profile:profileFromStorage(uid,snap),courses:Array.isArray(snap.courses)?snap.courses.slice(0,80):[],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true},offline:true,local_recovery:true,login_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+}
+function outageLoginFailure(){
+  const recovery=window.NOLU_SESSION_RECOVERY?.result||{};
+  const hadAnchor=!!(localStorage.getItem('puplan_session')||localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session_standby_v1'));
+  const message=hadAnchor||recovery?.status==='local-grace'
+    ?'主雲端目前無法連線；這台裝置有舊登入資料，但目前找不到可安全驗證的本機快照。請勿清除 nolu 網站資料。'
+    :'主雲端目前無法連線，而且東京備援尚未有這個帳號；這台裝置也沒有可驗證的舊登入狀態。請勿重新註冊同一個 Email。';
+  return new Response(JSON.stringify({error:'AUTHORITY_UNAVAILABLE',message,local_recovery:false}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+}
 function mutationResponse(uid,action,body,snap){
   queue(uid,action,body,snap);activate();
   if(action==='update_profile')return new Response(JSON.stringify({profile:profileFromStorage(uid,snap),queued:true,offline:true,local_recovery:true}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -87,6 +99,15 @@ window.fetch=async function noluOfflineSessionRescue(input,options={}){
   const url=requestUrl(input);if(!isNoluCore(url))return wrappedFetch(input,options);
   const body=requestBody(options),action=String(body?.action||'');let response=null,error=null;
   try{response=await wrappedFetch(input,options);if(response.status<500&&response.status!==410)return response}catch(e){error=e}
+  if(action==='login'){
+    const trusted=await trustedSnapshot();
+    const recovery=window.NOLU_SESSION_RECOVERY?.result||{};
+    if(trusted&&String(recovery?.uid||'')===String(trusted.session.uid)&&['canonical-ok','recovered','local-grace'].includes(String(recovery.status||''))){
+      activate();
+      return loginResponse(trusted);
+    }
+    return outageLoginFailure();
+  }
   if(action==='bootstrap'||action==='save_schedule'||action==='update_profile'){
     const trusted=await trustedSnapshot();
     if(trusted){activate();const snap=trusted.snap;if(action==='bootstrap')return bootstrapResponse(snap);return mutationResponse(String(trusted.session.uid),action,body,snap)}
