@@ -113,6 +113,7 @@ document.addEventListener('puplan:profile-changed',()=>{
   if(online)void bindCurrentSession({allowHydrate:false});else if(state.bound)void mirror(false);
 });
 document.addEventListener('nolu:connectivity',e=>{if(e.detail?.mode==='online')void bindCurrentSession({allowHydrate:false}).then(()=>mirror(true));else if(state.bound)void mirror(false)});
+document.addEventListener('nolu:session-rotated',()=>{void bindCurrentSession({allowHydrate:false}).then(()=>mirror(false))});
 addEventListener('online',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 addEventListener('focus',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void restorePending(uid())});

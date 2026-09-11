@@ -10,6 +10,8 @@ import {
 
 const encoder=new TextEncoder();
 const PORTABLE_KEY='puplan_portable_session_v1';
+const PRIMARY_REF='hrrmkrayvrgnwcroyttp';
+const STANDBY_REF='ltfurqaspqsvswmebyzw';
 const state={
   version:PROVIDER_MESH_VERSION,
   busy:false,
@@ -32,7 +34,10 @@ const state={
 let debounceTimer=null,mintPromise=null;
 
 function clean(v,n=160){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,n)}
-function sessionToken(){return localStorage.getItem('puplan_session')||''}
+function primarySession(){return localStorage.getItem('puplan_session')||''}
+function standbySession(){return localStorage.getItem('puplan_standby_session_v2')||''}
+function sessionToken(){return localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standbySession()||primarySession()):(primarySession()||standbySession())}
+function sessionForMintEndpoint(endpoint){const value=String(endpoint||'');if(value.includes(STANDBY_REF))return standbySession();if(value.includes(PRIMARY_REF))return primarySession();return''}
 function isGuest(){return localStorage.getItem('puplan_guest')==='1'}
 function decodePart(part){
   try{
@@ -65,8 +70,8 @@ async function mintPortableToken(force=false){
   if(mintPromise)return mintPromise;
   mintPromise=(async()=>{
     state.minting=true;
-    const source=sessionToken();
     for(const endpoint of PORTABLE_MINT_ENDPOINTS||[]){
+      const source=sessionForMintEndpoint(endpoint);if(!source)continue;
       const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),3500);
       try{
         const response=await fetch(endpoint,{

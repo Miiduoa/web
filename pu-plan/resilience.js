@@ -33,7 +33,7 @@ function parseTokenUid(raw=token()){
     return String(payload.uid);
   }catch{return null}
 }
-function currentUid(){const uid=parseTokenUid();const owner=ownerId();return uid&&owner&&uid===owner?uid:''}
+function currentUid(){const primary=parseTokenUid(token()),standby=parseTokenUid(standbyToken());if(primary&&standby&&primary!==standby)return'';const uid=preferredCloud()==='standby'?(standby||primary):(primary||standby);const owner=ownerId();return uid&&owner&&uid===owner?uid:''}
 function localProfile(uid=currentUid()){
   if(!uid)return null;
   return {id:uid,display_name:cleanText(localStorage.getItem('puplan_name')||'使用者',80)||'使用者',username:cleanText(localStorage.getItem('puplan_username')||'',24),avatar_data:cleanAvatar(localStorage.getItem('puplan_avatar')||''),bio:cleanText(localStorage.getItem('puplan_bio')||'',120),discoverable:localStorage.getItem('puplan_discoverable')!=='0',role:'user',profile_visibility:'public'};
@@ -163,9 +163,9 @@ async function recover(){
   const uid=currentUid();if(uid){snapshot(uid);setTimeout(()=>{if(!window.PUPLAN_CLOUD?.isSignedIn?.())setMode('offline')},50)}
   addEventListener('online',()=>setTimeout(recover,200));addEventListener('focus',()=>setTimeout(recover,400));
   document.addEventListener('puplan:courses-changed',e=>{const id=currentUid();if(!id)return;const q=readPending(id);q.schedule={courses:Array.isArray(e.detail)?e.detail.slice(0,80):localCourses(),changedAt:now()};writePending(id,q);snapshot(id);if(state.mode==='offline')setMode('offline')});
-  document.addEventListener('puplan:profile-changed',()=>{if(!localStorage.getItem('puplan_session')){localStorage.removeItem(PORTABLE_KEY);localStorage.removeItem(PREFERRED_KEY)}});
+  document.addEventListener('puplan:profile-changed',()=>{if(!token()&&!standbyToken())localStorage.removeItem(PREFERRED_KEY)});
   document.addEventListener('nolu:replica-primary-ready',()=>{setPreferredCloud('primary');setTimeout(recover,80)});
   setInterval(recover,30000);
 })();
 
-window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,portableToken,PRIMARY,STANDBY};
+window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,PRIMARY,STANDBY};
