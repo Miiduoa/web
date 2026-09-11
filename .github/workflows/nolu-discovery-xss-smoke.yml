@@ -1,0 +1,58 @@
+name: nolu discovery xss smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/discover.js'
+      - 'pu-plan/core/state.js'
+      - '.github/workflows/nolu-discovery-xss-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/discover.js'
+      - 'pu-plan/core/state.js'
+      - '.github/workflows/nolu-discovery-xss-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discovery-xss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Source guardrails
+        run: |
+          set -euo pipefail
+          node --check pu-plan/discover.js
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('pu-plan/discover.js').read_text()
+          assert "import {cleanAvatar} from './core/state.js';" in src
+          assert "const src=cleanAvatar(p?.avatar_data||'')" in src
+          assert "p?.avatar_data?`<img" not in src
+          assert "replace(/[&<>\"']/g" in src
+          print('discovery rendering guardrails: ok')
+          PY
+      - name: Avatar allowlist rejects executable payloads
+        run: |
+          node --input-type=module <<'NODE'
+          import {cleanAvatar} from './pu-plan/core/state.js';
+          const bad=[
+            'javascript:alert(1)',
+            'x" onerror="globalThis.__NOLU_DISCOVERY_XSS__=1',
+            'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+            'data:image/svg+xml,<svg onload=alert(1)>',
+            'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+',
+            'https://evil.example/avatar.png'
+          ];
+          for(const value of bad){
+            if(cleanAvatar(value)!=='')throw new Error(`unsafe discovery avatar accepted: ${value}`);
+          }
+          const good='data:image/png;base64,iVBORw0KGgo=';
+          if(cleanAvatar(good)!==good)throw new Error('valid PNG avatar rejected');
+          console.log('discovery avatar allowlist: ok');
+          NODE
