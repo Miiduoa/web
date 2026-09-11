@@ -1,0 +1,39 @@
+name: nolu standby social live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social-standby/index.ts'
+      - '.github/workflows/nolu-standby-social-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Trusted origin preflight is scoped
+        run: |
+          set -euo pipefail
+          url='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social'
+          headers="$(curl -fsS -D - -o /dev/null -X OPTIONS -H 'Origin: https://miiduoa.github.io' "$url")"
+          grep -Eiq '^HTTP/.* 200' <<<"$headers"
+          grep -Eiq '^access-control-allow-origin: https://miiduoa.github.io\r?$' <<<"$headers"
+          ! grep -Eiq '^access-control-allow-origin: \*' <<<"$headers"
+      - name: Evil browser origin is rejected
+        run: |
+          set -euo pipefail
+          url='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social'
+          code="$(curl -sS -o /tmp/body -w '%{http_code}' -X OPTIONS -H 'Origin: https://evil.invalid' "$url")"
+          test "$code" = 403
+      - name: Missing session cannot reach social data
+        run: |
+          set -euo pipefail
+          url='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social'
+          code="$(curl -sS -o /tmp/body -w '%{http_code}' -X POST -H 'Origin: https://miiduoa.github.io' -H 'Content-Type: application/json' --data '{"action":"feed"}' "$url")"
+          test "$code" = 401
+          grep -Eq 'UNAUTHORIZED|SESSION_' /tmp/body
