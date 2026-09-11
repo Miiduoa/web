@@ -50,7 +50,7 @@ jobs:
           grep -q "已停止自動回切覆寫" pu-plan/provider-status.js
       - name: Keep installed PWA on current replica v3 shell
         run: |
-          grep -q "nolu-shell-20260911-device-rescue1-mesh3" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260911_device_rescue1" pu-plan/pwa.js
+          grep -q "nolu-shell-20260911-device-rescue2-mesh4" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260911_device_rescue2_mesh4" pu-plan/pwa.js
           grep -q "'./cloud-replication.js'" pu-plan/sw.js
           grep -q "'./session-recovery.js'" pu-plan/sw.js

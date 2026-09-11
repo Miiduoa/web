@@ -1,0 +1,67 @@
+name: nolu expired device rescue smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-expired-device-rescue-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-expired-device-rescue-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  expired-device-anchor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax and shell version
+        run: |
+          set -euo pipefail
+          node --check pu-plan/session-recovery.js
+          grep -q "LOCAL_EXPIRED_GRACE_SECONDS=7\*24\*60\*60" pu-plan/session-recovery.js
+          grep -q "device-rescue2" pu-plan/session-recovery.js
+          grep -q "device-rescue2-mesh4" pu-plan/sw.js
+          grep -q "device_rescue2_mesh4" pu-plan/pwa.js
+          grep -q "device-rescue2" pu-plan/index.html
+      - name: Verify recently expired regional session is local-rescue anchor only
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const source=fs.readFileSync('pu-plan/session-recovery.js','utf8');
+          const uid='55555555-5555-4555-8555-555555555555';
+          const other='66666666-6666-4666-8666-666666666666';
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const mk=(id,iat,exp)=>`${b64(JSON.stringify({v:4,uid:id,iat,exp,cv:'cv-test'}))}.${b64('sig')}`;
+          const now=Math.floor(Date.now()/1000);
+          function store(seed={}){const m=new Map(Object.entries(seed));return{getItem:k=>m.has(k)?m.get(k):null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k),clear:()=>m.clear(),dump:()=>Object.fromEntries(m)}}
+          function run(seed){const localStorage=store(seed),sessionStorage=store(),dataset={};const context={localStorage,sessionStorage,document:{documentElement:{dataset}},window:{},Date,JSON,Math,Set,String,Number,atob,escape,decodeURIComponent};vm.runInNewContext(source,context);return{localStorage,sessionStorage,dataset,api:context.window.NOLU_SESSION_RECOVERY}}
+          const recent=mk(uid,now-3600*25,now-3600);
+          let r=run({puplan_session_primary_v1:recent});
+          if(r.localStorage.getItem('puplan_session')!==recent)throw Error('recently expired regional token was not restored as local anchor');
+          if(r.api.result.status!=='local-grace'||r.api.result.expired!==true)throw Error('local-grace state missing');
+          const tooOld=mk(uid,now-10*24*3600,now-8*24*3600);
+          r=run({puplan_session_primary_v1:tooOld});
+          if(r.localStorage.getItem('puplan_session'))throw Error('token older than grace window was restored');
+          if(r.api.result.status!=='none')throw Error('old token should not be a recovery anchor');
+          const otherRecent=mk(other,now-3600*25,now-3600);
+          r=run({puplan_session_primary_v1:recent,puplan_session_standby_v1:otherRecent});
+          if(r.localStorage.getItem('puplan_session'))throw Error('cross-account stale regional conflict was accepted');
+          if(r.api.result.status!=='conflict')throw Error('stale credential conflict did not fail closed');
+          console.log('NOLU_EXPIRED_DEVICE_RESCUE_OK');
+          NODE
