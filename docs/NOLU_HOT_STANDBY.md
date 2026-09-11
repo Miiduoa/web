@@ -26,9 +26,10 @@ Browser login is not part of this replication path. Existing users are backfille
 
 The Mumbai schema is split into three ordered primary migrations:
 
-- `supabase/migrations/20260911_nolu_hot_standby_primary_tables.sql`
-- `supabase/migrations/20260911_nolu_hot_standby_primary_transport.sql`
-- `supabase/migrations/20260911_nolu_hot_standby_primary_runtime.sql`
+- `supabase/migrations/20260911154001_nolu_hot_standby_primary_tables.sql`
+- `supabase/migrations/20260911154002_nolu_hot_standby_primary_transport.sql`
+- `supabase/migrations/20260911154003_nolu_hot_standby_primary_runtime.sql`
+- `supabase/migrations/20260911154004_nolu_hot_standby_primary_cleanup.sql`
 
 Tokyo's role-specific schema is deliberately kept outside the normal primary migration stream so primary triggers cannot be installed on the standby by accident:
 
