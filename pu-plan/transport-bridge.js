@@ -1,13 +1,13 @@
 const LEGACY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
-const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
-const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v7';
+const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
 const V6='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CANDIDATES=[PRIMARY,STANDBY,V6,CORE,LEGACY];
 const baseFetch=window.fetch.bind(window);
 const BASE_COOLDOWN=15000;
 const MAX_COOLDOWN=60000;
-const PORTABLE_KEY='puplan_portable_session_v1';
+const STANDBY_SESSION_KEY='puplan_standby_session_v2';
 const state={active:'',lastError:'',lastSuccessAt:0,endpoints:{}};
 
 function health(endpoint){if(!state.endpoints[endpoint])state.endpoints[endpoint]={failures:0,openUntil:0,lastFailureAt:0,lastSuccessAt:0,lastError:''};return state.endpoints[endpoint]}
@@ -16,21 +16,23 @@ function success(endpoint){const h=health(endpoint);h.failures=0;h.openUntil=0;h
 function failure(endpoint,error){const h=health(endpoint);h.failures=Math.min(8,(h.failures||0)+1);h.lastFailureAt=Date.now();h.lastError=String(error?.message||error||'transport unavailable');h.openUntil=Date.now()+Math.min(MAX_COOLDOWN,BASE_COOLDOWN*Math.pow(2,Math.max(0,h.failures-1)));state.lastError=h.lastError}
 function bodyOf(options){try{return typeof options?.body==='string'?JSON.parse(options.body):{}}catch{return{}}}
 function hasAuth(options){try{return new Headers(options?.headers||{}).has('Authorization')}catch{return false}}
-function authTokenFor(endpoint){const primary=localStorage.getItem('puplan_session')||'',portable=localStorage.getItem(PORTABLE_KEY)||'';return endpoint===PRIMARY||endpoint===STANDBY?portable||primary:primary}
+function standbyToken(){return localStorage.getItem(STANDBY_SESSION_KEY)||''}
+function authTokenFor(endpoint){const primary=localStorage.getItem('puplan_session')||'';return endpoint===STANDBY?standbyToken():primary}
 function freshOptions(endpoint,options={}){
   if(!hasAuth(options))return options;const value=authTokenFor(endpoint);if(!value)return options;
   const headers=new Headers(options.headers||{});headers.set('Authorization',`Bearer ${value}`);return {...options,headers};
 }
+const PRIMARY_ONLY_ACTIONS=new Set(['signup','recover_password','change_password','rotate_recovery_code','search_people','send_request','accept_request','decline_request','remove_friend','create_meetup','respond_meetup','cancel_meetup']);
 function ordered(action=''){
   const prefer=localStorage.getItem('nolu_preferred_cloud_v1')==='standby';const cloud=prefer?[STANDBY,PRIMARY]:[PRIMARY,STANDBY];
-  return [...cloud,V6,CORE,LEGACY].filter((endpoint,index,array)=>array.indexOf(endpoint)===index&&!(endpoint===STANDBY&&(action==='signup'||action==='recover_password')));
+  return [...cloud,V6,CORE,LEGACY].filter((endpoint,index,array)=>array.indexOf(endpoint)===index&&!(endpoint===STANDBY&&PRIMARY_ONLY_ACTIONS.has(action)));
 }
 function storeTokens(response,endpoint){
   if(!response?.ok)return Promise.resolve();
   return response.clone().json().then(data=>{
-    const portable=typeof data?.portable_token==='string'?data.portable_token:endpoint===STANDBY&&typeof data?.token==='string'?data.token:'';
-    if(portable&&portable.split('.').length===2)localStorage.setItem(PORTABLE_KEY,portable);
-    if(endpoint!==STANDBY&&typeof data?.token==='string'&&data.token.split('.').length===2)localStorage.setItem('puplan_session',data.token);
+    if(typeof data?.token!=='string'||data.token.split('.').length!==2)return;
+    if(endpoint===STANDBY)localStorage.setItem(STANDBY_SESSION_KEY,data.token);
+    else localStorage.setItem('puplan_session',data.token);
   }).catch(()=>{});
 }
 async function timed(url,options={},ms=1800){
@@ -44,6 +46,7 @@ window.fetch=async function noluLegacyFailover(input,options={}){
   const candidates=ordered(action).filter(endpoint=>!isOpen(endpoint));if(!candidates.length)throw new TypeError('Nolu transport temporarily unavailable');
   for(const endpoint of candidates){
     if(options.signal?.aborted)break;
+    if(hasAuth(options)&&!authTokenFor(endpoint))continue;
     try{
       const response=await timed(endpoint,options);lastResponse=response;
       if(endpoint===STANDBY&&response.status===401&&hasAuth(options)){standby401=true;failure(endpoint,new Error('standby authorization unavailable'));continue}

@@ -3,7 +3,7 @@ const cloud=window.PUPLAN_CLOUD;
 if(!cloud)throw new Error('帳號功能載入失敗');
 
 const ACCOUNT_KEYS=[
-  'puplan_session','puplan_portable_session_v1','nolu_preferred_cloud_v1','puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
+  'puplan_session','puplan_standby_session_v2','puplan_portable_session_v1','nolu_preferred_cloud_v1','puplan_guest','puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner',
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
 ];
 let loggingOut=false;

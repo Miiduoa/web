@@ -6,7 +6,7 @@ const encoder=new TextEncoder();
 
 function safeJson(raw,fallback=null){try{return JSON.parse(raw)}catch{return fallback}}
 function clean(v,n=160){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,n)}
-function rawToken(){return localStorage.getItem('puplan_session')||''}
+function rawToken(){const primary=localStorage.getItem('puplan_session')||'',standby=localStorage.getItem('puplan_standby_session_v2')||'';return localStorage.getItem('nolu_preferred_cloud_v1')==='standby'?(standby||primary):(primary||standby)}
 function tokenUid(){
   try{
     const raw=rawToken();
@@ -113,6 +113,7 @@ document.addEventListener('puplan:profile-changed',()=>{
   if(online)void bindCurrentSession({allowHydrate:false});else if(state.bound)void mirror(false);
 });
 document.addEventListener('nolu:connectivity',e=>{if(e.detail?.mode==='online')void bindCurrentSession({allowHydrate:false}).then(()=>mirror(true));else if(state.bound)void mirror(false)});
+document.addEventListener('nolu:session-rotated',()=>{void bindCurrentSession({allowHydrate:false}).then(()=>mirror(false))});
 addEventListener('online',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 addEventListener('focus',()=>{void restorePending(uid()).then(restored=>{if(restored)setTimeout(()=>window.NOLU_RESILIENCE?.recover?.(),50)})});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void restorePending(uid())});

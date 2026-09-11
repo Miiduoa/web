@@ -1,17 +1,17 @@
 import {cleanAvatar} from './core/state.js';
 
-const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
-const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v7';
+const PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+const STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
 const COMPAT_V6='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const COMPAT_CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,STANDBY,COMPAT_V6,COMPAT_CORE];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260911-ha2';
+const VERSION='20260911-ha3-session-split';
 const BASE_COOLDOWN=15000;
 const MAX_COOLDOWN=60000;
 const PREFERRED_KEY='nolu_preferred_cloud_v1';
-const PORTABLE_KEY='puplan_portable_session_v1';
-const NO_STANDBY_ACTIONS=new Set(['signup','recover_password']);
+const STANDBY_SESSION_KEY='puplan_standby_session_v2';
+const NO_STANDBY_ACTIONS=new Set(['signup','recover_password','change_password','rotate_recovery_code','search_people','send_request','accept_request','decline_request','remove_friend','create_meetup','respond_meetup','cancel_meetup']);
 const state={mode:'online',tier:'primary',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION,endpoints:{}};
 let requestSequence=0,newestOfflineSequence=0;
 
@@ -21,7 +21,7 @@ function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b)}catch{re
 function cleanText(v,max=120){return String(v??'').replace(/[\u0000-\u001f\u007f]/g,'').trim().slice(0,max)}
 function ownerId(){return cleanText(localStorage.getItem('puplan_course_owner'),100)}
 function token(){return localStorage.getItem('puplan_session')||''}
-function portableToken(){return localStorage.getItem(PORTABLE_KEY)||''}
+function standbyToken(){return localStorage.getItem(STANDBY_SESSION_KEY)||''}
 function pendingKey(uid){return `nolu_pending_mutations_v1:${uid}`}
 function snapshotKey(uid){return `nolu_account_snapshot_v1:${uid}`}
 function parseTokenUid(raw=token()){
@@ -33,7 +33,7 @@ function parseTokenUid(raw=token()){
     return String(payload.uid);
   }catch{return null}
 }
-function currentUid(){const uid=parseTokenUid();const owner=ownerId();return uid&&owner&&uid===owner?uid:''}
+function currentUid(){const primary=parseTokenUid(token()),standby=parseTokenUid(standbyToken());if(primary&&standby&&primary!==standby)return'';const uid=preferredCloud()==='standby'?(standby||primary):(primary||standby);const owner=ownerId();return uid&&owner&&uid===owner?uid:''}
 function localProfile(uid=currentUid()){
   if(!uid)return null;
   return {id:uid,display_name:cleanText(localStorage.getItem('puplan_name')||'使用者',80)||'使用者',username:cleanText(localStorage.getItem('puplan_username')||'',24),avatar_data:cleanAvatar(localStorage.getItem('puplan_avatar')||''),bio:cleanText(localStorage.getItem('puplan_bio')||'',120),discoverable:localStorage.getItem('puplan_discoverable')!=='0',role:'user',profile_visibility:'public'};
@@ -86,7 +86,7 @@ function earliestProbe(requested,action=''){const all=allApiCandidates(requested
 function requestBody(options){if(typeof options?.body!=='string')return null;return safeJson(options.body,null)}
 function isCoreUrl(url){return CORE_APIS.includes(String(url))||(Array.isArray(window.NOLU_SECONDARY_APIS)&&window.NOLU_SECONDARY_APIS.includes(String(url)))}
 function hasAuthorization(options){try{return new Headers(options?.headers||{}).has('Authorization')}catch{return false}}
-function authTokenFor(api){return api===PRIMARY||api===STANDBY?portableToken()||token():token()}
+function authTokenFor(api){return api===STANDBY?standbyToken():token()}
 function freshOptions(api,options={}){
   if(!hasAuthorization(options))return options;const fresh=authTokenFor(api);if(!fresh)return options;
   const headers=new Headers(options.headers||{});headers.set('Authorization',`Bearer ${fresh}`);return {...options,headers};
@@ -107,10 +107,11 @@ function syntheticMutation(action,payload){
 function offlineResponse(action,body,sequence){if(action==='bootstrap'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticBootstrap()}if(action==='save_schedule'||action==='update_profile'){newestOfflineSequence=Math.max(newestOfflineSequence,sequence);return syntheticMutation(action,body)}return null}
 function clearMatchingPending(uid,action,body){const q=readPending(uid);if(action==='save_schedule'&&q.schedule){const sent=Array.isArray(body?.courses)?body.courses.slice(0,80):[];if(sameJson(q.schedule.courses,sent)){delete q.schedule;writePending(uid,q)}}if(action==='update_profile'&&q.profile&&sameJson(q.profile.payload,body)){delete q.profile;writePending(uid,q)}}
 function storeResponseTokens(data,api){
-  const portable=typeof data?.portable_token==='string'?data.portable_token:api===STANDBY&&typeof data?.token==='string'?data.token:'';
-  if(portable&&portable.split('.').length===2)localStorage.setItem(PORTABLE_KEY,portable);
-  if(api!==STANDBY&&typeof data?.token==='string'&&data.token.split('.').length===2&&data.token!==token())localStorage.setItem('puplan_session',data.token);
-  if(portable||api!==STANDBY&&data?.token)document.dispatchEvent(new CustomEvent('nolu:session-rotated',{detail:{api,tier:api===STANDBY?'standby':'primary'}}));
+  const next=typeof data?.token==='string'&&data.token.split('.').length===2?data.token:'';
+  if(!next)return;
+  if(api===STANDBY){if(next!==standbyToken())localStorage.setItem(STANDBY_SESSION_KEY,next)}
+  else if(next!==token())localStorage.setItem('puplan_session',next);
+  document.dispatchEvent(new CustomEvent('nolu:session-rotated',{detail:{api,tier:api===STANDBY?'standby':'primary'}}));
 }
 async function captureSuccess(res,body,api,sequence){
   if(!res?.ok)return;state.activeApi=api;if(api===STANDBY)setPreferredCloud('standby');if(sequence>=newestOfflineSequence)setMode('online',api);
@@ -123,6 +124,7 @@ window.fetch=async function noluResilientFetch(input,options={}){
   const candidates=apiCandidates(String(url),{action});if(!candidates.length){state.lastError='all cloud circuits are temporarily open';const local=offlineResponse(action,body,sequence);if(local)return local;throw new TypeError('Nolu cloud temporarily unavailable')}
   for(const api of candidates){
     if(options?.signal?.aborted)break;
+    if(hasAuthorization(options)&&!authTokenFor(api))continue;
     try{
       const res=await timedFetch(api,options,1800);lastResponse=res;
       if(api===STANDBY&&res.status===401&&hasAuthorization(options)){standby401=res;lastError=new Error('standby authorization unavailable');markFailure(api,lastError);continue}
@@ -161,9 +163,9 @@ async function recover(){
   const uid=currentUid();if(uid){snapshot(uid);setTimeout(()=>{if(!window.PUPLAN_CLOUD?.isSignedIn?.())setMode('offline')},50)}
   addEventListener('online',()=>setTimeout(recover,200));addEventListener('focus',()=>setTimeout(recover,400));
   document.addEventListener('puplan:courses-changed',e=>{const id=currentUid();if(!id)return;const q=readPending(id);q.schedule={courses:Array.isArray(e.detail)?e.detail.slice(0,80):localCourses(),changedAt:now()};writePending(id,q);snapshot(id);if(state.mode==='offline')setMode('offline')});
-  document.addEventListener('puplan:profile-changed',()=>{if(!localStorage.getItem('puplan_session')){localStorage.removeItem(PORTABLE_KEY);localStorage.removeItem(PREFERRED_KEY)}});
+  document.addEventListener('puplan:profile-changed',()=>{if(!token()&&!standbyToken())localStorage.removeItem(PREFERRED_KEY)});
   document.addEventListener('nolu:replica-primary-ready',()=>{setPreferredCloud('primary');setTimeout(recover,80)});
   setInterval(recover,30000);
 })();
 
-window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,portableToken,PRIMARY,STANDBY};
+window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,PRIMARY,STANDBY};

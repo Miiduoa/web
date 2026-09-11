@@ -35,30 +35,7 @@ await import('./transport-bridge.js');
 // and the signed-in user's own durable local cache.
 await import('./resilience.js');
 
-// v7 is provisioned separately from the static app and may intentionally be kept
-// disabled (HTTP 410) during a rollout or rollback. A 410 must never shadow the
-// working v6/core compatibility path. Quarantine both v7 circuits and replay the
-// original request once through the already-installed resilience layer.
-{
-  const resilientFetch=window.fetch.bind(window);
-  const disabledV7=[window.NOLU_RESILIENCE?.PRIMARY,window.NOLU_RESILIENCE?.STANDBY].filter(Boolean);
-  window.fetch=async function noluDisabledV7Guard(input,options={}){
-    const response=await resilientFetch(input,options);
-    if(response?.status!==410||!disabledV7.length)return response;
-    const at=Date.now();
-    const endpoints=window.NOLU_RESILIENCE?.state?.endpoints;
-    if(endpoints){
-      for(const endpoint of disabledV7){
-        const health=endpoints[endpoint]||(endpoints[endpoint]={failures:0,openUntil:0,lastFailureAt:0,lastSuccessAt:0,lastError:''});
-        health.failures=Math.max(1,Number(health.failures)||0);
-        health.lastFailureAt=at;
-        health.lastError='HTTP 410 endpoint disabled';
-        health.openUntil=Math.max(Number(health.openUntil)||0,at+5*60*1000);
-      }
-    }
-    return resilientFetch(input,options);
-  };
-}
+// Core transport now targets v8 directly; retired v7 is not in the candidate set.
 
 // If the database is unreachable, a previously authenticated device can still
 // prove possession of its exact session-bound IndexedDB snapshot. This wrapper
