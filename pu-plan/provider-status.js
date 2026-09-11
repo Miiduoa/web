@@ -10,6 +10,15 @@ function ensureCard(){
 }
 function render(){
   const card=ensureCard();if(!card)return;
+  const replication=window.NOLU_REPLICATION?.state;
+  if(replication?.manualReconcileRequired===true){
+    card.dataset.reconcileRequired='1';
+    $('#providerMeshSummary').textContent='備援資料需要確認：已停止自動回切覆寫。';
+    $('#providerMeshState').textContent='Tokyo 有未合併變更｜Mumbai → Tokyo 自動覆寫已暫停';
+    $('#providerMeshHint').textContent='為避免資料遺失，系統會保留目前資料，不會自動用主區域覆蓋備援區域；請先不要清除網站資料，等待安全合併流程。';
+    return;
+  }
+  delete card.dataset.reconcileRequired;
   const mesh=window.NOLU_PROVIDER_MESH?.state;
   if(!mesh){$('#providerMeshSummary').textContent='備援模組尚未啟動';return}
   const configured=[...new Set(mesh.configuredProviders||[])];
@@ -32,5 +41,7 @@ function render(){
 
 document.addEventListener('nolu:provider-mesh',render);
 document.addEventListener('nolu:provider-recovered',render);
+document.addEventListener('nolu:replica-manual-reconcile-required',render);
+document.addEventListener('nolu:replica-synced',render);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')render()});
 setTimeout(render,0);setInterval(render,15000);
