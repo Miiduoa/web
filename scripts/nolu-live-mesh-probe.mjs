@@ -17,11 +17,13 @@ async function jsonFetch(url,options={}){
   return {res,data,text};
 }
 function assert(condition,message){if(!condition) throw new Error(message)}
+function decodePart(part){try{return JSON.parse(Buffer.from(part,'base64url').toString('utf8'))}catch{return null}}
 
 const standby='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
 const mint='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-portable-v1';
 const netlify='https://nolu-mirror.netlify.app/mirror';
 const neon='https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1/nolu_snapshots';
+const jwksUrl='https://miiduoa.github.io/web/pu-plan/nolu-mesh-jwks.json';
 
 const login=await jsonFetch(standby,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',email,password})});
 console.log('standby login',login.res.status);
@@ -29,8 +31,14 @@ assert(login.res.ok&&typeof login.data.token==='string','standby login failed');
 
 const minted=await jsonFetch(mint,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${login.data.token}`},body:'{}'});
 console.log('portable mint',minted.res.status);
+if(!minted.res.ok) console.log('portable mint body',minted.text.slice(0,300));
 assert(minted.res.ok&&typeof minted.data.portable_token==='string','portable mint failed');
 const token=minted.data.portable_token;
+const [tokenHeaderPart,tokenPayloadPart]=token.split('.');
+const tokenHeader=decodePart(tokenHeaderPart),tokenPayload=decodePart(tokenPayloadPart);
+console.log('portable token meta',JSON.stringify({kid:tokenHeader?.kid,alg:tokenHeader?.alg,typ:tokenHeader?.typ,aud:tokenPayload?.aud,iss:tokenPayload?.iss,subMatches:tokenPayload?.sub===uid}));
+const jwks=await jsonFetch(jwksUrl);
+console.log('jwks',jwks.res.status,JSON.stringify({kids:Array.isArray(jwks.data?.keys)?jwks.data.keys.map(k=>k?.kid):[]}));
 
 const revision=Date.now();
 const snapshot={uid,profile:{id:uid,display_name:'Nolu Mesh Probe',username:'nolu_mesh_probe',bio:'',avatar_data:'',discoverable:false,role:'user',profile_visibility:'private'},courses:[],meta:{probe:true},savedAt:revision,revision,sessionFingerprint:'probe'};
@@ -38,16 +46,20 @@ const digest=createHash('sha256').update(canonical(snapshot)).digest('hex');
 
 const putNetlify=await jsonFetch(netlify,{method:'POST',headers:{origin:'https://miiduoa.github.io','content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({action:'put_snapshot',snapshot,digest,revision})});
 console.log('netlify put',putNetlify.res.status);
+if(!putNetlify.res.ok) console.log('netlify put body',putNetlify.text.slice(0,500));
 assert(putNetlify.res.ok&&putNetlify.data.ok===true,'netlify write failed');
 const getNetlify=await jsonFetch(netlify,{method:'POST',headers:{origin:'https://miiduoa.github.io','content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({action:'get_snapshot'})});
 console.log('netlify get',getNetlify.res.status);
+if(!getNetlify.res.ok) console.log('netlify get body',getNetlify.text.slice(0,500));
 assert(getNetlify.res.ok&&getNetlify.data.digest===digest&&Number(getNetlify.data.revision)===revision,'netlify readback failed');
 
 const putNeon=await jsonFetch(`${neon}?on_conflict=uid`,{method:'POST',headers:{'content-type':'application/json','prefer':'resolution=merge-duplicates,return=representation',authorization:`Bearer ${token}`},body:JSON.stringify({uid,revision,digest,snapshot,updated_at:new Date().toISOString()})});
 console.log('neon put',putNeon.res.status);
+if(!putNeon.res.ok) console.log('neon put body',putNeon.text.slice(0,500));
 assert(putNeon.res.ok,'neon write failed');
 const getNeon=await jsonFetch(`${neon}?uid=eq.${encodeURIComponent(uid)}&select=uid,revision,digest,snapshot&limit=1`,{headers:{accept:'application/json',authorization:`Bearer ${token}`}});
 console.log('neon get',getNeon.res.status);
+if(!getNeon.res.ok) console.log('neon get body',getNeon.text.slice(0,500));
 assert(getNeon.res.ok&&Array.isArray(getNeon.data)&&getNeon.data[0]?.digest===digest&&Number(getNeon.data[0]?.revision)===revision,'neon readback failed');
 
 const unauth=await jsonFetch(netlify,{method:'POST',headers:{origin:'https://miiduoa.github.io','content-type':'application/json'},body:JSON.stringify({action:'get_snapshot'})});
