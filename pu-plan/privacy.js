@@ -1,5 +1,5 @@
 const PRIVACY_API=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
-const privacyToken=()=>localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session')||'';
+const privacyToken=()=>localStorage.getItem('puplan_session_primary_v1')||'';
 let privacyState='public',privacyBusy=false;
 
 async function privacyCall(action,payload={}){

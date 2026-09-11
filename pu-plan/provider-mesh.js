@@ -9,6 +9,10 @@ import {
 
 const encoder=new TextEncoder();
 const PORTABLE_KEY='puplan_portable_session_v1';
+const PRIMARY_REF='hrrmkrayvrgnwcroyttp';
+const STANDBY_REF='ltfurqaspqsvswmebyzw';
+const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
+const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const state={
   version:PROVIDER_MESH_VERSION,
   busy:false,
@@ -49,6 +53,12 @@ function tokenUid(raw=sessionToken()){
     return String(data.uid);
   }catch{return''}
 }
+function regionalSessionForEndpoint(endpoint){
+  const uid=tokenUid();if(!uid)return'';
+  let host='';try{host=new URL(endpoint).hostname}catch{return''}
+  const key=host.startsWith(STANDBY_REF)?STANDBY_SESSION_KEY:host.startsWith(PRIMARY_REF)?PRIMARY_SESSION_KEY:'';
+  if(!key)return'';const raw=localStorage.getItem(key)||'';return tokenUid(raw)===uid?raw:'';
+}
 function portableToken(minTtlSeconds=60){
   const raw=localStorage.getItem(PORTABLE_KEY)||'';
   const [header,payload,signature,...extra]=raw.split('.');
@@ -64,8 +74,8 @@ async function mintPortableToken(force=false){
   if(mintPromise)return mintPromise;
   mintPromise=(async()=>{
     state.minting=true;
-    const source=sessionToken();
     for(const endpoint of PORTABLE_MINT_ENDPOINTS||[]){
+      const source=regionalSessionForEndpoint(endpoint);if(!source)continue;
       const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),3500);
       try{
         const response=await fetch(endpoint,{

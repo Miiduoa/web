@@ -19,7 +19,8 @@ function failure(endpoint,error){const h=health(endpoint);h.failures=Math.min(8,
 function bodyOf(options){try{return typeof options?.body==='string'?JSON.parse(options.body):{}}catch{return{}}}
 function hasAuth(options){try{return new Headers(options?.headers||{}).has('Authorization')}catch{return false}}
 function parseUid(raw){try{const [p,s,...rest]=String(raw||'').split('.');if(!p||!s||rest.length)return'';const n=p.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(p.length/4)*4,'=');const d=JSON.parse(decodeURIComponent(escape(atob(n))));return d?.v===4&&d?.uid&&d?.exp*1000>Date.now()?String(d.uid):''}catch{return''}}
-function tierSession(endpoint){const current=localStorage.getItem('puplan_session')||'',uid=parseUid(current),key=endpoint===STANDBY?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,specific=localStorage.getItem(key)||'';return uid&&parseUid(specific)===uid?specific:current}
+function legacyPrimarySession(){const current=localStorage.getItem('puplan_session')||'',uid=parseUid(current);if(!uid||localStorage.getItem('nolu_preferred_cloud_v1')==='standby')return'';const primary=localStorage.getItem(PRIMARY_SESSION_KEY)||'',standby=localStorage.getItem(STANDBY_SESSION_KEY)||'';if(parseUid(primary)===uid)return primary;if(parseUid(standby)===uid||primary||standby)return'';localStorage.setItem(PRIMARY_SESSION_KEY,current);return current}
+function tierSession(endpoint){const current=localStorage.getItem('puplan_session')||'',uid=parseUid(current);if(!uid)return'';const key=endpoint===STANDBY?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY,specific=localStorage.getItem(key)||'';if(parseUid(specific)===uid)return specific;return endpoint===STANDBY?'':legacyPrimarySession()}
 function authTokenFor(endpoint){return endpoint===STANDBY?tierSession(STANDBY):endpoint===PRIMARY||endpoint===V6||endpoint===CORE||endpoint===LEGACY?tierSession(PRIMARY):localStorage.getItem('puplan_session')||''}
 function freshOptions(endpoint,options={}){
   if(!hasAuth(options))return options;const value=authTokenFor(endpoint);if(!value)return options;
@@ -49,6 +50,7 @@ window.fetch=async function noluLegacyFailover(input,options={}){
   const candidates=ordered(action).filter(endpoint=>!isOpen(endpoint));if(!candidates.length)throw new TypeError('Nolu transport temporarily unavailable');
   for(const endpoint of candidates){
     if(options.signal?.aborted)break;
+    if(hasAuth(options)&&!authTokenFor(endpoint))continue;
     try{
       const response=await timed(endpoint,options);lastResponse=response;
       if((endpoint===PRIMARY||endpoint===STANDBY)&&response.status===401&&hasAuth(options)){tierAuth401=true;lastError=new Error('tier-local authorization unavailable');continue}
