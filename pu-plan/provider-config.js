@@ -9,7 +9,7 @@
 // A candidate MUST stay disabled until its storage plane, authenticated read/write
 // path, health check, and recovery semantics have all been verified live.
 
-export const PROVIDER_MESH_VERSION='20260911-mesh3';
+export const PROVIDER_MESH_VERSION='20260911-mesh4';
 export const REQUIRED_REMOTE_PROVIDERS=3;
 export const MIRROR_READ_QUORUM=2;
 
@@ -35,16 +35,16 @@ export const PROVIDER_MIRRORS=Object.freeze([
     endpoint:'https://nolu-render-mirror.onrender.com/mirror',
     enabled:false
   }),
-  // Railway is the preferred next independent provider because its app and DB can
-  // be bound privately. It stays inert until the account connection and live tests exist.
+  // Railway remains an optional additional failure domain after the production
+  // three-provider target is satisfied.
   Object.freeze({id:'railway-mirror',provider:'railway',kind:'action-api',endpoint:'',enabled:false}),
-  // Netlify Blobs is independently hosted and registered, but remains excluded from
-  // quorum until the deployed Function passes authenticated production read/write.
+  // Netlify Blobs passed authenticated production write/read, unauthenticated
+  // rejection, and storage health checks with the rotated portable ES256 token.
   Object.freeze({
     id:'netlify-blobs',
     provider:'netlify',
     kind:'action-api',
     endpoint:'https://nolu-mirror.netlify.app/mirror',
-    enabled:false
+    enabled:true
   })
 ]);
