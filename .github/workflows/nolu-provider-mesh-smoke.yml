@@ -9,6 +9,15 @@ on:
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
       - '.github/workflows/nolu-provider-mesh-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-provider-mesh-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -21,13 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Syntax check
+      - name: Syntax and remote-avatar guardrails
         run: |
+          set -euo pipefail
           node --check pu-plan/provider-config.js
           node --check pu-plan/provider-mesh.js
           node --check pu-plan/durable-store.js
           node --check pu-plan/main.js
           node --check pu-plan/sw.js
+          grep -q "import {cleanAvatar} from './core/state.js';" pu-plan/provider-mesh.js
+          grep -q "const avatar=cleanAvatar(profile.avatar_data||'')" pu-plan/provider-mesh.js
 
       - name: Install Playwright
         run: |
@@ -68,7 +80,7 @@ jobs:
           const fp=crypto.createHash('sha256').update(session).digest('hex');
           const baseSnapshot={
             uid,
-            profile:{id:uid,display_name:'Mesh Test',username:'mesh_test',bio:'',avatar_data:'',discoverable:true,role:'user',profile_visibility:'public'},
+            profile:{id:uid,display_name:'Mesh Test',username:'mesh_test',bio:'',avatar_data:'data:image/svg+xml,<svg onload=alert(1)>',discoverable:true,role:'user',profile_visibility:'public'},
             courses:[{id:'remote',name:'遠端雙副本課程',day:3,start:2,end:3,teacher:'',room:'C303',color:'green'}],
             meta:{},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp
           };
@@ -108,6 +120,7 @@ jobs:
                 const m=await import('./durable-store.js');return m.getSnapshot(uid);
               },uid);
               assert(stored?.courses?.[0]?.name==='遠端雙副本課程','quorum recovery should persist the agreed remote snapshot');
+              assert(stored?.profile?.avatar_data==='', 'unsafe remote mirror avatar must be stripped before local recovery');
 
               await page.evaluate(snap=>{window.__localSnapshot=snap},baseSnapshot);
               const synced=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.sync('ci',true));
@@ -115,6 +128,7 @@ jobs:
               assert(writes.neon.length>=1,'Neon mirror should receive the snapshot');
               assert(writes.render.length>=1,'Render mirror should receive the snapshot');
               assert(writes.neon.at(-1)?.uid===uid&&writes.render.at(-1)?.uid===uid,'both mirrors must receive only the current account snapshot');
+              assert(writes.neon.at(-1)?.profile?.avatar_data===''&&writes.render.at(-1)?.profile?.avatar_data==='', 'unsafe avatar must never fan out to mirrors');
               console.log('PROVIDER_MESH_OK',{configured,writes:{neon:writes.neon.length,render:writes.render.length}});
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
