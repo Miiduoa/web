@@ -1,5 +1,8 @@
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const MAX_BODY_BYTES = 512_000;
+// The app's largest legitimate request is an avatar update capped at 180 KB.
+// Keep the public proxy comfortably below provider ingress buffering limits while
+// leaving room for JSON framing and the rest of the profile payload.
+const MAX_BODY_BYTES = 256_000;
 const TARGETS = new Set([
   'pu-plan-api',
   'pu-plan-api-v6',
@@ -52,12 +55,49 @@ function json(origin: string, status: number, body: unknown) {
 function clientAddress(req: Request) {
   const cloudflare = String(req.headers.get('cf-connecting-ip') || '').trim();
   if (cloudflare && cloudflare.length <= 64) return cloudflare;
+  const real = String(req.headers.get('x-real-ip') || '').trim();
+  if (real && real.length <= 64) return real;
   const forwarded = String(req.headers.get('x-forwarded-for') || '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  const candidate = forwarded.at(-1) || String(req.headers.get('x-real-ip') || '').trim();
+  const candidate = forwarded.at(-1) || '';
   return candidate && candidate.length <= 64 ? candidate : '';
+}
+
+async function readBoundedBody(req: Request) {
+  const declaredRaw = req.headers.get('content-length');
+  if (declaredRaw) {
+    const declared = Number(declaredRaw);
+    if (!Number.isFinite(declared) || declared < 0) throw new Error('INVALID_CONTENT_LENGTH');
+    if (declared > MAX_BODY_BYTES) throw new Error('PAYLOAD_TOO_LARGE');
+  }
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel('payload too large').catch(() => {});
+        throw new Error('PAYLOAD_TOO_LARGE');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 Deno.serve(async (req: Request) => {
@@ -84,20 +124,22 @@ Deno.serve(async (req: Request) => {
   if (authorization) headers.set('Authorization', authorization);
   if (contentType) headers.set('Content-Type', contentType);
   if (meshVersion) headers.set('X-Nolu-Mesh-Version', meshVersion);
-  // Preserve the browser client's platform-observed address so downstream login
-  // throttling remains per client rather than collapsing every gateway request
-  // onto one Edge Function egress address. We intentionally overwrite, rather
-  // than pass through, any browser-supplied forwarding header.
+  // Preserve the platform-observed browser address so downstream login throttling
+  // remains per client instead of collapsing every request onto one gateway egress.
+  // Browser-provided forwarding headers are never copied through verbatim.
   if (address) headers.set('X-Forwarded-For', address);
-  headers.set('X-Nolu-Browser-Gateway', 'v2');
+  headers.set('X-Nolu-Browser-Gateway', 'v3');
 
   let body: Uint8Array | undefined;
   if (req.method === 'POST') {
-    const declared = Number(req.headers.get('content-length') || 0);
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return json(origin, 413, { error: 'PAYLOAD_TOO_LARGE' });
-    const bytes = new Uint8Array(await req.arrayBuffer());
-    if (bytes.byteLength > MAX_BODY_BYTES) return json(origin, 413, { error: 'PAYLOAD_TOO_LARGE' });
-    body = bytes;
+    try {
+      body = await readBoundedBody(req);
+    } catch (error) {
+      if (String((error as Error)?.message || error) === 'PAYLOAD_TOO_LARGE') {
+        return json(origin, 413, { error: 'PAYLOAD_TOO_LARGE' });
+      }
+      return json(origin, 400, { error: 'INVALID_REQUEST_BODY' });
+    }
   }
 
   try {
