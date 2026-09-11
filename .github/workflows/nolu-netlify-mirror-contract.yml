@@ -1,0 +1,63 @@
+name: nolu Netlify mirror contract
+
+on:
+  push:
+    paths:
+      - 'package.json'
+      - 'netlify.toml'
+      - 'netlify/functions/**'
+      - 'pu-plan/provider-config.js'
+      - '.github/workflows/nolu-netlify-mirror-contract.yml'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'netlify.toml'
+      - 'netlify/functions/**'
+      - 'pu-plan/provider-config.js'
+      - '.github/workflows/nolu-netlify-mirror-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and type-check dependencies
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund typescript @types/node
+
+      - name: Type-check Netlify mirror
+        run: >-
+          ./node_modules/.bin/tsc netlify/functions/nolu-mirror.mts --noEmit
+          --target ES2022 --module NodeNext --moduleResolution NodeNext
+          --lib ES2022,DOM --types node --skipLibCheck
+
+      - name: Verify mirror safety contract
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const assert=require('node:assert/strict');
+          const fn=fs.readFileSync('netlify/functions/nolu-mirror.mts','utf8');
+          const cfg=fs.readFileSync('pu-plan/provider-config.js','utf8');
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+
+          assert.equal(pkg.dependencies['@netlify/blobs'],'11.0.3');
+          assert.match(fn,/getStore\(\{ name: "nolu-snapshots", consistency: "strong" \}\)/);
+          assert.match(fn,/verifyPortable/);
+          assert.match(fn,/subtle\.verify/);
+          assert.match(fn,/snapshot owner mismatch/);
+          assert.match(fn,/revision conflict/);
+          assert.match(fn,/digestSnapshot/);
+          assert.match(fn,/timingSafeEqual/);
+          assert.match(fn,/snapshot\/\$\{uid\}\/\$\{String\(revision\)\.padStart/);
+          assert.match(fn,/origin !== ALLOWED_ORIGIN/);
+          assert.match(fn,/path: \["\/mirror", "\/health"\]/);
+          assert.match(cfg,/provider:'netlify'[\s\S]*?https:\/\/nolu-mirror\.netlify\.app\/mirror[\s\S]*?enabled:false/);
+          assert.doesNotMatch(fn,/(?:postgres(?:ql)?:\/\/|service_role|PRIVATE KEY|password\s*=)/i);
+          console.log('NETLIFY_MIRROR_CONTRACT_OK');
+          NODE
