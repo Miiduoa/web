@@ -1,6 +1,8 @@
-import {requestPersistentStorage,getSnapshot,putSnapshot,putMutation,listMutations,deleteMutation} from './durable-store.js';
+import {requestPersistentStorage,getSnapshot,putSnapshot,putMutation,listMutations,deleteMutation,clearUser} from './durable-store.js';
 
 const MAX_AVATAR=180000;
+const GUEST_DURABLE_PURGE_KEY='nolu_guest_durable_purge_uid_v1';
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const state={ready:false,persistent:false,lastMirrorAt:0,bound:false,sessionFingerprint:'',migratedLegacy:false};
 const encoder=new TextEncoder();
 
@@ -79,6 +81,13 @@ async function restorePending(id){
   }
   if(changed)localStorage.setItem(pendingKey(id),JSON.stringify(q));return changed;
 }
+async function purgeGuestDurable(id=''){
+  const target=String(id||sessionStorage.getItem(GUEST_DURABLE_PURGE_KEY)||'').trim();
+  if(!UUID.test(target))return false;
+  const ok=await clearUser(target);
+  sessionStorage.removeItem(GUEST_DURABLE_PURGE_KEY);
+  return ok;
+}
 async function bindCurrentSession({allowHydrate=true}={}){
   const id=tokenUid(),owner=ownerId(),sessionFingerprint=await fingerprint();
   if(!id||!sessionFingerprint||(owner&&owner!==id)){state.bound=false;state.sessionFingerprint='';return false}
@@ -109,6 +118,11 @@ async function bindCurrentSession({allowHydrate=true}={}){
   return true;
 }
 async function prepare(){
+  if(localStorage.getItem('puplan_guest')==='1'){
+    await purgeGuestDurable();
+    state.ready=true;
+    return;
+  }
   const id=tokenUid();if(!id){state.ready=true;return}
   state.persistent=await requestPersistentStorage();
   await bindCurrentSession({allowHydrate:true});
@@ -116,6 +130,12 @@ async function prepare(){
 }
 await prepare();
 
+document.addEventListener('nolu:guest-durable-purge',e=>{
+  const id=String(e.detail?.uid||'');
+  if(!UUID.test(id))return;
+  state.bound=false;state.sessionFingerprint='';
+  void purgeGuestDurable(id);
+});
 document.addEventListener('puplan:courses-changed',e=>{
   const id=uid();if(!id||!state.bound||!state.sessionFingerprint)return;const list=Array.isArray(e.detail)?e.detail.slice(0,80):courses();
   const r=row(id,'save_schedule',{courses:list});void putMutation(r);void putSnapshot({...localSnapshot(id),courses:list,savedAt:Date.now()});
@@ -130,4 +150,4 @@ addEventListener('focus',()=>{void restorePending(uid()).then(restored=>{if(rest
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void restorePending(uid())});
 setInterval(()=>void mirror(false),5000);
 
-window.NOLU_DURABLE={state,mirror,restorePending,getSnapshot,listMutations,bindCurrentSession};
+window.NOLU_DURABLE={state,mirror,restorePending,getSnapshot,listMutations,bindCurrentSession,purgeGuestDurable};
