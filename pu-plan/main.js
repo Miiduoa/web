@@ -81,6 +81,7 @@ await import('./cloud-replication.js');
 // two non-Supabase mirrors to agree on the exact revision+digest before it can
 // replace a local copy, so one corrupted provider cannot silently overwrite data.
 await import('./provider-mesh.js');
+await startModule('./provider-status.js');
 
 // Bind account controls first. The remaining modules all depend only on the shell,
 // app state, and the cloud bootstrap above, so fetch/evaluate them concurrently.
