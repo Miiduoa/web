@@ -39,11 +39,18 @@ jobs:
 
           assert.match(cfg, /REQUIRED_REMOTE_PROVIDERS\s*=\s*3\s*;/, 'remote provider target must stay at 3');
           assert.match(cfg, /MIRROR_READ_QUORUM\s*=\s*2\s*;/, 'recovery quorum must stay at 2 or stronger');
-          assert.match(cfg, /provider:'neon'[\s\S]*?enabled:true/, 'Neon must remain the verified independent mirror');
+          assert.match(cfg, /provider:'neon'[\s\S]*?enabled:true/, 'Neon must remain a verified independent mirror');
+          assert.match(cfg, /provider:'netlify'[\s\S]*?enabled:true/, 'Netlify must remain a verified independent mirror');
           assert.match(cfg, /provider:'render'[\s\S]*?enabled:false/, 'Render must not count before live DB binding passes');
           assert.match(cfg, /provider:'railway'[\s\S]*?enabled:false/, 'Railway must not count before live deployment passes');
-          assert.match(cfg, /provider:'netlify'[\s\S]*?enabled:false/, 'Netlify must not count before live storage passes');
           assert.match(cfg, /https:\/\/nolu-render-mirror\.onrender\.com\/mirror/, 'Render candidate must use its public mirror endpoint');
+          assert.match(cfg, /https:\/\/nolu-mirror\.netlify\.app\/mirror/, 'Netlify must use the verified production mirror endpoint');
+
+          const enabledProviders=[
+            /provider:'neon'[\s\S]*?enabled:true/.test(cfg)&&'neon',
+            /provider:'netlify'[\s\S]*?enabled:true/.test(cfg)&&'netlify'
+          ].filter(Boolean);
+          assert.deepEqual(enabledProviders.sort(), ['neon','netlify'], 'the two independent external quorum mirrors must be enabled');
 
           assert.match(mesh, /seen\.has\(item\.provider\)/, 'provider mesh must deduplicate failure domains');
           assert.match(mesh, /item\.provider==='supabase'/, 'Supabase mirrors must not be double-counted as external providers');
@@ -63,5 +70,5 @@ jobs:
           assert.doesNotMatch(publicText, /DATABASE_URL\s*=\s*['"][^'"]+['"]/, 'database credential must never be hard-coded');
           assert.doesNotMatch(cfg, /(?:password|passwd|service_role|private[_-]?key)\s*[:=]/i, 'public provider config must not contain secrets');
 
-          console.log('Independent provider contract OK: 3-provider target, 2-vote recovery, no committed DB credentials.');
+          console.log('Independent provider contract OK: Supabase + Neon + Netlify, 2-vote external recovery, no committed DB credentials.');
           NODE
