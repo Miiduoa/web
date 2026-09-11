@@ -1,0 +1,57 @@
+name: nolu patch replica v3 client once
+
+on:
+  push:
+    branches: [feat/nolu-replica-v3-client-20260911]
+    paths:
+      - '.github/workflows/nolu-patch-replica-v3-client-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/nolu-replica-v3-client-20260911
+      - name: Update hot standby test for one-way replica v3
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/nolu-hot-standby-smoke.yml')
+          s=p.read_text()
+          s=s.replace('branches: [main, fix/nolu-replica-v2-client]', 'branches: [main, feat/nolu-replica-v3-client-20260911]')
+          s=s.replace("grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js", "! grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js\n          grep -q 'pu-plan-replica-v3' pu-plan/cloud-replication.js\n          grep -q 'manualReconcileRequired' pu-plan/cloud-replication.js")
+          s=s.replace('Verify v8 failover, separate sessions, offline safety, and replica-v2 failback', 'Verify v8 failover, separate sessions, offline safety, and replica-v3 authority')
+          old="""              const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
+              assert(synced===true,'standby -> primary replica-v2 reconciliation failed');
+              assert(counts.bReplica>=1,'replica-v2 endpoint was not called on active standby');
+              assert(lastReplicaAuth===`Bearer ${standby}`,'replica-v2 did not use the standby-local session');
+              const after=await page.evaluate(()=>({preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session_primary_v1'),canonical:localStorage.getItem('puplan_session')}));
+              assert(after.primary===primaryNew,'peer-local primary session was not prewarmed');
+              assert(after.canonical===primaryOld,'prewarm must not change canonical session fingerprint');
+              assert(after.preferred==='primary','safe failback was not unlocked after peer sync');"""
+          new="""              await page.evaluate(()=>window.NOLU_REPLICATION.markStandbyDirty());
+              const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
+              assert(synced===false,'standby must not auto-write into primary authority');
+              assert(counts.bReplica===0,'standby unexpectedly contacted the retired replica-v2 path');
+              const after=await page.evaluate(()=>({preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session_primary_v1'),canonical:localStorage.getItem('puplan_session'),dirty:NOLU_REPLICATION.hasStandbyDirty(),manual:NOLU_REPLICATION.state.manualReconcileRequired}));
+              assert(after.primary===primaryOld,'standby path changed the Mumbai-local session');
+              assert(after.canonical===primaryOld,'standby path changed canonical identity');
+              assert(after.preferred==='standby','unsafe automatic failback changed preferred cloud');
+              assert(after.dirty===true&&after.manual===true,'standby changes were not held for manual reconciliation');"""
+          if old not in s: raise SystemExit('old replica-v2 assertion block not found')
+          s=s.replace(old,new)
+          p.write_text(s)
+          PY
+          grep -q 'pu-plan-replica-v3' .github/workflows/nolu-hot-standby-smoke.yml
+          grep -q 'standby must not auto-write' .github/workflows/nolu-hot-standby-smoke.yml
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/nolu-hot-standby-smoke.yml
+          git commit -m 'test(nolu): require manual failback from Tokyo'
+          git push origin HEAD:feat/nolu-replica-v3-client-20260911
