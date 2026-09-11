@@ -1,0 +1,99 @@
+name: nolu public shell live smoke
+
+on:
+  push:
+    branches: [main, test/nolu-public-live-20260911]
+    paths:
+      - 'pu-plan/index.html'
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-public-shell-live-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/index.html'
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-public-shell-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify source shell contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            grep -q '20260911-login-rescue6' pu-plan/index.html
+            grep -q "nolu-shell-20260911-login-rescue6" pu-plan/sw.js
+          fi
+
+      - name: Verify deployed GitHub Pages shell
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # pu-plan-pages.yml uploads ./pu-plan as the Pages artifact root, so the
+          # deployed app is at /web/. Wait for the Pages deployment from this push
+          # instead of racing it.
+          BASE='https://miiduoa.github.io/web'
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          ready=0
+          for attempt in $(seq 1 24); do
+            if curl -fsS --max-time 15 "$BASE/" -o "$tmp/index.html" && grep -q '20260911-login-rescue6' "$tmp/index.html"; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
+          grep -q 'https://nolu-mirror.netlify.app' "$tmp/index.html"
+          grep -q "object-src 'none'" "$tmp/index.html"
+          grep -q "frame-src 'none'" "$tmp/index.html"
+
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js" -o "$tmp/provider-config.js"
+          grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
+          grep -q 'pu-plan-portable-v2' "$tmp/provider-config.js"
+          ! grep -q 'pu-plan-portable-v1' "$tmp/provider-config.js"
+          grep -q "provider:'netlify'" "$tmp/provider-config.js"
+          grep -q "enabled:true" "$tmp/provider-config.js"
+
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/sw.js" -o "$tmp/sw.js"
+          grep -q "nolu-shell-20260911-login-rescue6" "$tmp/sw.js"
+          grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
+          echo 'PUBLIC_SHELL_LIVE_OK'
+
+      - name: Verify Netlify mirror public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://nolu-mirror.netlify.app'
+          tmp=$(mktemp)
+          headers=$(mktemp)
+          trap 'rm -f "$tmp" "$headers"' EXIT
+
+          code=$(curl -sS --retry 3 --retry-delay 2 --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' "$URL/health")
+          echo "[health] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 200
+          grep -q '"provider":"netlify"' "$tmp"
+          grep -q '"status":"available"' "$tmp"
+          grep -qi '^cache-control: no-store' "$headers"
+
+          code=$(curl -sS --max-time 15 -o "$tmp" -w '%{http_code}' -X POST "$URL/mirror" -H 'Origin: https://miiduoa.github.io' -H 'Content-Type: application/json' --data '{"action":"get_snapshot"}')
+          echo "[unauth] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 401
+          grep -q 'UNAUTHORIZED' "$tmp"
+
+          code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL/mirror" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+          echo "[evil origin] HTTP $code :: $(cat "$tmp")"
+          test "$code" = 403
+          ! grep -qi '^access-control-allow-origin: https://evil.example' "$headers"
+          echo 'NETLIFY_PUBLIC_BOUNDARY_OK'
