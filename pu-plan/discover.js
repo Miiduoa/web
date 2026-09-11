@@ -1,4 +1,4 @@
-import {cleanAvatar} from './core/state.js';
+import {cleanAvatar,cleanMediaUrl} from './core/state.js';
 const SOCIAL=window.CAMPUS_SOCIAL_ENDPOINT||'https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
 const token=()=>localStorage.getItem('puplan_session_primary_v1')||'';
@@ -21,7 +21,7 @@ async function call(url,action,payload={}){
 }
 function usernameFrom(node){const s=node?.querySelector?.('small')?.textContent||'';return (s.match(/@([a-z0-9_.]{2,24})/i)||[])[1]?.toLowerCase()||''}
 function avatar(p){const src=cleanAvatar(p?.avatar_data||'');return src?`<img src="${esc(src)}" alt="">`:`<span>${esc((p?.display_name||'?').slice(0,1))}</span>`}
-function media(items=[]){if(!items.length)return'';return`<div class="profile-post-media">${items.slice(0,4).map(m=>m.type==='video'?`<video src="${esc(m.url)}" muted playsinline preload="metadata"></video>`:`<img src="${esc(m.url)}" alt="">`).join('')}</div>`}
+function media(items=[]){const safe=(Array.isArray(items)?items:[]).slice(0,4).map(m=>({...m,url:cleanMediaUrl(m?.url)})).filter(m=>m.url);if(!safe.length)return'';return`<div class="profile-post-media">${safe.map(m=>m.type==='video'?`<video src="${esc(m.url)}" muted playsinline preload="metadata"></video>`:`<img src="${esc(m.url)}" alt="">`).join('')}</div>`}
 async function getProfile(username,force=false){syncProfileCache();const key=String(username||'').toLowerCase();if(!force&&profileCache.has(key))return profileCache.get(key);const d=await call(SOCIAL,'profile_view',{username:key});profileCache.set(key,d);return d}
 
 function ensureProfileDialog(){
