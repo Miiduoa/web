@@ -1,0 +1,122 @@
+name: nolu provider mesh smoke
+
+on:
+  push:
+    paths:
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/provider-mesh.js'
+      - 'pu-plan/durable-store.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - '.github/workflows/nolu-provider-mesh-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-mesh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax check
+        run: |
+          node --check pu-plan/provider-config.js
+          node --check pu-plan/provider-mesh.js
+          node --check pu-plan/durable-store.js
+          node --check pu-plan/main.js
+          node --check pu-plan/sw.js
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-mesh init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-mesh install playwright >/dev/null 2>&1
+          cd /tmp/nolu-mesh && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Verify two independent mirrors replicate and recover by quorum
+        env:
+          NODE_PATH: /tmp/nolu-mesh/node_modules
+        run: |
+          cp -R pu-plan /tmp/nolu-provider-app
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/nolu-provider-app/provider-config.js')
+          s=p.read_text()
+          s=s.replace("endpoint:'',enabled:false", "endpoint:'https://neon.test/mirror',enabled:true", 1)
+          s=s.replace("endpoint:'',enabled:false", "endpoint:'https://render.test/mirror',enabled:true", 1)
+          p.write_text(s)
+          Path('/tmp/nolu-provider-app/mesh-test.html').write_text('''<!doctype html><html><body><script>
+          window.__localSnapshot=null;
+          window.NOLU_DURABLE={
+            getSnapshot:async()=>window.__localSnapshot,
+            bindCurrentSession:async()=>true
+          };
+          window.NOLU_RESILIENCE={state:{mode:'online',activeApi:'https://example.supabase.co/functions/v1/pu-plan-api-v7'}};
+          </script><script type="module" src="./provider-mesh.js"></script></body></html>''')
+          PY
+          python3 -m http.server 4175 --directory /tmp/nolu-provider-app >/tmp/nolu-provider-http.log 2>&1 &
+          cat >/tmp/nolu-mesh/check.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const crypto=require('crypto');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const uid='33333333-3333-4333-8333-333333333333';
+          const now=Math.floor(Date.now()/1000);
+          const session=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'mesh-test'}))}.test-signature`;
+          const fp=crypto.createHash('sha256').update(session).digest('hex');
+          const baseSnapshot={
+            uid,
+            profile:{id:uid,display_name:'Mesh Test',username:'mesh_test',bio:'',avatar_data:'',discoverable:true,role:'user',profile_visibility:'public'},
+            courses:[{id:'remote',name:'遠端雙副本課程',day:3,start:2,end:3,teacher:'',room:'C303',color:'green'}],
+            meta:{},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp
+          };
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              const context=await browser.newContext();
+              const writes={neon:[],render:[]};
+              for(const [host,key] of [['neon.test','neon'],['render.test','render']]){
+                await context.route(`https://${host}/mirror`,async route=>{
+                  const body=JSON.parse(route.request().postData()||'{}');
+                  if(body.action==='put_snapshot'){
+                    writes[key].push(body.snapshot);
+                    return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,stored:true})});
+                  }
+                  if(body.action==='get_snapshot'){
+                    return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,snapshot:baseSnapshot})});
+                  }
+                  return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'bad action'})});
+                });
+              }
+              const page=await context.newPage();
+              await page.addInitScript(({session,uid})=>{
+                localStorage.setItem('puplan_session',session);
+                localStorage.setItem('puplan_portable_session_v1','portable.test-signature');
+                localStorage.setItem('puplan_course_owner',uid);
+              },{session,uid});
+              await page.goto('http://127.0.0.1:4175/mesh-test.html',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>!!window.NOLU_PROVIDER_MESH,{timeout:10000});
+
+              const configured=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.state.configuredProviders);
+              assert(configured.includes('supabase')&&configured.includes('neon')&&configured.includes('render'),'three remote failure domains must be registered');
+
+              const recovered=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.recover('ci'));
+              assert(recovered===true,'two matching independent mirrors should recover a missing local snapshot');
+              const stored=await page.evaluate(async uid=>{
+                const m=await import('./durable-store.js');return m.getSnapshot(uid);
+              },uid);
+              assert(stored?.courses?.[0]?.name==='遠端雙副本課程','quorum recovery should persist the agreed remote snapshot');
+
+              await page.evaluate(snap=>{window.__localSnapshot=snap},baseSnapshot);
+              const synced=await page.evaluate(()=>window.NOLU_PROVIDER_MESH.sync('ci',true));
+              assert(synced===true,'mirror fan-out should succeed when at least one independent provider acknowledges');
+              assert(writes.neon.length>=1,'Neon mirror should receive the snapshot');
+              assert(writes.render.length>=1,'Render mirror should receive the snapshot');
+              assert(writes.neon.at(-1)?.uid===uid&&writes.render.at(-1)?.uid===uid,'both mirrors must receive only the current account snapshot');
+              console.log('PROVIDER_MESH_OK',{configured,writes:{neon:writes.neon.length,render:writes.render.length}});
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 90s node /tmp/nolu-mesh/check.cjs
