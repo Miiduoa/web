@@ -6,6 +6,7 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/origin-gateway.js'
       - 'pu-plan/provider-config.js'
+      - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-browser-provider-contract.yml'
@@ -14,6 +15,7 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/origin-gateway.js'
       - 'pu-plan/provider-config.js'
+      - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-browser-provider-contract.yml'
@@ -38,6 +40,7 @@ jobs:
           const sw=fs.readFileSync('pu-plan/sw.js','utf8');
           const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
           const gateway=fs.readFileSync('pu-plan/origin-gateway.js','utf8');
+          const loginBudget=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
 
           assert.match(cfg,/PROVIDER_MESH_VERSION='20260911-mesh5'/);
           assert.match(cfg,/pu-plan-portable-v2/);
@@ -58,11 +61,14 @@ jobs:
 
           const versions=[...html.matchAll(/\?v=([^"']+)/g)].map(m=>m[1]);
           assert(versions.length>=10,'expected versioned shell assets');
-          assert.deepEqual([...new Set(versions)],['20260911-cloud-gateway1'],'all shell assets must roll together');
-          assert.match(sw,/const CACHE='nolu-shell-20260911-cloud-gateway1'/);
-          assert.match(pwa,/nolu_shell_reload_20260911_cloud_gateway1/);
+          assert.deepEqual([...new Set(versions)],['20260911-login-failover2'],'all shell assets must roll together');
+          assert.match(sw,/const CACHE='nolu-shell-20260911-login-failover2'/);
+          assert.match(sw,/login-failover-budget\.js/);
+          assert.match(pwa,/nolu_shell_reload_20260911_login_failover2/);
+          assert.match(loginBudget,/OVERALL_LOGIN_TIMEOUT_MS=14000/);
+          assert.match(loginBudget,/nolu-browser-gateway-v1/);
 
-          const publicText=`${html}\n${cfg}\n${gateway}`;
+          const publicText=`${html}\n${cfg}\n${gateway}\n${loginBudget}`;
           assert.doesNotMatch(publicText,/(?:service_role|PRIVATE KEY|postgres(?:ql)?:\/\/)/i,'browser files must not contain server secrets');
           console.log('BROWSER_PROVIDER_CONTRACT_OK');
           NODE
