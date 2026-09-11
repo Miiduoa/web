@@ -61,9 +61,9 @@ jobs:
           grep -q "已停止自動回切覆寫" pu-plan/provider-status.js
       - name: Keep installed PWA on current replica v3 shell
         run: |
-          grep -q "nolu-shell-20260911-login-failover2" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260911_login_failover2" pu-plan/pwa.js
-          grep -q "20260911-login-failover2" pu-plan/index.html
+          grep -q "nolu-shell-20260911-login-failover3" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260911_login_failover3" pu-plan/pwa.js
+          grep -q "20260911-login-failover3" pu-plan/index.html
           grep -q "nolu-browser-gateway-v1" pu-plan/origin-gateway.js
           grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
           grep -q "'./login-failover-budget.js'" pu-plan/sw.js
