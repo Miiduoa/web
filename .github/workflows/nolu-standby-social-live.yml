@@ -20,10 +20,12 @@ jobs:
         run: |
           set -euo pipefail
           url='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social'
-          headers="$(curl -fsS -D - -o /dev/null -X OPTIONS -H 'Origin: https://miiduoa.github.io' "$url")"
-          grep -Eiq '^HTTP/.* 200' <<<"$headers"
-          grep -Eiq '^access-control-allow-origin: https://miiduoa.github.io\r?$' <<<"$headers"
-          ! grep -Eiq '^access-control-allow-origin: \*' <<<"$headers"
+          code="$(curl -sS -D /tmp/headers -o /tmp/body -w '%{http_code}' -X OPTIONS -H 'Origin: https://miiduoa.github.io' "$url")"
+          echo "preflight status=$code"
+          sed -n '1,30p' /tmp/headers
+          test "$code" = 200 -o "$code" = 204
+          grep -Eiq '^access-control-allow-origin:[[:space:]]*https://miiduoa.github.io\r?$' /tmp/headers
+          ! grep -Eiq '^access-control-allow-origin:[[:space:]]*\*' /tmp/headers
       - name: Evil browser origin is rejected
         run: |
           set -euo pipefail
