@@ -1,0 +1,56 @@
+name: nolu standby social boundary
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social-standby/index.ts'
+      - '.github/workflows/nolu-standby-social-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-social-standby/index.ts'
+      - '.github/workflows/nolu-standby-social-boundary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authorization-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Standby social source must keep strong session auth
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-social-standby/index.ts
+          grep -Fq "verifySignedSessionV4(token,KEY)" "$f"
+          grep -Fq "assertCredentialCurrent(session,data.password_salt||'')" "$f"
+          grep -Fq "const UUID=/^[0-9a-f]" "$f"
+      - name: Chat creation must be friend-only and rate-limited
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-social-standby/index.ts
+          grep -Fq "await rateLimit(req,'chat_create',20,10)" "$f"
+          grep -Fq "!(await areFriends(u.id,id))" "$f"
+          grep -Fq "只能和已接受的好友建立聊天室" "$f"
+          grep -Fq "await rateLimit(req,'chat_send',120,5)" "$f"
+      - name: Private posts and undiscoverable profiles must stay private
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-social-standby/index.ts
+          grep -Fq "if(!self&&!p.discoverable&&!friend)throw new ApiError(404" "$f"
+          grep -Fq "if((author.profile_visibility||'public')==='private'&&!friend)return false" "$f"
+          grep -Fq "if((p.visibility||'public')==='private'&&!friend)return false" "$f"
+          grep -Fq "if(!(await canViewPost(u,root.data)))throw new ApiError(403" "$f"
+          grep -Fq "if(!(await canViewPost(u,p.data)))throw new ApiError(403" "$f"
+      - name: Standby media remains text-only and mutations are bounded
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-social-standby/index.ts
+          grep -Fq "MEDIA_PRIMARY_REQUIRED" "$f"
+          grep -Fq "await rateLimit(req,'post_create',30,10)" "$f"
+          grep -Fq "await rateLimit(req,'post_reply',60,10)" "$f"
+          ! grep -Fq "createSignedUploadUrl" "$f"
