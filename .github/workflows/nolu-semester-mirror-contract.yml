@@ -1,0 +1,48 @@
+name: nolu semester mirror contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-api/index.ts'
+      - 'supabase/functions/pu-plan-api-v8/index.ts'
+      - '.github/workflows/nolu-semester-mirror-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-api/index.ts'
+      - 'supabase/functions/pu-plan-api-v8/index.ts'
+      - '.github/workflows/nolu-semester-mirror-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semester-mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Parse API sources
+        run: |
+          set -euo pipefail
+          node --check supabase/functions/pu-plan-api/index.ts || true
+          test -s supabase/functions/pu-plan-api/index.ts
+          test -s supabase/functions/pu-plan-api-v8/index.ts
+      - name: Archived semester saves must not replace current mirror
+        run: |
+          set -euo pipefail
+          legacy=supabase/functions/pu-plan-api/index.ts
+          current=supabase/functions/pu-plan-api-v8/index.ts
+          grep -Fq ".select('id,is_current').eq('user_id',user.id).eq('semester_key',key).maybeSingle()" "$legacy"
+          grep -Fq ".select('id,is_current').eq('user_id', user.id).eq('semester_key', key).maybeSingle()" "$current" || \
+            grep -Fq ".select('id,is_current').eq('user_id',user.id).eq('semester_key',key).maybeSingle()" "$current"
+          grep -Fq "if(target.is_current!==false)await mirrorLegacy(user.id,courses)" "$legacy"
+          ! grep -Fq "if(key){ const {data}=await db.from('puplan_app_semesters').select('id').eq('user_id',user.id).eq('semester_key',key).maybeSingle()" "$legacy"
+      - name: Login lookup errors cannot masquerade as invalid credentials
+        run: |
+          set -euo pipefail
+          f=supabase/functions/pu-plan-api/index.ts
+          grep -Fq "const {data:u,error}=await db.from('puplan_app_users')" "$f"
+          grep -Fq "if(error)throw error;" "$f"
