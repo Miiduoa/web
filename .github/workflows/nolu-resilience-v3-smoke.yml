@@ -2,7 +2,7 @@ name: nolu resilience v3 smoke
 
 on:
   push:
-    branches: [main, fix/nolu-resilience-v3]
+    branches: [main, fix/nolu-resilience-v3, feat/nolu-hot-standby-v1]
     paths:
       - 'pu-plan/durable-store.js'
       - 'pu-plan/durable-bridge.js'
@@ -52,7 +52,7 @@ jobs:
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const b64=s=>Buffer.from(s).toString('base64url');
-          const makeToken=(uid,nonce)=>`${b64(JSON.stringify({v:3,uid,nonce,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}))}.${b64(`sig-${nonce}`)}`;
+          const makeToken=(uid,nonce)=>`${b64(JSON.stringify({v:4,uid,nonce,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:`cv-${nonce}`}))}.${b64(`sig-${nonce}`)}`;
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
@@ -85,11 +85,10 @@ jobs:
               },tokenB);
               await page.reload({waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_DURABLE?.state?.ready===true&&window.NOLU_DURABLE?.state?.bound===true);
-              const second=await page.evaluate(uid=>({
+              const second=await page.evaluate(()=>({
                 courses:JSON.parse(localStorage.getItem('puplan_courses')||'[]'),
-                snapshot:null,
                 fingerprint:window.NOLU_DURABLE.state.sessionFingerprint
-              }),uid);
+              }));
               const storedB=await page.evaluate(uid=>window.NOLU_DURABLE.getSnapshot(uid),uid);
               assert(second.courses.length===0,'old durable courses leaked into a different session token');
               assert(storedB?.courses?.length===0,'old durable snapshot was not replaced for the new session');
@@ -102,7 +101,7 @@ jobs:
           timeout 70s node /tmp/nolu-v3/session.cjs
           rm -f pu-plan/__durable_v3_test.html
 
-      - name: Verify cloud and legacy circuit breakers fail fast after outage
+      - name: Verify cloud and legacy circuit breakers fail fast after dual-region outage
         env:
           NODE_PATH: /tmp/nolu-v3/node_modules
         run: |
@@ -113,17 +112,22 @@ jobs:
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const b64=s=>Buffer.from(s).toString('base64url');
+          const MUMBAI='hrrmkrayvrgnwcroyttp';
+          const TOKYO='ltfurqaspqsvswmebyzw';
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
               const context=await browser.newContext();
-              let requests=0;
-              await context.route('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/**',route=>{requests++;route.abort('timedout')});
+              let requests=0;const seen=[];
+              await context.route('https://*.supabase.co/functions/v1/**',route=>{
+                const host=new URL(route.request().url()).host;
+                if(host.startsWith(MUMBAI)||host.startsWith(TOKYO)){requests++;seen.push(route.request().url())}
+                route.abort('timedout');
+              });
               const page=await context.newPage();
-              await page.goto('http://127.0.0.1:4173/index.html',{waitUntil:'domcontentloaded'});
               const uid='44444444-4444-4444-8444-444444444444';
-              const token=`${b64(JSON.stringify({v:3,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}))}.test-signature`;
-              await page.evaluate(({uid,token})=>{
+              const token=`${b64(JSON.stringify({v:4,uid,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,cv:'circuit-test'}))}.test-signature`;
+              await page.addInitScript(({uid,token})=>{
                 localStorage.clear();sessionStorage.clear();
                 localStorage.setItem('puplan_session',token);
                 localStorage.setItem('puplan_course_owner',uid);
@@ -132,26 +136,28 @@ jobs:
               },{uid,token});
               await page.goto('http://127.0.0.1:4173/__circuit_v3_test.html',{waitUntil:'domcontentloaded'});
               await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
-              requests=0;
-              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+              requests=0;seen.length=0;
+              const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v7';
               const opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bootstrap'})};
               const first=await page.evaluate(async({primary,opts})=>{const t=performance.now();const r=await fetch(primary,opts);return {ms:performance.now()-t,data:await r.json()}},{primary,opts});
-              const afterFirst=requests;
+              const afterFirst=requests,firstSeen=[...seen];
               const second=await page.evaluate(async({primary,opts})=>{const t=performance.now();const r=await fetch(primary,opts);return {ms:performance.now()-t,data:await r.json()}},{primary,opts});
               const afterSecond=requests;
               assert(first.data?.offline===true&&second.data?.offline===true,'safe bootstrap did not fall back offline');
-              assert(afterFirst>=2,'first outage request did not attempt cloud failover');
+              assert(firstSeen.some(u=>u.includes(MUMBAI)),'first outage request did not attempt Mumbai');
+              assert(firstSeen.some(u=>u.includes(TOKYO)),'first outage request did not attempt Tokyo standby');
               assert(afterSecond===afterFirst,'second outage request ignored open cloud circuits');
               assert(second.ms<500,`second cloud request did not fail fast: ${second.ms}ms`);
 
               const legacy='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api';
               const legacyOpts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'semesters'})};
+              const expectedLegacy=await page.evaluate(()=>window.NOLU_TRANSPORT.candidates.length);
               const beforeLegacy=requests;
               await page.evaluate(async({legacy,legacyOpts})=>{try{await fetch(legacy,legacyOpts)}catch{}},{legacy,legacyOpts});
               const afterLegacyFirst=requests;
               const legacySecond=await page.evaluate(async({legacy,legacyOpts})=>{const t=performance.now();try{await fetch(legacy,legacyOpts)}catch{}return performance.now()-t},{legacy,legacyOpts});
               const afterLegacySecond=requests;
-              assert(afterLegacyFirst-beforeLegacy>=3,'legacy transport did not attempt all three paths on first outage');
+              assert(afterLegacyFirst-beforeLegacy===expectedLegacy,`legacy transport attempted ${afterLegacyFirst-beforeLegacy}, expected ${expectedLegacy}`);
               assert(afterLegacySecond===afterLegacyFirst,'legacy transport ignored its open circuits');
               assert(legacySecond<500,`legacy circuit did not fail fast: ${legacySecond}ms`);
               console.log('CIRCUIT_BREAKERS_OK',{afterFirst,secondMs:second.ms,legacyFirst:afterLegacyFirst-beforeLegacy,legacySecondMs:legacySecond});
