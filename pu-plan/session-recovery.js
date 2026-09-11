@@ -4,8 +4,9 @@ const STANDBY_KEY='puplan_session_standby_v1';
 const RECOVERY_STATE_KEY='nolu_session_recovery_v1';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SESSION_SECONDS=45*24*60*60;
+const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
 
-function parse(raw){
+function parse(raw,{allowRecentlyExpired=false}={}){
   try{
     const [payload,signature,...extra]=String(raw||'').split('.');
     if(!payload||!signature||extra.length)return null;
@@ -14,48 +15,77 @@ function parse(raw){
     const now=Math.floor(Date.now()/1000);
     if(data?.v!==4||!UUID.test(String(data?.uid||'')))return null;
     if(!Number.isFinite(data?.iat)||!Number.isFinite(data?.exp)||data.exp<=data.iat)return null;
-    if(data.iat>now+300||data.exp<=now||data.exp-data.iat>MAX_SESSION_SECONDS)return null;
+    if(data.iat>now+300||data.exp-data.iat>MAX_SESSION_SECONDS)return null;
+    if(data.exp<=now&&(!allowRecentlyExpired||now-data.exp>LOCAL_EXPIRED_GRACE_SECONDS))return null;
     if(!data.cv||String(data.cv).length>160)return null;
-    return {raw:String(raw),uid:String(data.uid),iat:data.iat,exp:data.exp,cv:String(data.cv)};
+    return {raw:String(raw),uid:String(data.uid),iat:data.iat,exp:data.exp,cv:String(data.cv),expired:data.exp<=now};
   }catch{return null}
 }
 
+function writeState(result){
+  sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({...result,at:Date.now()}));
+  return result;
+}
+
 function recover(){
-  const canonical=parse(localStorage.getItem(CANONICAL_KEY)||'');
-  if(canonical){
-    sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({status:'canonical-ok',uid:canonical.uid,at:Date.now()}));
-    return {status:'canonical-ok',uid:canonical.uid,recovered:false};
-  }
+  const canonicalRaw=localStorage.getItem(CANONICAL_KEY)||'';
+  const canonical=parse(canonicalRaw);
+  if(canonical)return writeState({status:'canonical-ok',uid:canonical.uid,recovered:false});
 
   // Guest mode is an explicit privacy choice. Never silently turn it back into
-  // an authenticated session merely because old regional credentials still exist.
-  if(localStorage.getItem('puplan_guest')==='1'){
-    sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({status:'guest',at:Date.now()}));
-    return {status:'guest',uid:'',recovered:false};
+  // an authenticated/local-rescue session merely because old credentials exist.
+  if(localStorage.getItem('puplan_guest')==='1')return writeState({status:'guest',uid:'',recovered:false});
+
+  const primaryRaw=localStorage.getItem(PRIMARY_KEY)||'';
+  const standbyRaw=localStorage.getItem(STANDBY_KEY)||'';
+  const primary=parse(primaryRaw);
+  const standby=parse(standbyRaw);
+  if(primary&&standby&&primary.uid!==standby.uid)return writeState({status:'conflict',uid:'',recovered:false});
+
+  // A current regional session is the strongest device-local anchor. Prefer the
+  // primary credential because the historical IndexedDB fingerprint was normally
+  // created from Mumbai; Tokyo is accepted only when it belongs to the same user.
+  const currentCandidate=primary||standby;
+  if(currentCandidate){
+    const staleCanonical=parse(canonicalRaw,{allowRecentlyExpired:true});
+    if(staleCanonical&&staleCanonical.uid!==currentCandidate.uid)return writeState({status:'conflict',uid:'',recovered:false});
+    localStorage.setItem(CANONICAL_KEY,currentCandidate.raw);
+    const source=primary?'primary':'standby';
+    document.documentElement.dataset.noluSessionRecovered=source;
+    return writeState({status:'recovered',source,uid:currentCandidate.uid,recovered:true});
   }
 
-  const primary=parse(localStorage.getItem(PRIMARY_KEY)||'');
-  const standby=parse(localStorage.getItem(STANDBY_KEY)||'');
-  if(primary&&standby&&primary.uid!==standby.uid){
-    sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({status:'conflict',at:Date.now()}));
-    return {status:'conflict',uid:'',recovered:false};
+  // A previous auth/cache cleanup can remove only the canonical key while a
+  // recently-expired regional Session v4 and the exact IndexedDB snapshot remain.
+  // Restoring that token here DOES NOT make it cloud-valid. It is only a local
+  // fingerprint anchor; offline-session-rescue still requires an exact, recent
+  // IndexedDB snapshot before any account data can be shown.
+  const staleCanonical=parse(canonicalRaw,{allowRecentlyExpired:true});
+  const stalePrimary=parse(primaryRaw,{allowRecentlyExpired:true});
+  const staleStandby=parse(standbyRaw,{allowRecentlyExpired:true});
+  const stale=[staleCanonical,stalePrimary,staleStandby].filter(Boolean);
+  const identities=new Set(stale.map(x=>x.uid));
+  if(identities.size>1)return writeState({status:'conflict',uid:'',recovered:false});
+
+  if(staleCanonical){
+    document.documentElement.dataset.noluSessionRecovered='canonical-local-grace';
+    return writeState({status:'local-grace',source:'canonical',uid:staleCanonical.uid,recovered:false,expired:true});
   }
 
-  // Prefer the primary credential because the durable IndexedDB snapshot was
-  // historically fingerprint-bound to the canonical Mumbai session. Falling
-  // back to Tokyo is allowed only when it is the sole valid regional session.
-  const candidate=primary||standby;
-  if(!candidate){
-    sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({status:'none',at:Date.now()}));
-    return {status:'none',uid:'',recovered:false};
+  const staleCandidate=stalePrimary||staleStandby;
+  if(staleCandidate){
+    localStorage.setItem(CANONICAL_KEY,staleCandidate.raw);
+    const source=stalePrimary?'primary-local-grace':'standby-local-grace';
+    document.documentElement.dataset.noluSessionRecovered=source;
+    return writeState({status:'local-grace',source,uid:staleCandidate.uid,recovered:true,expired:true});
   }
 
-  localStorage.setItem(CANONICAL_KEY,candidate.raw);
-  const source=primary?'primary':'standby';
-  sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({status:'recovered',source,uid:candidate.uid,at:Date.now()}));
-  document.documentElement.dataset.noluSessionRecovered=source;
-  return {status:'recovered',source,uid:candidate.uid,recovered:true};
+  return writeState({status:'none',uid:'',recovered:false});
 }
 
 const result=recover();
-window.NOLU_SESSION_RECOVERY={result,recover,parse,version:'20260911-device-rescue1'};
+window.NOLU_SESSION_RECOVERY={
+  result,recover,parse,
+  version:'20260911-device-rescue2',
+  localExpiredGraceSeconds:LOCAL_EXPIRED_GRACE_SECONDS
+};
