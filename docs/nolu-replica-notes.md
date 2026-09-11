@@ -1,4 +1,4 @@
-# Replica v2 client invariants
+# Replica client invariants
 
 - Mumbai and Tokyo use independent Supabase service-role signing keys for Nolu session v4.
 - `puplan_session_primary_v1` and `puplan_session_standby_v1` are never interchangeable.
