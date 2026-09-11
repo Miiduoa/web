@@ -1,0 +1,1 @@
+Deno.serve(() => new Response(JSON.stringify({ error: 'RETIRED', message: 'Use pu-plan-replica-relay-v2.' }), { status: 410, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } }));

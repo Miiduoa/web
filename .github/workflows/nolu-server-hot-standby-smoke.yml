@@ -1,0 +1,87 @@
+name: nolu server hot standby smoke
+
+on:
+  push:
+    paths:
+      - 'supabase/migrations/*_nolu_hot_standby_primary_*.sql'
+      - 'supabase/standby/**'
+      - 'supabase/functions/pu-plan-replica-*/**'
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-server-hot-standby-smoke.yml'
+  pull_request:
+    paths:
+      - 'supabase/migrations/*_nolu_hot_standby_primary_*.sql'
+      - 'supabase/standby/**'
+      - 'supabase/functions/pu-plan-replica-*/**'
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-server-hot-standby-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate replication invariants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def text(path):
+              p = Path(path)
+              assert p.exists(), f'missing {path}'
+              return p.read_text()
+
+          tables = text('supabase/migrations/20260911154001_nolu_hot_standby_primary_tables.sql')
+          transport = text('supabase/migrations/20260911154002_nolu_hot_standby_primary_transport.sql')
+          runtime = text('supabase/migrations/20260911154003_nolu_hot_standby_primary_runtime.sql')
+          cleanup = text('supabase/migrations/20260911154004_nolu_hot_standby_primary_cleanup.sql')
+          standby_tables = text('supabase/standby/20260911_nolu_hot_standby_tables.sql')
+          standby_apply = text('supabase/standby/20260911_nolu_hot_standby_apply.sql')
+          relay = text('supabase/functions/pu-plan-replica-relay-v2/index.ts')
+          ingest = text('supabase/functions/pu-plan-replica-ingest-v3/index.ts')
+          worker = text('supabase/functions/pu-plan-replica-worker-v1/index.ts')
+          client = text('pu-plan/cloud-replication.js')
+
+          assert 'gen_random_bytes(32)' in tables
+          assert 'ENABLE ROW LEVEL SECURITY' in tables
+          assert 'FROM PUBLIC,anon,authenticated' in tables
+          assert 'puplan_build_replication_payload' in transport
+          assert 'pu-plan-replica-relay-v2' in transport
+          assert 'hmac(' in transport
+          assert 'puplan_replication_outbox' in runtime
+          assert 'puplan_sweep_replication' in runtime
+          assert "cron.schedule('nolu-replication-outbox'" in runtime
+          assert 'AFTER INSERT OR UPDATE OR DELETE' in runtime
+          assert 'DROP TABLE IF EXISTS public.puplan_replication_shared_secret' in cleanup
+
+          assert 'puplan_replica_server_nonces' in standby_tables
+          assert 'ENABLE ROW LEVEL SECURITY' in standby_tables
+          assert 'puplan_apply_server_replica' in standby_apply
+          assert 'FOR UPDATE' in standby_apply
+          assert 'last_revision' in standby_apply
+          assert 'FROM PUBLIC,anon,authenticated' in standby_apply
+
+          for source in (relay, ingest, worker):
+              assert 'BROWSER_ORIGIN_NOT_ALLOWED' in source
+          assert 'ed25519' in relay and 'pu-plan-replica-ingest-v3' in relay
+          assert 'puplan_replication_worker_secret' in relay
+          assert 'ed25519' in ingest and 'puplan_apply_server_replica' in ingest
+          assert 'REPLICA_REPLAY' in ingest
+          assert 'puplan_sweep_replication' in worker
+          assert 'STANDBY_INGEST' not in worker
+
+          assert 'pu-plan-replica-v3' in client
+          assert 'pu-plan-replica-v2' not in client
+
+          for retired in (
+              'supabase/functions/pu-plan-replica-ingest-v1/index.ts',
+              'supabase/functions/pu-plan-replica-ingest-v2/index.ts',
+              'supabase/functions/pu-plan-replica-relay-v1/index.ts',
+          ):
+              body = text(retired)
+              assert '410' in body and 'RETIRED' in body
+
+          print('server hot standby invariants: ok')
