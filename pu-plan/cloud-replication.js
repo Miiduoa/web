@@ -30,16 +30,20 @@ function activeTier(){
   return window.NOLU_RESILIENCE?.preferredCloud?.()==='standby'?'standby':'primary';
 }
 function sessionKey(tier){return tier==='standby'?STANDBY_SESSION_KEY:PRIMARY_SESSION_KEY}
+function sameAccount(raw,id=uid()){return !!id&&String(decodeV4(raw)?.uid||'')===id}
 function sessionFor(tier){
   const id=uid(),specific=localStorage.getItem(sessionKey(tier))||'';
-  if(id&&String(decodeV4(specific)?.uid||'')===id)return specific;
+  if(sameAccount(specific,id))return specific;
   const current=canonicalToken();
-  return id&&String(decodeV4(current)?.uid||'')===id?current:'';
+  // Historical installations only had puplan_session, which was the Mumbai token.
+  // It may be used as a one-time fallback while the primary-specific slot is
+  // bootstrapped, but it must never overwrite the Tokyo-local peer token.
+  return tier==='primary'&&sameAccount(current,id)?current:'';
 }
-function rememberCurrentTierSession(){
+function seedPrimarySessionFromCanonical(){
   const current=canonicalToken(),data=decodeV4(current);if(!data)return false;
-  const tier=activeTier();
-  localStorage.setItem(sessionKey(tier),current);
+  const existing=localStorage.getItem(PRIMARY_SESSION_KEY)||'';
+  if(!sameAccount(existing,String(data.uid)))localStorage.setItem(PRIMARY_SESSION_KEY,current);
   return true;
 }
 function storePeerToken(sourceTier,raw){
@@ -57,7 +61,7 @@ function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=s
 async function sync(reason='periodic',force=false){
   if(state.busy||!canSync())return false;
   const at=Date.now();if(!force&&at-state.lastAttemptAt<4000)return false;
-  rememberCurrentTierSession();
+  seedPrimarySessionFromCanonical();
   const id=uid(),tier=activeTier(),endpoint=tier==='standby'?STANDBY_SYNC:PRIMARY_SYNC,session=sessionFor(tier);if(!id||!session)return false;
   state.busy=true;state.lastAttemptAt=at;state.lastReason=reason;state.lastTier=tier;state.peerSessionReady=false;
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),8000);
@@ -82,7 +86,7 @@ async function sync(reason='periodic',force=false){
 
 document.addEventListener('puplan:courses-changed',()=>{markStandbyDirty();schedule('schedule-change',1400)});
 document.addEventListener('puplan:profile-changed',()=>{markStandbyDirty();schedule('profile-change',900)});
-document.addEventListener('nolu:session-rotated',()=>{rememberCurrentTierSession();schedule('session-rotated',250)});
+document.addEventListener('nolu:session-rotated',()=>schedule('session-rotated',250));
 document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')schedule('connectivity-online',450)});
 document.addEventListener('nolu:peer-session-needed',()=>schedule('peer-session-needed',50));
 addEventListener('online',()=>schedule('browser-online',400));
@@ -90,9 +94,9 @@ addEventListener('focus',()=>schedule('focus',650));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')schedule('visible',650)});
 setInterval(()=>void sync('periodic'),30000);
 
-rememberCurrentTierSession();
+seedPrimarySessionFromCanonical();
 if(window.PUPLAN_CLOUD?.isSignedIn?.()||uid())schedule('startup',400);
 window.NOLU_REPLICATION={
   state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty,
-  sessionFor,rememberCurrentTierSession,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
+  sessionFor,seedPrimarySessionFromCanonical,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
 };
