@@ -1,0 +1,45 @@
+name: nolu social trigger contract
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260911181500_ensure_social_replication_triggers.sql'
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-social-trigger-contract.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260911181500_ensure_social_replication_triggers.sql'
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-social-trigger-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  topology:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify every social table has one explicit replication trigger
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('supabase/migrations/20260911181500_ensure_social_replication_triggers.sql').read_text()
+          tables=[
+            'puplan_app_friendships','puplan_app_meetups','puplan_app_posts',
+            'puplan_app_post_likes','puplan_app_post_media','puplan_app_conversations',
+            'puplan_app_conversation_members','puplan_app_messages',
+            'puplan_app_feed_preferences','puplan_app_author_affinity'
+          ]
+          for table in tables:
+            assert f'ON public.{table}' in s, f'missing replication trigger for {table}'
+          assert s.count('EXECUTE FUNCTION public.puplan_enqueue_social_replication();') == len(tables)
+          assert 'REVOKE ALL ON FUNCTION public.puplan_enqueue_social_replication() FROM PUBLIC, anon, authenticated;' in s
+          assert 'REVOKE ALL ON FUNCTION public.puplan_queue_replication_for_user(uuid) FROM PUBLIC, anon, authenticated;' in s
+          print('SOCIAL_TRIGGER_TOPOLOGY_OK')
+          PY
