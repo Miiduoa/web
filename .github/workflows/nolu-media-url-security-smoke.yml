@@ -1,0 +1,71 @@
+name: nolu media URL security smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/core/state.js'
+      - 'pu-plan/discover.js'
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-media-url-security-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/core/state.js'
+      - 'pu-plan/discover.js'
+      - 'pu-plan/community.js'
+      - '.github/workflows/nolu-media-url-security-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  media-url-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify discovery renders only sanitized server media
+        run: |
+          set -euo pipefail
+          node --check pu-plan/discover.js
+          grep -q "import {cleanAvatar,cleanMediaUrl}" pu-plan/discover.js
+          grep -q "url:cleanMediaUrl(m?.url)" pu-plan/discover.js
+          grep -q "filter(m=>m.url)" pu-plan/discover.js
+          if grep -Fq 'src="${esc(m.url)}"' pu-plan/discover.js && ! grep -q 'cleanMediaUrl' pu-plan/discover.js; then
+            echo '::error::Discovery media renderer lost its URL sanitizer'
+            exit 1
+          fi
+
+      - name: Exercise signed-media allowlist
+        run: |
+          set -euo pipefail
+          cp pu-plan/core/state.js /tmp/nolu-state.mjs
+          node --input-type=module <<'NODE'
+          import {cleanMediaUrl} from 'file:///tmp/nolu-state.mjs';
+          const ok = [
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/sign/puplan-media/user/a.png?token=abc',
+            'https://ltfurqaspqsvswmebyzw.supabase.co/storage/v1/object/sign/puplan-media/user/video.mp4?token=xyz&download=1',
+          ];
+          const bad = [
+            'javascript:alert(1)',
+            'data:text/html,<svg onload=alert(1)>',
+            'data:image/svg+xml,<svg onload=alert(1)>',
+            'https://evil.example/avatar.png?token=abc',
+            'http://hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/sign/puplan-media/a.png?token=abc',
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/public/puplan-media/a.png?token=abc',
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/sign/other-bucket/a.png?token=abc',
+            'https://hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/sign/puplan-media/a.png',
+            'https://user:pass@hrrmkrayvrgnwcroyttp.supabase.co/storage/v1/object/sign/puplan-media/a.png?token=abc',
+            'https://hrrmkrayvrgnwcroyttp.supabase.co:444/storage/v1/object/sign/puplan-media/a.png?token=abc',
+          ];
+          for (const value of ok) {
+            if (!cleanMediaUrl(value)) throw new Error(`expected allowed signed media URL: ${value}`);
+          }
+          for (const value of bad) {
+            if (cleanMediaUrl(value)) throw new Error(`unsafe media URL accepted: ${value}`);
+          }
+          console.log('signed social media URL allowlist passed');
+          NODE
