@@ -1,0 +1,44 @@
+name: nolu apply session split patch once
+
+on:
+  push:
+    branches: [fix/nolu-provider-mesh-security-final3-20260911]
+    paths:
+      - '.github/scripts/patch-session-split-replica-v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/nolu-provider-mesh-security-final3-20260911
+          fetch-depth: 0
+      - name: Apply product patch
+        run: python3 .github/scripts/patch-session-split-replica-v2.py
+      - name: Validate JavaScript syntax and token separation
+        run: |
+          set -euo pipefail
+          for f in pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud-replication.js pu-plan/provider-mesh.js pu-plan/provider-status.js pu-plan/auth.js pu-plan/cloud.js pu-plan/main.js pu-plan/guest-privacy.js pu-plan/sw.js; do node --check "$f"; done
+          ! grep -q 'puplan_portable_session_v1' pu-plan/transport-bridge.js
+          ! grep -q 'puplan_portable_session_v1' pu-plan/resilience.js
+          ! grep -q 'puplan_portable_session_v1' pu-plan/cloud-replication.js
+          grep -q 'puplan_standby_session_v2' pu-plan/transport-bridge.js
+          grep -q 'puplan_standby_session_v2' pu-plan/resilience.js
+          grep -q 'puplan_standby_session_v2' pu-plan/cloud-replication.js
+          grep -q 'pu-plan-replica-v2' pu-plan/cloud-replication.js
+          grep -q 'pu-plan-api-v8' pu-plan/transport-bridge.js
+          grep -q 'pu-plan-api-v8' pu-plan/resilience.js
+      - name: Commit product patch
+        run: |
+          set -euo pipefail
+          git config user.name 'Miiduoa'
+          git config user.email '107848266+Miiduoa@users.noreply.github.com'
+          git add pu-plan/transport-bridge.js pu-plan/resilience.js pu-plan/cloud-replication.js pu-plan/provider-config.js pu-plan/provider-mesh.js pu-plan/provider-status.js pu-plan/auth.js pu-plan/cloud.js pu-plan/main.js pu-plan/guest-privacy.js pu-plan/sw.js
+          git commit -m 'fix(nolu): separate cloud sessions and wire replica v2'
+          git push origin HEAD:fix/nolu-provider-mesh-security-final3-20260911
