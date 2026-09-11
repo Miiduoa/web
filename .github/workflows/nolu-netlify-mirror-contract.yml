@@ -26,13 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install runtime dependency
-        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install runtime and type-check dependencies
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund typescript @types/node
 
       - name: Type-check Netlify mirror
         run: >-
-          npm exec --yes --package=typescript --package=@types/node --
-          tsc netlify/functions/nolu-mirror.mts --noEmit
+          ./node_modules/.bin/tsc netlify/functions/nolu-mirror.mts --noEmit
           --target ES2022 --module NodeNext --moduleResolution NodeNext
           --lib ES2022,DOM --types node --skipLibCheck
 
