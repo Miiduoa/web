@@ -49,6 +49,17 @@ function json(origin: string, status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: responseHeaders(origin) });
 }
 
+function clientAddress(req: Request) {
+  const cloudflare = String(req.headers.get('cf-connecting-ip') || '').trim();
+  if (cloudflare && cloudflare.length <= 64) return cloudflare;
+  const forwarded = String(req.headers.get('x-forwarded-for') || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const candidate = forwarded.at(-1) || String(req.headers.get('x-real-ip') || '').trim();
+  return candidate && candidate.length <= 64 ? candidate : '';
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get('origin') || '';
   if (!allowedOrigin(origin)) return json(origin, 403, { error: 'ORIGIN_NOT_ALLOWED' });
@@ -69,10 +80,16 @@ Deno.serve(async (req: Request) => {
   const authorization = req.headers.get('authorization');
   const contentType = req.headers.get('content-type');
   const meshVersion = req.headers.get('x-nolu-mesh-version');
+  const address = clientAddress(req);
   if (authorization) headers.set('Authorization', authorization);
   if (contentType) headers.set('Content-Type', contentType);
   if (meshVersion) headers.set('X-Nolu-Mesh-Version', meshVersion);
-  headers.set('X-Nolu-Browser-Gateway', 'v1');
+  // Preserve the browser client's platform-observed address so downstream login
+  // throttling remains per client rather than collapsing every gateway request
+  // onto one Edge Function egress address. We intentionally overwrite, rather
+  // than pass through, any browser-supplied forwarding header.
+  if (address) headers.set('X-Forwarded-For', address);
+  headers.set('X-Nolu-Browser-Gateway', 'v2');
 
   let body: Uint8Array | undefined;
   if (req.method === 'POST') {
