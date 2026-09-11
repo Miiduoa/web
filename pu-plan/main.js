@@ -1,3 +1,4 @@
+import './origin-gateway.js';
 import './login-transport-patience.js';
 import './avatar-guard.js';
 import {authView} from './views/auth.js';
