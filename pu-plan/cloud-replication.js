@@ -26,7 +26,17 @@ function activeTier(){
   return window.NOLU_RESILIENCE?.preferredCloud?.()==='standby'?'standby':'primary';
 }
 function authToken(tier){return tier==='standby'?portableToken()||token():token()||portableToken()}
-function canSync(){return !!uid()&&localStorage.getItem('puplan_guest')!=='1'&&window.NOLU_RESILIENCE?.getMode?.()!=='offline'}
+function canSync(){
+  const id=uid();if(!id||localStorage.getItem('puplan_guest')==='1')return false;
+  const mode=window.NOLU_RESILIENCE?.getMode?.();
+  if(mode!=='offline')return true;
+  // The replica sync endpoint is an independent recovery path. When Tokyo was the
+  // last healthy cloud and we still hold its portable session, keep probing this
+  // path even if the core API circuit is temporarily offline. This allows Tokyo
+  // to reconcile back to Mumbai and safely unlock failback without waiting for a
+  // full browser reload or for the core circuit cooldown to expire.
+  return activeTier()==='standby'&&!!portableToken();
+}
 function markStandbyDirty(){const id=uid();if(id&&activeTier()==='standby')localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1')}
 function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
 
