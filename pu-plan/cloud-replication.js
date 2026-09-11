@@ -143,3 +143,20 @@ window.NOLU_REPLICATION={
   state,sync:(reason='manual',force=true)=>sync(reason,force),reconcileStandby,activeTier,markStandbyDirty,hasStandbyDirty,
   sessionFor,seedPrimarySessionFromCanonical,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY
 };
+
+// Observe successful writes that were actually served by Tokyo. This catches
+// community/chat and future API mutations without treating standby reads as dirty.
+const READ_ONLY_ACTIONS=new Set(['login','bootstrap','me','feed','inbox','conversation','profile_view','privacy_get','lookup','search','friend_search','social','health','status']);
+const observedFetch=window.fetch.bind(window);
+window.fetch=async function(input,init={}){
+  const response=await observedFetch(input,init);
+  try{
+    const raw=typeof input==='string'?input:input?.url||String(input||'');
+    const url=new URL(raw,location.href),method=String(init?.method||'GET').toUpperCase();
+    if(response.ok&&method==='POST'&&url.hostname===`${STANDBY_REF}.supabase.co`&&!/pu-plan-(?:failback|replica|portable)/.test(url.pathname)){
+      let action='';try{action=String(JSON.parse(String(init?.body||'{}'))?.action||'')}catch{}
+      if(action&&!READ_ONLY_ACTIONS.has(action))document.dispatchEvent(new CustomEvent('nolu:standby-write',{detail:{source:`${url.pathname.split('/').pop()}:${action}`,at:Date.now()}}));
+    }
+  }catch{}
+  return response;
+};
