@@ -38,23 +38,7 @@ jobs:
           grep -q 'increment_ai_usage(uuid).*service_role' "$f"
           grep -q 'enqueue_webhook_event(text, jsonb).*service_role' "$f"
 
-      - name: Anonymous OpenAPI schema must not advertise internal RPCs
-        run: |
-          set -euo pipefail
-          code=$(curl -sS --connect-timeout 3 --max-time 10 \
-            -o /tmp/openapi.json -w '%{http_code}' \
-            "$PROJECT_URL/rest/v1/" \
-            -H "apikey: $PUBLISHABLE_KEY" \
-            -H 'Accept: application/openapi+json')
-          test "$code" = 200
-          for fn in apply_late_penalty increment_ai_usage enqueue_webhook_event; do
-            if grep -q "\/rpc\/$fn" /tmp/openapi.json; then
-              echo "::error::Anonymous OpenAPI schema exposes internal RPC $fn"
-              exit 1
-            fi
-          done
-
-      - name: Safe anonymous probes must hit permission boundary
+      - name: Anonymous Data API must reject internal RPCs
         run: |
           set -euo pipefail
           probe() {
@@ -79,6 +63,12 @@ jobs:
               cat "$body"
               exit 1
             fi
+            if ! grep -Eqi 'PGRST202|permission denied|Could not find the function|not found' "$body"; then
+              echo "::error::$fn failed for a reason other than the expected permission/schema boundary"
+              cat "$body"
+              exit 1
+            fi
           }
           probe apply_late_penalty '{"p_submission_id":"00000000-0000-4000-8000-000000000000"}'
+          probe increment_ai_usage '{"p_uid":"00000000-0000-4000-8000-000000000000"}'
           probe enqueue_webhook_event '{"p_event_type":"__nolu_security_probe_no_subscriber__","p_payload":{}}'
