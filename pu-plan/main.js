@@ -22,6 +22,11 @@ const scheduleUI=await import('./features/schedule.js');
 // saved classic timetable back to the old human presentation while it loads.
 localStorage.setItem('puplan_presentation',localStorage.getItem('puplan_schedule_presentation')||'human');
 
+// A cloud-auth timeout can clear only the canonical session while the separately
+// stored regional credential and exact IndexedDB snapshot remain valid. Recover
+// that canonical anchor before any durable/cloud bootstrap code reads it.
+await import('./session-recovery.js');
+
 // Restore the signed-in account's durable IndexedDB snapshot/outbox first. This
 // gives iPhone/PWA launches a second local copy before any cloud bootstrap runs.
 await import('./durable-bridge.js');
@@ -46,9 +51,8 @@ await import('./offline-session-rescue.js');
 // before semesters/auth/social/import modules can read or write account state.
 await import('./cloud.js');
 
-// Reconcile core account/profile/schedule/semester state across the two independent
-// Supabase projects. It never blocks the local UI and only fails back to primary
-// after a standby -> primary replication has succeeded.
+// Reconcile core account/profile/schedule/semester state to the independent Tokyo
+// project through the audited primary -> standby replica-v3 enrollment path.
 await import('./cloud-replication.js');
 
 // Fan the same session-bound durable snapshot to independent provider failure

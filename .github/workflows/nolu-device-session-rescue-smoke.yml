@@ -1,0 +1,181 @@
+name: nolu device session rescue smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-device-session-rescue-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/durable-bridge.js'
+      - 'pu-plan/offline-session-rescue.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-device-session-rescue-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  device-rescue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax and recovery invariants
+        run: |
+          set -euo pipefail
+          node --check pu-plan/session-recovery.js
+          node --check pu-plan/durable-bridge.js
+          node --check pu-plan/offline-session-rescue.js
+          node --check pu-plan/main.js
+          node --check pu-plan/sw.js
+          node --check pu-plan/pwa.js
+          grep -q "await import('./session-recovery.js')" pu-plan/main.js
+          grep -q "'./session-recovery.js'" pu-plan/sw.js
+          grep -q "owner&&owner!==id" pu-plan/durable-bridge.js
+          grep -q "sessionFingerprint===fp" pu-plan/offline-session-rescue.js
+
+      - name: Install Playwright
+        run: |
+          npm --prefix /tmp/nolu-rescue init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-rescue install playwright >/dev/null 2>&1
+          cd /tmp/nolu-rescue && npx playwright install --with-deps chromium >/dev/null
+
+      - name: Verify regional-session and IndexedDB rescue
+        env:
+          NODE_PATH: /tmp/nolu-rescue/node_modules
+        run: |
+          cat >pu-plan/__session_rescue_test.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>nolu rescue test</title><body></body>
+          HTML
+          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-rescue-http.log 2>&1 &
+          cat >/tmp/nolu-rescue/test.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          const b64=s=>Buffer.from(s).toString('base64url');
+          const now=Math.floor(Date.now()/1000);
+          const token=(uid,nonce)=>`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
+          const uid='55555555-5555-4555-8555-555555555555';
+          const other='66666666-6666-4666-8666-666666666666';
+          const primary=token(uid,'primary'),standby=token(uid,'standby');
+          const otherStandby=token(other,'standby');
+          const url='http://127.0.0.1:4173/__session_rescue_test.html';
+
+          async function fingerprint(page,raw){
+            return page.evaluate(async raw=>{
+              const bytes=new TextEncoder().encode(raw),digest=await crypto.subtle.digest('SHA-256',bytes);
+              return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+            },raw);
+          }
+          async function putSnapshot(page,snapshot){
+            return page.evaluate(snapshot=>new Promise((resolve,reject)=>{
+              const req=indexedDB.open('nolu-resilience-v2',1);
+              req.onupgradeneeded=()=>{
+                const db=req.result;
+                if(!db.objectStoreNames.contains('snapshots'))db.createObjectStore('snapshots',{keyPath:'uid'});
+                if(!db.objectStoreNames.contains('outbox')){
+                  const store=db.createObjectStore('outbox',{keyPath:'id'});
+                  store.createIndex('by_uid','uid',{unique:false});
+                  store.createIndex('by_uid_changed',['uid','changedAt'],{unique:false});
+                }
+              };
+              req.onerror=()=>reject(req.error);
+              req.onsuccess=()=>{
+                const db=req.result,tx=db.transaction('snapshots','readwrite');
+                tx.objectStore('snapshots').put(snapshot);
+                tx.oncomplete=()=>{db.close();resolve(true)};
+                tx.onerror=()=>reject(tx.error);
+              };
+            }),snapshot);
+          }
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(primary=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary)},primary);
+                await page.evaluate(()=>import('./session-recovery.js?case=primary'));
+                const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),result:NOLU_SESSION_RECOVERY.result}));
+                assert(state.canonical===primary,'primary regional session was not restored as canonical');
+                assert(state.result.recovered===true&&state.result.source==='primary','primary recovery state is wrong');
+                await context.close();
+              }
+
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_guest','1');localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
+                await page.evaluate(()=>import('./session-recovery.js?case=guest'));
+                const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),result:NOLU_SESSION_RECOVERY.result}));
+                assert(!state.canonical,'explicit guest mode was silently authenticated');
+                assert(state.result.status==='guest','guest recovery state is wrong');
+                await context.close();
+              }
+
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(({primary,otherStandby})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary);localStorage.setItem('puplan_session_standby_v1',otherStandby)},{primary,otherStandby});
+                await page.evaluate(()=>import('./session-recovery.js?case=conflict'));
+                const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),result:NOLU_SESSION_RECOVERY.result}));
+                assert(!state.canonical,'cross-account regional credential conflict was accepted');
+                assert(state.result.status==='conflict','credential conflict did not fail closed');
+                await context.close();
+              }
+
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
+                const fp=await fingerprint(page,primary);
+                await putSnapshot(page,{uid,profile:{id:uid,display_name:'Recovered User',username:'recovered',avatar_data:'',bio:'saved',discoverable:true},courses:[{id:'c1',name:'Recovered Course',day:1,start:1,end:1}],meta:{source:'durable'},savedAt:Date.now(),revision:Date.now(),sessionFingerprint:fp});
+                await page.evaluate(()=>import('./session-recovery.js?case=durable'));
+                await page.evaluate(()=>import('./durable-bridge.js?case=durable'));
+                const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:JSON.parse(localStorage.getItem('puplan_courses')||'[]'),bound:NOLU_DURABLE.state.bound}));
+                assert(state.canonical===primary,'canonical session was not restored before durable bridge');
+                assert(state.owner===uid,'owner binding was not restored from exact durable snapshot');
+                assert(state.name==='Recovered User','durable profile was not hydrated');
+                assert(state.courses[0]?.name==='Recovered Course','durable schedule was not hydrated');
+                assert(state.bound===true,'durable session did not bind');
+                await context.close();
+              }
+
+              {
+                const context=await browser.newContext(),page=await context.newPage();
+                await page.goto(url);
+                await page.evaluate(({primary})=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('puplan_session_primary_v1',primary)},{primary});
+                await putSnapshot(page,{uid,profile:{id:uid,display_name:'Must Stay',username:'must_stay'},courses:[{id:'safe',name:'Must Stay'}],savedAt:Date.now(),revision:Date.now(),sessionFingerprint:'wrong-fingerprint'});
+                await page.evaluate(()=>import('./session-recovery.js?case=mismatch'));
+                await page.evaluate(()=>import('./durable-bridge.js?case=mismatch'));
+                const state=await page.evaluate(async uid=>{
+                  const snap=await NOLU_DURABLE.getSnapshot(uid);
+                  return {owner:localStorage.getItem('puplan_course_owner'),bound:NOLU_DURABLE.state.bound,snapshot:snap};
+                },uid);
+                assert(!state.owner,'mismatched durable fingerprint restored an owner');
+                assert(state.bound===false,'mismatched durable fingerprint bound the session');
+                assert(state.snapshot?.profile?.display_name==='Must Stay','mismatched snapshot was overwritten');
+                await context.close();
+              }
+
+              console.log('NOLU_DEVICE_SESSION_RESCUE_OK');
+            }finally{await browser.close()}
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          timeout 120s node /tmp/nolu-rescue/test.cjs
+          rm -f pu-plan/__session_rescue_test.html

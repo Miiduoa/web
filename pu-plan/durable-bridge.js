@@ -17,7 +17,8 @@ function tokenUid(){
     return String(data.uid);
   }catch{return''}
 }
-function uid(){const id=tokenUid(),owner=localStorage.getItem('puplan_course_owner')||'';return id&&owner===id?id:''}
+function ownerId(){return localStorage.getItem('puplan_course_owner')||''}
+function uid(){const id=tokenUid(),owner=ownerId();return id&&owner===id?id:''}
 async function fingerprint(raw=rawToken()){
   if(!raw||!crypto?.subtle)return'';
   try{
@@ -34,8 +35,10 @@ function profile(id){
 function courses(){const v=safeJson(localStorage.getItem('puplan_courses'),[]);return Array.isArray(v)?v.slice(0,80):[]}
 function meta(){const v=safeJson(localStorage.getItem('puplan_schedule_meta'),{});return v&&typeof v==='object'?v:{}}
 function localSnapshot(id,sessionFingerprint=state.sessionFingerprint){const p=profile(id);if(!p)return null;return {uid:id,profile:p,courses:courses(),meta:meta(),savedAt:Date.now(),revision:Date.now(),sessionFingerprint}}
-function hydrate(snap,sessionFingerprint=state.sessionFingerprint){
-  const id=uid();if(!id||snap?.uid!==id||!sessionFingerprint||snap?.sessionFingerprint!==sessionFingerprint)return false;const p=snap.profile||{};
+function hydrate(snap,sessionFingerprint=state.sessionFingerprint,candidateId=tokenUid()){
+  const id=String(candidateId||''),owner=ownerId();
+  if(!id||(owner&&owner!==id)||snap?.uid!==id||snap?.profile?.id!==id||!sessionFingerprint||snap?.sessionFingerprint!==sessionFingerprint)return false;
+  const p=snap.profile||{};
   localStorage.setItem('puplan_course_owner',id);
   if(p.display_name)localStorage.setItem('puplan_name',clean(p.display_name,80));
   if(p.username!==undefined)localStorage.setItem('puplan_username',clean(p.username,24));
@@ -77,15 +80,24 @@ async function restorePending(id){
   if(changed)localStorage.setItem(pendingKey(id),JSON.stringify(q));return changed;
 }
 async function bindCurrentSession({allowHydrate=true}={}){
-  const id=uid(),sessionFingerprint=await fingerprint();
-  if(!id||!sessionFingerprint){state.bound=false;state.sessionFingerprint='';return false}
-  state.sessionFingerprint=sessionFingerprint;
+  const id=tokenUid(),owner=ownerId(),sessionFingerprint=await fingerprint();
+  if(!id||!sessionFingerprint||(owner&&owner!==id)){state.bound=false;state.sessionFingerprint='';return false}
   const durable=await getSnapshot(id);
-  const sameSession=durable?.sessionFingerprint===sessionFingerprint;
+  const sameSession=durable?.uid===id&&durable?.profile?.id===id&&durable?.sessionFingerprint===sessionFingerprint;
+
+  // A connectivity failure used to purge puplan_course_owner while leaving the
+  // regional session and its IndexedDB snapshot intact. When owner is absent,
+  // recover only from an exact session-fingerprint match; never synthesize or
+  // overwrite durable data from an ownerless cache.
+  if(!owner){
+    if(!sameSession||!hydrate(durable,sessionFingerprint,id)){state.bound=false;state.sessionFingerprint='';return false}
+  }
+
+  state.sessionFingerprint=sessionFingerprint;
   state.bound=true;
-  if(sameSession&&allowHydrate){
+  if(sameSession&&allowHydrate&&owner){
     const legacy=safeJson(localStorage.getItem(snapshotKey(id)),null);
-    if(Number(durable?.savedAt||0)>=Number(legacy?.savedAt||0))hydrate(durable,sessionFingerprint);
+    if(Number(durable?.savedAt||0)>=Number(legacy?.savedAt||0))hydrate(durable,sessionFingerprint,id);
   }else if(durable&&!durable.sessionFingerprint){
     // v2 snapshots were not session-bound. Never hydrate them into a newly
     // presented token. Instead replace them with the currently visible account
@@ -97,7 +109,7 @@ async function bindCurrentSession({allowHydrate=true}={}){
   return true;
 }
 async function prepare(){
-  const id=uid();if(!id){state.ready=true;return}
+  const id=tokenUid();if(!id){state.ready=true;return}
   state.persistent=await requestPersistentStorage();
   await bindCurrentSession({allowHydrate:true});
   state.ready=true;

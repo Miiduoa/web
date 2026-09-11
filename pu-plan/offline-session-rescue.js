@@ -29,14 +29,22 @@ async function fingerprint(raw){
 async function trustedSnapshot(){
   const raw=localStorage.getItem('puplan_session')||'';const session=parseSession(raw);if(!session)return null;
   if(session.exp*1000+MAX_EXPIRED_GRACE_MS<Date.now())return null;
-  if((localStorage.getItem('puplan_course_owner')||'')!==String(session.uid))return null;
+  const id=String(session.uid),owner=localStorage.getItem('puplan_course_owner')||'';
+  if(owner&&owner!==id)return null;
   const fp=await fingerprint(raw);if(!fp)return null;
-  let durable=null;try{durable=await window.NOLU_DURABLE?.getSnapshot?.(String(session.uid))}catch{}
-  const local=safeJson(localStorage.getItem(`nolu_account_snapshot_v1:${session.uid}`),null);
-  const candidates=[durable,local].filter(Boolean).sort((a,b)=>Number(b?.savedAt||0)-Number(a?.savedAt||0));
-  const snap=candidates.find(x=>x?.uid===String(session.uid)&&x?.profile?.id===String(session.uid)&&x?.sessionFingerprint===fp);
-  if(!snap||Date.now()-Number(snap.savedAt||0)>MAX_SNAPSHOT_AGE_MS)return null;
-  return {session,raw,snap};
+  let durable=null;try{durable=await window.NOLU_DURABLE?.getSnapshot?.(id)}catch{}
+  const local=safeJson(localStorage.getItem(`nolu_account_snapshot_v1:${id}`),null);
+  const exact=x=>x?.uid===id&&x?.profile?.id===id&&x?.sessionFingerprint===fp&&Date.now()-Number(x?.savedAt||0)<=MAX_SNAPSHOT_AGE_MS;
+  const candidates=[];
+  if(exact(durable))candidates.push({snap:durable,durable:true});
+  // The localStorage mirror is accepted only when the account owner binding still
+  // exists. If that binding was purged by an uncertain cloud-auth response, only
+  // the exact IndexedDB session fingerprint may restore the owner.
+  if(owner===id&&exact(local))candidates.push({snap:local,durable:false});
+  candidates.sort((a,b)=>Number(b.snap?.savedAt||0)-Number(a.snap?.savedAt||0));
+  const best=candidates[0];if(!best)return null;
+  if(!owner&&best.durable)localStorage.setItem('puplan_course_owner',id);
+  return {session,raw,snap:best.snap};
 }
 function queue(uid,action,body,snap){
   const key=`nolu_pending_mutations_v1:${uid}`,q=safeJson(localStorage.getItem(key),{})||{},changedAt=Date.now();
