@@ -1,0 +1,27 @@
+name: nolu idle conversation load patch once
+
+on:
+  push:
+    branches:
+      - perf/nolu-free-db-load-shed-20260911
+    paths:
+      - .github/workflows/nolu-db-load-shed-patch-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/nolu-free-db-load-shed-20260911
+      - run: python3 .github/scripts/patch-community-idle-refresh.py
+      - run: node --check pu-plan/community.js
+      - run: |
+          git config user.name Miiduoa
+          git config user.email 107848266+Miiduoa@users.noreply.github.com
+          git add pu-plan/community.js
+          git commit -m 'perf(nolu): avoid idle conversation refetches'
+          git push origin HEAD:perf/nolu-free-db-load-shed-20260911
