@@ -8,7 +8,7 @@ const esc=s=>app?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&
 const token=()=>localStorage.getItem('puplan_session')||'';
 const signedIn=()=>!!token()&&window.PUPLAN_CLOUD?.isSignedIn?.();
 const profile=()=>window.PUPLAN_CLOUD?.getProfile?.()||{id:'',display_name:'我',username:''};
-let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0;
+let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0,lastConversationRefreshAt=0;
 
 async function request(action,payload={},timeoutMs=10000){
   if(!signedIn())throw new Error('請先登入');
@@ -229,7 +229,12 @@ async function loadInbox(silent=false,notificationCheck=false,refreshConversatio
       const previous=inboxData.slice(),data=await request('inbox',{limit:30});
       inboxData=data.conversations||[];pollFailures=0;lastInboxAt=Date.now();updateBadges(totalUnread());
       if(notificationCheck)await maybeNotify(inboxData,previous);renderInbox();
-      if(refreshConversation&&currentConversation&&$('#chatPanel'))await openConversation(currentConversation,true);
+      if(refreshConversation&&currentConversation&&$('#chatPanel')){
+        const before=previous.find(x=>x.id===currentConversation),after=inboxData.find(x=>x.id===currentConversation);
+        const changed=(after?.last_message?.created_at||'')!==(before?.last_message?.created_at||'');
+        const unread=Number(after?.unread||0)>0;
+        if(changed||unread||Date.now()-lastConversationRefreshAt>120000)await openConversation(currentConversation,true);
+      }
     }catch(e){
       pollFailures=Math.min(5,pollFailures+1);
       if(!silent&&$('#inboxList'))$('#inboxList').innerHTML=`<div class="activity-empty">${esc(e.message)}</div>`;
@@ -244,7 +249,7 @@ function renderInbox(){
 }
 async function openConversation(id,silent=false){
   try{
-    currentConversation=id;const unreadBefore=Number(inboxData.find(x=>x.id===id)?.unread||0),data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;
+    currentConversation=id;const unreadBefore=Number(inboxData.find(x=>x.id===id)?.unread||0),data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;lastConversationRefreshAt=Date.now();
     const c=data.conversation,profiles=new Map((data.profiles||[]).map(p=>[p.id,p])),me=profile();
     panel.innerHTML=`<div class="chat-head"><button class="btn" id="chatBack" style="display:none">←</button><b>${esc(c.kind==='group'?(c.title||'群聊'):(data.profiles||[]).find(p=>p.id!==me.id)?.display_name||'私訊')}</b></div><div class="chat-messages" id="chatMessages">${(data.messages||[]).map(m=>{const mine=m.sender_id===me.id,p=profiles.get(m.sender_id);return`<div class="message-row ${mine?'mine':'theirs'}">${mine?'':`<span class="message-name">${esc(p?.display_name||'使用者')}</span>`}<div class="message-bubble">${esc(m.body)}</div><span class="message-time">${new Date(m.created_at).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}${m.edited_at?' · 已編輯':''}</span></div>`}).join('')}</div><div class="chat-compose"><input id="messageInput" maxlength="2000" placeholder="輸入訊息"><button class="btn primary" id="sendMessage">送出</button></div>`;
     $('#sendMessage').onclick=sendMessage;$('#messageInput').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}};$('#chatLayout')?.classList.add('has-chat');
