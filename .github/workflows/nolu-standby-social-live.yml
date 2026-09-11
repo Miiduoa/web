@@ -23,9 +23,10 @@ jobs:
           code="$(curl -sS -D /tmp/headers -o /tmp/body -w '%{http_code}' -X OPTIONS -H 'Origin: https://miiduoa.github.io' "$url")"
           echo "preflight status=$code"
           sed -n '1,30p' /tmp/headers
-          test "$code" = 200 -o "$code" = 204
-          grep -Eiq '^access-control-allow-origin:[[:space:]]*https://miiduoa.github.io\r?$' /tmp/headers
-          ! grep -Eiq '^access-control-allow-origin:[[:space:]]*\*' /tmp/headers
+          case "$code" in 200|204) ;; *) exit 1 ;; esac
+          tr -d '\r' </tmp/headers >/tmp/headers.clean
+          grep -Fxiq 'access-control-allow-origin: https://miiduoa.github.io' /tmp/headers.clean
+          ! grep -Fxiq 'access-control-allow-origin: *' /tmp/headers.clean
       - name: Evil browser origin is rejected
         run: |
           set -euo pipefail
