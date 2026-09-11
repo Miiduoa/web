@@ -1,137 +1,119 @@
-name: nolu hot standby smoke
+name: nolu standby fail-safe smoke
 
 on:
   push:
-    branches: [main, feat/nolu-hot-standby-v1]
+    branches: [main, fix/nolu-replication-retired-sync-20260911]
     paths:
       - 'pu-plan/resilience.js'
       - 'pu-plan/transport-bridge.js'
       - 'pu-plan/cloud-replication.js'
-      - 'pu-plan/main.js'
-      - 'pu-plan/auth.js'
-      - 'pu-plan/index.html'
-      - 'pu-plan/sw.js'
-      - 'pu-plan/pwa.js'
+      - 'pu-plan/provider-status.js'
+      - 'supabase/functions/pu-plan-api-v8/**'
       - '.github/workflows/nolu-hot-standby-smoke.yml'
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  hot-standby:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+  standby-fail-safe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v6
 
-      - name: Syntax check
+      - name: Syntax and topology guardrails
         run: |
+          set -euo pipefail
           node --check pu-plan/resilience.js
           node --check pu-plan/transport-bridge.js
           node --check pu-plan/cloud-replication.js
-          node --check pu-plan/main.js
-          node --check pu-plan/auth.js
-          node --check pu-plan/sw.js
-          node --check pu-plan/pwa.js
+          node --check pu-plan/provider-status.js
+          grep -q "response.status===410" pu-plan/cloud-replication.js
+          grep -q "state.disabled" pu-plan/cloud-replication.js
+          grep -q "clearInterval(periodicTimer)" pu-plan/cloud-replication.js
+          grep -q "Tokyo 跨區同步端點尚未啟用" pu-plan/provider-status.js
 
       - name: Install Playwright
         run: |
-          npm --prefix /tmp/nolu-ha init -y >/dev/null 2>&1
-          npm --prefix /tmp/nolu-ha install playwright >/dev/null 2>&1
-          cd /tmp/nolu-ha && npx playwright install --with-deps chromium >/dev/null
+          npm --prefix /tmp/nolu-standby init -y >/dev/null 2>&1
+          npm --prefix /tmp/nolu-standby install playwright >/dev/null 2>&1
+          cd /tmp/nolu-standby && npx playwright install --with-deps chromium >/dev/null
 
-      - name: Verify Tokyo failover, dual sessions, auth preservation, and safe failback
+      - name: Retired sync endpoint must trip a client-side circuit breaker
         env:
-          NODE_PATH: /tmp/nolu-ha/node_modules
+          NODE_PATH: /tmp/nolu-standby/node_modules
         run: |
-          cat >pu-plan/__hot_standby_test.html <<'HTML'
-          <!doctype html><meta charset="utf-8"><body><div id="cloudState"></div><script type="module">import './transport-bridge.js';import './resilience.js';</script></body>
+          cat >pu-plan/__replication_retired_test.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><body><script>
+          window.NOLU_RESILIENCE={
+            state:{activeApi:'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v7'},
+            getMode:()=> 'online',
+            preferredCloud:()=> 'standby'
+          };
+          window.PUPLAN_CLOUD={isSignedIn:()=>true};
+          </script><script type="module" src="./cloud-replication.js"></script></body>
           HTML
-          python3 -m http.server 4173 --directory pu-plan >/tmp/nolu-ha-http.log 2>&1 &
-          cat >/tmp/nolu-ha/test.cjs <<'NODE'
+          python3 -m http.server 4174 --directory pu-plan >/tmp/nolu-standby-http.log 2>&1 &
+          cat >/tmp/nolu-standby/check.cjs <<'NODE'
           const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
           const b64=s=>Buffer.from(s).toString('base64url');
           const uid='55555555-5555-4555-8555-555555555555';
-          const issuedAt=Math.floor(Date.now()/1000);
-          const token=(nonce)=>`${b64(JSON.stringify({v:4,uid,iat:issuedAt,exp:issuedAt+3600,cv:'cv-test'}))}.${b64('sig-'+nonce)}`;
-          const A='hrrmkrayvrgnwcroyttp',B='ltfurqaspqsvswmebyzw';
+          const now=Math.floor(Date.now()/1000);
+          const primary=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'replica-test'}))}.${b64('primary-signature')}`;
+          const portable=`${b64(JSON.stringify({v:4,uid,iat:now,exp:now+3600,cv:'replica-test'}))}.${b64('tokyo-signature')}`;
           (async()=>{
             const browser=await chromium.launch({headless:true});
             try{
               const context=await browser.newContext();
-              const counts={a7:0,aCompat:0,b7:0,bSync:0};
-              let standbyMode='ok',lastStandbyAuth='',lastSyncAuth='';
-              await context.route('https://*.supabase.co/functions/v1/**',async route=>{
-                const url=new URL(route.request().url()),path=url.pathname;
-                if(url.host.startsWith(A)){
-                  if(path.endsWith('/pu-plan-api-v7'))counts.a7++;else counts.aCompat++;
-                  return route.abort('timedout');
-                }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-sync-v1')){
-                  counts.bSync++;lastSyncAuth=route.request().headers()['authorization']||'';
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,self:B,peer_synced:true,peer_status:200,revision:Date.now()})});
-                }
-                if(url.host.startsWith(B)&&path.endsWith('/pu-plan-api-v7')){
-                  counts.b7++;lastStandbyAuth=route.request().headers()['authorization']||'';
-                  if(standbyMode==='unauthorized')return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'UNAUTHORIZED',message:'standby cannot verify old token'})});
-                  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({token:token('shared'),profile:{id:uid,display_name:'Tokyo User',username:'tokyo_user',avatar_data:'',bio:'',discoverable:true},courses:[{id:'ha',name:'Tokyo course',day:1,start:1,end:1,teacher:'',room:'T1',color:'blue'}],semesters:[],active_semester:null,social:{relationships:[],profiles:[],friends:[],meetups:[],deferred:true}})});
-                }
-                return route.abort();
+              let syncRequests=0;
+              await context.route('https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-sync-v1',route=>{
+                syncRequests++;
+                return route.fulfill({status:410,contentType:'application/json',body:JSON.stringify({error:'DISABLED',message:'Experimental cross-project sync endpoint disabled'})});
               });
               const page=await context.newPage();
-              await page.goto('http://127.0.0.1:4173/__hot_standby_test.html');
-              await page.evaluate(({uid,old})=>{
+              await page.addInitScript(({uid,primary,portable})=>{
                 localStorage.clear();sessionStorage.clear();
-                localStorage.setItem('puplan_session',old);
+                localStorage.setItem('puplan_session',primary);
+                localStorage.setItem('puplan_portable_session_v1',portable);
                 localStorage.setItem('puplan_course_owner',uid);
-                localStorage.setItem('puplan_name','Cached User');
-                localStorage.setItem('puplan_username','cached_user');
-                localStorage.setItem('puplan_courses',JSON.stringify([{id:'local',name:'Local course',day:2,start:2,end:2,teacher:'',room:'L1',color:'gray'}]));
-              },{uid,old:token('old')});
-              await page.reload({waitUntil:'domcontentloaded'});
-              await page.waitForFunction(()=>window.NOLU_RESILIENCE&&window.NOLU_TRANSPORT);
-              const requested=`https://${A}.supabase.co/functions/v1/pu-plan-api-v6`;
-              const authHeaders={'Content-Type':'application/json','Authorization':`Bearer ${token('old')}`};
-              const first=await page.evaluate(async({url,headers})=>{const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),active:NOLU_RESILIENCE.state.activeApi,preferred:NOLU_RESILIENCE.preferredCloud(),primary:localStorage.getItem('puplan_session'),portable:localStorage.getItem('puplan_portable_session_v1')}} ,{url:requested,headers:authHeaders});
-              assert(first.status===200,'standby bootstrap failed');
-              assert(first.active.includes(B),'Tokyo was not selected as active cloud');
-              assert(first.preferred==='standby','standby preference was not persisted');
-              assert(first.primary===token('old'),'standby bootstrap overwrote the primary session token');
-              assert(first.portable===token('shared'),'standby token was not stored in the portable session slot');
-              assert(counts.a7>=1&&counts.b7>=1,'first request did not try primary then Tokyo');
-
-              const aBefore=counts.a7+counts.aCompat,bBefore=counts.b7;
-              const second=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return r.status},requested);
-              assert(second===200,'preferred Tokyo request failed');
-              assert(counts.b7===bBefore+1,'second request did not go to Tokyo first');
-              assert(counts.a7+counts.aCompat===aBefore,'second request unnecessarily hammered primary');
-              assert(lastStandbyAuth===`Bearer ${token('shared')}`,'Tokyo request did not use the portable session token');
-
-              const bBeforeSignup=counts.b7;
-              await page.evaluate(async url=>{try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'signup',display_name:'x',username:'xx',email:'x@example.com',password:'12345678'})})}catch{}},requested);
-              assert(counts.b7===bBeforeSignup,'signup was incorrectly allowed to fail over to an unseeded standby');
-
-              standbyMode='unauthorized';
-              const oldStored=await page.evaluate(()=>localStorage.getItem('puplan_session'));
-              const protectedResult=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})});return {status:r.status,data:await r.json(),stored:localStorage.getItem('puplan_session')}},requested);
-              assert(protectedResult.status===200&&protectedResult.data.offline===true,'standby 401 did not safely degrade to local offline bootstrap');
-              assert(protectedResult.stored===oldStored,'uncertain standby auth incorrectly cleared or changed the primary session');
-
-              standbyMode='ok';
-              await page.evaluate(async url=>{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer stale-is-replaced'},body:JSON.stringify({action:'bootstrap'})})},requested);
-              await page.evaluate(async()=>{window.PUPLAN_CLOUD={isSignedIn:()=>true};await import('./cloud-replication.js?ci=1')});
-              const synced=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
-              assert(synced===true,'standby -> primary reconciliation did not report success');
-              assert(counts.bSync>=1,'reconciliation did not use the active Tokyo sync endpoint');
-              assert(lastSyncAuth===`Bearer ${token('shared')}`,'standby replication did not use the portable session token');
-              const preferredAfterSync=await page.evaluate(()=>window.NOLU_RESILIENCE.preferredCloud());
-              assert(preferredAfterSync==='primary','client did not permit primary failback after successful replication');
-              console.log('HOT_STANDBY_OK',counts);
+              },{uid,primary,portable});
+              await page.goto('http://127.0.0.1:4174/__replication_retired_test.html',{waitUntil:'domcontentloaded'});
+              await page.waitForFunction(()=>!!window.NOLU_REPLICATION,{timeout:10000});
+              const first=await page.evaluate(()=>window.NOLU_REPLICATION.sync('ci',true));
+              assert(first===false,'retired replication endpoint must not report success');
+              await page.waitForFunction(()=>window.NOLU_REPLICATION.state.disabled===true,{timeout:3000});
+              const afterFirst=syncRequests;
+              assert(afterFirst>=1,'replication endpoint was not probed');
+              await page.evaluate(async()=>{
+                await window.NOLU_REPLICATION.sync('periodic',false);
+                document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:[]}));
+              });
+              await page.waitForTimeout(1800);
+              assert(syncRequests===afterFirst,'disabled replication kept polling after HTTP 410');
+              const state=await page.evaluate(()=>window.NOLU_REPLICATION.state);
+              assert(state.disabledReason.includes('尚未啟用'),'disabled reason was not exposed');
+              console.log('REPLICATION_410_CIRCUIT_OK',{syncRequests,state});
             }finally{await browser.close()}
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          timeout 90s node /tmp/nolu-ha/test.cjs
-          rm -f pu-plan/__hot_standby_test.html
+          timeout 60s node /tmp/nolu-standby/check.cjs
+          rm -f pu-plan/__replication_retired_test.html
+
+      - name: Live Tokyo topology stays fail-closed
+        run: |
+          set -euo pipefail
+          ORIGIN='https://miiduoa.github.io'
+          for path in pu-plan-api-v7 pu-plan-sync-v1; do
+            code=$(curl -sS --max-time 12 -o /tmp/retired.json -w '%{http_code}' -X POST "https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/$path" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"health"}')
+            echo "[$path] HTTP $code :: $(cat /tmp/retired.json)"
+            test "$code" = 410
+            grep -q 'DISABLED' /tmp/retired.json
+          done
+          code=$(curl -sS --max-time 12 -o /tmp/v8.json -w '%{http_code}' -X POST 'https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8' -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"action":"health"}')
+          echo "[v8 health] HTTP $code :: $(cat /tmp/v8.json)"
+          test "$code" = 200
+          grep -q '"cloud_tier":"standby"' /tmp/v8.json
