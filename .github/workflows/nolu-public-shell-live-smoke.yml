@@ -29,7 +29,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE='https://miiduoa.github.io/web/pu-plan'
+          # pu-plan-pages.yml uploads ./pu-plan as the Pages artifact root, so the
+          # deployed app is at /web/, not /web/pu-plan/.
+          BASE='https://miiduoa.github.io/web'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
 
