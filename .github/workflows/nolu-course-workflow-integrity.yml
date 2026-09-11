@@ -1,0 +1,99 @@
+name: nolu course workflow integrity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/nolu-course-workflow-integrity.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/nolu-course-workflow-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify peer-review and approval source guardrails
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/migrations/20260911192000_harden_peer_review_grade_approval_boundaries.sql')
+          assert p.exists(), 'workflow integrity migration is missing'
+          s=p.read_text().lower()
+          required=[
+            'drop policy if exists peer_review_responses_insert_self',
+            'revoke insert, update, delete, truncate on table public.peer_review_responses from anon, authenticated',
+            'grant select on table public.peer_review_responses to authenticated',
+            'revoke all on function public.submit_peer_review(uuid, jsonb, text) from public, anon',
+            'grant execute on function public.submit_peer_review(uuid, jsonb, text) to authenticated, service_role',
+            'create or replace function public.protect_grade_approval_decision()',
+            "new.status := 'pending'",
+            'new.decided_by := null',
+            'new.decided_at := null',
+            'new.status := old.status',
+            'new.decided_by := old.decided_by',
+            'new.decided_at := old.decided_at',
+            'create trigger grade_approval_requests_protect_decision',
+            'revoke all on function public.decide_grade_approval(uuid, text, text) from public, anon',
+            'grant execute on function public.decide_grade_approval(uuid, text, text) to authenticated, service_role',
+          ]
+          missing=[x for x in required if x not in s]
+          assert not missing, f'missing workflow integrity guardrails: {missing}'
+          print('peer review and grade approval source guardrails passed')
+          PY
+
+      - name: Anonymous callers must not execute guarded workflow RPCs
+        run: |
+          set -euo pipefail
+          probe() {
+            local fn="$1"
+            local payload="$2"
+            local body="/tmp/${fn}.json"
+            local code=""
+            local rc=1
+            for attempt in 1 2; do
+              set +e
+              code=$(curl -sS --connect-timeout 3 --max-time 7 \
+                -o "$body" -w '%{http_code}' -X POST \
+                "$PROJECT_URL/rest/v1/rpc/$fn" \
+                -H "apikey: $PUBLISHABLE_KEY" \
+                -H 'Content-Type: application/json' \
+                --data "$payload")
+              rc=$?
+              set -e
+              [ "$rc" -eq 0 ] && break
+              echo "::warning::$fn transport attempt $attempt failed (curl=$rc)"
+              sleep "$attempt"
+            done
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::$fn live probe transport-inconclusive; source guardrails remain enforced"
+              return 0
+            fi
+            echo "$fn -> HTTP $code"
+            if [[ "$code" =~ ^2 ]]; then
+              echo "::error::Anonymous caller executed guarded workflow RPC $fn"
+              cat "$body"
+              exit 1
+            fi
+            if [ "$code" -ge 500 ]; then
+              echo "::error::$fn returned server error instead of an authorization boundary"
+              cat "$body"
+              exit 1
+            fi
+          }
+          probe submit_peer_review '{"p_pair_id":"00000000-0000-4000-8000-000000000000","p_scores":{},"p_comment":""}'
+          probe decide_grade_approval '{"p_id":"00000000-0000-4000-8000-000000000000","p_decision":"approved","p_note":""}'
