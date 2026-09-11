@@ -1,0 +1,62 @@
+name: nolu browser provider contract
+
+on:
+  push:
+    paths:
+      - 'pu-plan/index.html'
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - '.github/workflows/nolu-browser-provider-contract.yml'
+  pull_request:
+    paths:
+      - 'pu-plan/index.html'
+      - 'pu-plan/provider-config.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - '.github/workflows/nolu-browser-provider-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify browser provider and cache safety contract
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const assert=require('node:assert/strict');
+          const html=fs.readFileSync('pu-plan/index.html','utf8');
+          const cfg=fs.readFileSync('pu-plan/provider-config.js','utf8');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+
+          assert.match(cfg,/PROVIDER_MESH_VERSION='20260911-mesh5'/);
+          assert.match(cfg,/pu-plan-portable-v2/);
+          assert.doesNotMatch(cfg,/pu-plan-portable-v1/,'browser must not mint new portable credentials from legacy v1');
+          assert.match(cfg,/provider:'netlify'[\s\S]*?https:\/\/nolu-mirror\.netlify\.app\/mirror[\s\S]*?enabled:true/);
+
+          const csp=html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1]||'';
+          assert(csp,'CSP must be present');
+          assert(csp.includes('connect-src '),'CSP must define connect-src');
+          assert(csp.includes('https://nolu-mirror.netlify.app'),'enabled Netlify mirror must be reachable from production browser CSP');
+          assert(!csp.includes('https://*.netlify.app'),'Netlify CSP allowance must stay least-privilege');
+          assert(csp.includes("object-src 'none'"));
+          assert(csp.includes("frame-src 'none'"));
+          assert(csp.includes("base-uri 'self'"));
+
+          const versions=[...html.matchAll(/\?v=([^"']+)/g)].map(m=>m[1]);
+          assert(versions.length>=10,'expected versioned shell assets');
+          assert.deepEqual([...new Set(versions)],['20260911-outage-mesh5'],'all shell assets must roll together');
+          assert.match(sw,/const CACHE='nolu-shell-20260911-outage-mesh5'/);
+          assert.match(pwa,/nolu_shell_reload_20260911_outage_mesh5/);
+
+          const publicText=`${html}\n${cfg}`;
+          assert.doesNotMatch(publicText,/(?:service_role|PRIVATE KEY|postgres(?:ql)?:\/\/)/i,'browser files must not contain server secrets');
+          console.log('BROWSER_PROVIDER_CONTRACT_OK');
+          NODE

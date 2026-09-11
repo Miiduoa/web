@@ -38,7 +38,7 @@ jobs:
           grep -q "device-rescue2" pu-plan/session-recovery.js
           grep -q "nolu-shell-20260911-outage-mesh5" pu-plan/sw.js
           grep -q "nolu_shell_reload_20260911_outage_mesh5" pu-plan/pwa.js
-          grep -q "device-rescue2" pu-plan/index.html
+          grep -q "20260911-outage-mesh5" pu-plan/index.html
       - name: Verify recently expired regional session is local-rescue anchor only
         run: |
           node <<'NODE'
