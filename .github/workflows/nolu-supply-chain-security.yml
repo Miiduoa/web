@@ -108,6 +108,8 @@ jobs:
       contents: read
       security-events: write
       packages: read
+    env:
+      CODEQL_EXTRACTOR_JAVASCRIPT_ALLOW_MINIFIED_FILES: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -119,6 +121,72 @@ jobs:
           queries: security-extended
 
       - name: Analyze
+        id: codeql-analyze
         uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript-typescript'
+          output: codeql-results
+
+      - name: Gate high or critical CodeQL findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, sys
+
+          sarif_files = sorted(Path('codeql-results').rglob('*.sarif'))
+          if not sarif_files:
+              raise SystemExit('CodeQL produced no SARIF files')
+
+          total = 0
+          high = []
+          all_findings = []
+          for path in sarif_files:
+              data = json.loads(path.read_text(encoding='utf-8'))
+              for run in data.get('runs', []):
+                  rules = {}
+                  for rule in run.get('tool', {}).get('driver', {}).get('rules', []):
+                      rules[rule.get('id')] = rule
+                  for result in run.get('results', []):
+                      total += 1
+                      rule_id = result.get('ruleId', 'unknown')
+                      rule = rules.get(rule_id, {})
+                      props = rule.get('properties', {}) or {}
+                      raw_severity = props.get('security-severity')
+                      try:
+                          severity = float(raw_severity) if raw_severity is not None else None
+                      except (TypeError, ValueError):
+                          severity = None
+                      level = result.get('level', 'warning')
+                      location = 'unknown'
+                      locations = result.get('locations') or []
+                      if locations:
+                          physical = locations[0].get('physicalLocation', {})
+                          uri = physical.get('artifactLocation', {}).get('uri', 'unknown')
+                          line = physical.get('region', {}).get('startLine')
+                          location = f'{uri}:{line}' if line else uri
+                      item = (rule_id, severity, level, location)
+                      all_findings.append(item)
+                      if (severity is not None and severity >= 7.0) or level == 'error':
+                          high.append(item)
+
+          print(f'CODEQL_FINDINGS total={total} high_or_critical={len(high)}')
+          for rule_id, severity, level, location in all_findings[:100]:
+              sev = 'n/a' if severity is None else f'{severity:.1f}'
+              print(f'  {rule_id} security-severity={sev} level={level} at {location}')
+          if len(all_findings) > 100:
+              print(f'  ... {len(all_findings)-100} additional findings omitted from log')
+          if high:
+              print('High/critical CodeQL findings block this change.', file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
+      - name: Preserve CodeQL SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: codeql-results
+          if-no-files-found: error
+          retention-days: 7
