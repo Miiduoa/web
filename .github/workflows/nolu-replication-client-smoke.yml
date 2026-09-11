@@ -1,0 +1,33 @@
+name: nolu replication client smoke
+
+on:
+  pull_request:
+    paths:
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-replication-client-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/cloud-replication.js'
+      - '.github/workflows/nolu-replication-client-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replica-client-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse JavaScript
+        run: node --check pu-plan/cloud-replication.js
+      - name: Require replica v3 and reject retired v2
+        run: |
+          grep -q "pu-plan-replica-v3" pu-plan/cloud-replication.js
+          ! grep -q "pu-plan-replica-v2" pu-plan/cloud-replication.js
+      - name: Fail closed on standby reverse sync
+        run: |
+          grep -q "tier!=='primary'" pu-plan/cloud-replication.js
+          grep -q "reverse replication is intentionally disabled" pu-plan/cloud-replication.js
+          ! grep -q "STANDBY_SYNC" pu-plan/cloud-replication.js
