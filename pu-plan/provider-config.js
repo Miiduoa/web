@@ -19,12 +19,14 @@ export const PORTABLE_MINT_ENDPOINTS=Object.freeze([
 ]);
 
 export const PROVIDER_MIRRORS=Object.freeze([
+  // Portable provider authentication is intentionally disabled (HTTP 410) on
+  // both Supabase projects. Keep Neon disabled until that trust chain is restored.
   Object.freeze({
     id:'neon-singapore',
     provider:'neon',
     kind:'postgrest',
     endpoint:'https://ep-delicate-frost-b3q46ijf.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1',
-    enabled:true
+    enabled:false
   }),
   // Render remains disabled until its independent account/service connection is
   // authorized. It will use the same portable public-key token, never a browser DB secret.

@@ -80,7 +80,7 @@ function saveProfileLocal(p){
   if(avatar)localStorage.setItem('puplan_avatar',avatar);else localStorage.removeItem('puplan_avatar');
   localStorage.setItem('puplan_discoverable',profile.discoverable===false?'0':'1');updateAccountUI();app?.renderShare?.();
 }
-function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};localStorage.removeItem('puplan_session');const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
+function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};for(const key of ['puplan_session','puplan_standby_session_v2','puplan_portable_session_v1','nolu_preferred_cloud_v1'])localStorage.removeItem(key);const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
 function emitSocial(){document.dispatchEvent(new CustomEvent('puplan:social-changed',{detail:socialData}))}
 function applySocial(social){socialData=social||{relationships:[],profiles:[],friends:[],meetups:[]};if(!socialData.meetups)socialData.meetups=[];const cloud=Array.isArray(socialData.friends)?socialData.friends:[];const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.([...cloud,...legacy]);renderRequests();emitSocial()}
 function relationFor(id){return (socialData.relationships||[]).find(r=>r.requester_id===id||r.addressee_id===id)}

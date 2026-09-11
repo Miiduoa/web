@@ -36,7 +36,7 @@ function clearPrivateRuntime(uid=''){
   globalThis.window?.PUPLAN_APP?.render?.();
 }
 function clearPrivateAccountState(uid=''){
-  localStorage.removeItem(SESSION_KEY);
+  for(const key of [SESSION_KEY,'puplan_standby_session_v2','puplan_portable_session_v1','nolu_preferred_cloud_v1'])localStorage.removeItem(key);
   clearPrivateRuntime(uid);
 }
 

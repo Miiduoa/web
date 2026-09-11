@@ -1,4 +1,5 @@
 import {putSnapshot} from './durable-store.js';
+import {cleanAvatar} from './core/state.js';
 import {
   PROVIDER_MESH_VERSION,
   PROVIDER_MIRRORS,
@@ -110,13 +111,13 @@ function mirrors(){
 function localRevision(snap){return Math.max(Number(snap?.revision||0),Number(snap?.savedAt||0),0)}
 function sanitizeProfile(profile,uid){
   if(!profile||String(profile.id)!==uid)return null;
-  const avatar=String(profile.avatar_data||'');
+  const avatar=cleanAvatar(profile.avatar_data||'');
   return {
     id:uid,
     display_name:clean(profile.display_name||'使用者',80)||'使用者',
     username:clean(profile.username||'',24),
     bio:clean(profile.bio||'',120),
-    avatar_data:avatar.length<=180000?avatar:'',
+    avatar_data:avatar,
     discoverable:profile.discoverable!==false,
     role:'user',
     profile_visibility:profile.profile_visibility==='private'?'private':'public'
