@@ -8,14 +8,20 @@ const esc=s=>app?.esc?.(String(s??''))||String(s??'').replace(/[&<>"']/g,m=>({'&
 const token=()=>localStorage.getItem('puplan_session')||'';
 const signedIn=()=>!!token()&&window.PUPLAN_CLOUD?.isSignedIn?.();
 const profile=()=>window.PUPLAN_CLOUD?.getProfile?.()||{id:'',display_name:'我',username:''};
-let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,globalPoll=null,storageClient=null;
+let currentTab='feed',currentConversation='',inboxData=[],feedData=[],feedCursor=null,selectedMedia=[],pollTimer=null,storageClient=null,inboxInFlight=null,pollFailures=0,lastInboxAt=0;
 
-async function request(action,payload={}){
+async function request(action,payload={},timeoutMs=10000){
   if(!signedIn())throw new Error('請先登入');
-  const res=await fetch(SOCIAL_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload})});
-  const data=await res.json().catch(()=>({}));
-  if(!res.ok)throw new Error(data.message||'目前無法完成這個操作');
-  return data;
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{
+    const res=await fetch(SOCIAL_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify({action,...payload}),signal:ctrl.signal,cache:'no-store'});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.message||'目前無法完成這個操作');
+    return data;
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('雲端回應逾時，稍後自動重試');
+    throw e;
+  }finally{clearTimeout(timer)}
 }
 function avatar(p,cls='avatar'){
   const src=cleanAvatar(p?.avatar_data||'');
@@ -216,8 +222,20 @@ async function maybeNotify(next,previous){
     try{if(reg)await reg.showNotification(conversationName(c),{body:last.body||'你有一則新訊息',icon:new URL('./nolu-icon.svg',import.meta.url).href,badge:new URL('./nolu-icon.svg',import.meta.url).href,tag:`chat-${c.id}`,data:{url,conversationId:c.id}});else new Notification(conversationName(c),{body:last.body||'你有一則新訊息',tag:`chat-${c.id}`})}catch{}
   }
 }
-async function loadInbox(silent=false,notificationCheck=false){
-  try{const previous=inboxData.slice(),data=await request('inbox',{limit:30});inboxData=data.conversations||[];updateBadges(totalUnread());if(notificationCheck)await maybeNotify(inboxData,previous);renderInbox();if(currentConversation&&$('#chatPanel'))await openConversation(currentConversation,true)}catch(e){if(!silent&&$('#inboxList'))$('#inboxList').innerHTML=`<div class="activity-empty">${esc(e.message)}</div>`}
+async function loadInbox(silent=false,notificationCheck=false,refreshConversation=false){
+  if(inboxInFlight)return inboxInFlight;
+  inboxInFlight=(async()=>{
+    try{
+      const previous=inboxData.slice(),data=await request('inbox',{limit:30});
+      inboxData=data.conversations||[];pollFailures=0;lastInboxAt=Date.now();updateBadges(totalUnread());
+      if(notificationCheck)await maybeNotify(inboxData,previous);renderInbox();
+      if(refreshConversation&&currentConversation&&$('#chatPanel'))await openConversation(currentConversation,true);
+    }catch(e){
+      pollFailures=Math.min(5,pollFailures+1);
+      if(!silent&&$('#inboxList'))$('#inboxList').innerHTML=`<div class="activity-empty">${esc(e.message)}</div>`;
+    }finally{inboxInFlight=null}
+  })();
+  return inboxInFlight;
 }
 function renderInbox(){
   const list=$('#inboxList');if(!list)return;
@@ -226,11 +244,11 @@ function renderInbox(){
 }
 async function openConversation(id,silent=false){
   try{
-    currentConversation=id;const data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;
+    currentConversation=id;const unreadBefore=Number(inboxData.find(x=>x.id===id)?.unread||0),data=await request('conversation',{conversation_id:id}),panel=$('#chatPanel');if(!panel)return;
     const c=data.conversation,profiles=new Map((data.profiles||[]).map(p=>[p.id,p])),me=profile();
     panel.innerHTML=`<div class="chat-head"><button class="btn" id="chatBack" style="display:none">←</button><b>${esc(c.kind==='group'?(c.title||'群聊'):(data.profiles||[]).find(p=>p.id!==me.id)?.display_name||'私訊')}</b></div><div class="chat-messages" id="chatMessages">${(data.messages||[]).map(m=>{const mine=m.sender_id===me.id,p=profiles.get(m.sender_id);return`<div class="message-row ${mine?'mine':'theirs'}">${mine?'':`<span class="message-name">${esc(p?.display_name||'使用者')}</span>`}<div class="message-bubble">${esc(m.body)}</div><span class="message-time">${new Date(m.created_at).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}${m.edited_at?' · 已編輯':''}</span></div>`}).join('')}</div><div class="chat-compose"><input id="messageInput" maxlength="2000" placeholder="輸入訊息"><button class="btn primary" id="sendMessage">送出</button></div>`;
     $('#sendMessage').onclick=sendMessage;$('#messageInput').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}};$('#chatLayout')?.classList.add('has-chat');
-    const msg=$('#chatMessages');if(msg)msg.scrollTop=msg.scrollHeight;await request('mark_read',{conversation_id:id});const row=inboxData.find(x=>x.id===id);if(row)row.unread=0;updateBadges(totalUnread());renderInbox();
+    const msg=$('#chatMessages');if(msg)msg.scrollTop=msg.scrollHeight;if(!silent||unreadBefore>0){await request('mark_read',{conversation_id:id});const row=inboxData.find(x=>x.id===id);if(row)row.unread=0;updateBadges(totalUnread());renderInbox()}
     const back=$('#chatBack');if(back){back.style.display=innerWidth<=940?'inline-flex':'none';back.onclick=()=>{currentConversation='';$('#chatLayout')?.classList.remove('has-chat')}};
   }catch(e){if(!silent)app?.toast?.(e.message)}
 }
@@ -245,17 +263,26 @@ async function openNewChat(){
   d.innerHTML=`<div class="modal-head"><h2>開始對話</h2><button class="x" type="button">×</button></div><label class="label">群聊名稱（多人時可填）<input class="field" id="groupTitle" maxlength="80" placeholder="例如：期末專案組"></label><div class="friend-picker">${friends.map(f=>{const src=cleanAvatar(f.avatar||f.avatar_data||'');return `<label class="friend-pick"><input type="checkbox" value="${esc(f.id)}">${src?`<div class="avatar"><img src="${esc(src)}" alt=""></div>`:`<div class="avatar">${esc((f.name||'?').slice(0,1))}</div>`}<span>${esc(f.name)}<small>@${esc(f.username||'')}</small></span></label>`}).join('')}</div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="createConversation">建立對話</button></div>`;
   d.querySelector('.x').onclick=()=>d.close();$('#createConversation').onclick=async()=>{const ids=[...d.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);if(!ids.length)return app?.toast?.('請選至少一位好友');try{const data=await request('create_chat',{user_ids:ids,title:$('#groupTitle').value.trim()});d.close();await loadInbox();await openConversation(data.conversation.id)}catch(e){app?.toast?.(e.message)}};d.showModal();
 }
-function startPolling(){
-  clearInterval(pollTimer);
-  pollTimer=setInterval(()=>{
-    if(document.hidden)return;
-    if($('#community')?.classList.contains('on')&&currentTab==='chat')loadInbox(true,true);
-  },12000);
+function chatActive(){return !document.hidden&&$('#community')?.classList.contains('on')&&currentTab==='chat'}
+function pollingDelay(){
+  if(document.hidden||!signedIn())return 60000;
+  const base=chatActive()?20000:60000;
+  return Math.min(300000,base*Math.pow(2,Math.min(pollFailures,4)));
 }
-function startGlobalPolling(){clearInterval(globalPoll);globalPoll=setInterval(()=>{if(signedIn())loadInbox(true,true)},12000);setTimeout(()=>signedIn()&&loadInbox(true,false),1500)}
+function stopPolling(){clearTimeout(pollTimer);pollTimer=null}
+function schedulePolling(delay=pollingDelay()){
+  stopPolling();
+  pollTimer=setTimeout(async()=>{
+    if(!document.hidden&&signedIn())await loadInbox(true,true,chatActive()).catch(()=>{});
+    schedulePolling();
+  },delay);
+}
+function startPolling(){schedulePolling(1000)}
+function startGlobalPolling(){schedulePolling(1500)}
 async function openHashChat(){const m=location.hash.match(/chat=([^&]+)/);if(!m||!signedIn())return;const id=decodeURIComponent(m[1]);history.replaceState(null,'',location.pathname);showCommunity();switchTab('chat');await loadInbox(true);await openConversation(id)}
 
 installSection();startGlobalPolling();setTimeout(openHashChat,1500);
-document.addEventListener('puplan:profile-changed',()=>{installNotificationSetting();if($('#community')?.classList.contains('on'))switchTab(currentTab)});
-window.addEventListener('focus',()=>signedIn()&&loadInbox(true,true));
-window.PUPLAN_COMMUNITY={show:showCommunity,openChatWith:async userId=>{showCommunity();switchTab('chat');const data=await request('create_chat',{user_ids:[userId]});await loadInbox();await openConversation(data.conversation.id)},refreshInbox:()=>loadInbox(true,true),reloadFeed:()=>loadFeed(true)};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)return stopPolling();if(signedIn()&&Date.now()-lastInboxAt>15000)loadInbox(true,true,chatActive()).catch(()=>{});startPolling()});
+document.addEventListener('puplan:profile-changed',()=>{installNotificationSetting();if($('#community')?.classList.contains('on'))switchTab(currentTab);startPolling()});
+window.addEventListener('focus',()=>{if(!signedIn())return;if(Date.now()-lastInboxAt>15000)loadInbox(true,true,chatActive()).catch(()=>{});startPolling()});
+window.PUPLAN_COMMUNITY={show:showCommunity,openChatWith:async userId=>{showCommunity();switchTab('chat');const data=await request('create_chat',{user_ids:[userId]});await loadInbox();await openConversation(data.conversation.id)},refreshInbox:()=>loadInbox(true,true,chatActive()),reloadFeed:()=>loadFeed(true)};
