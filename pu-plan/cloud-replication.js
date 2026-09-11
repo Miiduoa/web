@@ -5,8 +5,8 @@ const STANDBY_SYNC=`https://${STANDBY_REF}.supabase.co/functions/v1/pu-plan-sync
 const PORTABLE_KEY='puplan_portable_session_v1';
 const DIRTY_PREFIX='nolu_standby_dirty_v1:';
 const SEEDED_PREFIX='nolu_standby_seeded_v1:';
-const state={busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,lastError:'',lastReason:'',lastTier:'',peerSynced:false};
-let debounceTimer=null;
+const state={busy:false,lastAttemptAt:0,lastSuccessAt:0,lastPeerSyncAt:0,lastError:'',lastReason:'',lastTier:'',peerSynced:false,disabled:false,disabledReason:''};
+let debounceTimer=null,periodicTimer=null;
 
 function token(){return localStorage.getItem('puplan_session')||''}
 function portableToken(){return localStorage.getItem(PORTABLE_KEY)||''}
@@ -26,7 +26,8 @@ function activeTier(){
   return window.NOLU_RESILIENCE?.preferredCloud?.()==='standby'?'standby':'primary';
 }
 function authToken(tier){return tier==='standby'?portableToken()||token():token()||portableToken()}
-function canSync(){
+function canSync(force=false){
+  if(state.disabled&&!force)return false;
   const id=uid();if(!id||localStorage.getItem('puplan_guest')==='1')return false;
   const mode=window.NOLU_RESILIENCE?.getMode?.();
   if(mode!=='offline')return true;
@@ -38,10 +39,17 @@ function canSync(){
   return activeTier()==='standby'&&!!portableToken();
 }
 function markStandbyDirty(){const id=uid();if(id&&activeTier()==='standby')localStorage.setItem(`${DIRTY_PREFIX}${id}`,'1')}
-function schedule(reason,delay=1200){clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
+function schedule(reason,delay=1200){if(state.disabled)return;clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>void sync(reason),delay)}
+function ensurePeriodic(){if(!periodicTimer&&!state.disabled)periodicTimer=setInterval(()=>void sync('periodic'),30000)}
+function disableReplication(reason,tier,endpoint){
+  state.disabled=true;state.disabledReason=reason;state.peerSynced=false;state.lastError=reason;
+  clearTimeout(debounceTimer);debounceTimer=null;
+  if(periodicTimer){clearInterval(periodicTimer);periodicTimer=null}
+  document.dispatchEvent(new CustomEvent('nolu:replica-disabled',{detail:{reason,tier,endpoint}}));
+}
 
 async function sync(reason='periodic',force=false){
-  if(state.busy||!canSync())return false;
+  if(state.busy||!canSync(force))return false;
   const at=Date.now();if(!force&&at-state.lastAttemptAt<4000)return false;
   const id=uid(),tier=activeTier(),endpoint=tier==='standby'?STANDBY_SYNC:PRIMARY_SYNC,session=authToken(tier);if(!session)return false;
   state.busy=true;state.lastAttemptAt=at;state.lastReason=reason;state.lastTier=tier;
@@ -49,7 +57,13 @@ async function sync(reason='periodic',force=false){
   try{
     const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session}`},body:JSON.stringify({action:'sync'}),cache:'no-store',signal:ctrl.signal});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok){state.lastError=data.message||`HTTP ${response.status}`;state.peerSynced=false;return false}
+    if(!response.ok){
+      const message=data.message||`HTTP ${response.status}`;
+      if(response.status===410)disableReplication('跨區同步端點目前未啟用',tier,endpoint);
+      else{state.lastError=message;state.peerSynced=false}
+      return false
+    }
+    state.disabled=false;state.disabledReason='';ensurePeriodic();
     state.lastSuccessAt=Date.now();state.lastError='';state.peerSynced=data.peer_synced===true;
     if(data.peer_synced===true){
       state.lastPeerSyncAt=Date.now();localStorage.setItem(`${SEEDED_PREFIX}${id}`,'1');localStorage.removeItem(`${DIRTY_PREFIX}${id}`);
@@ -67,7 +81,7 @@ document.addEventListener('nolu:session-rotated',()=>schedule('session-rotated',
 document.addEventListener('nolu:connectivity',event=>{if(event.detail?.mode==='online')schedule('connectivity-online',250)});
 addEventListener('online',()=>schedule('browser-online',300));addEventListener('focus',()=>schedule('focus',500));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')schedule('visible',500)});
-setInterval(()=>void sync('periodic'),30000);
+ensurePeriodic();
 
 if(window.PUPLAN_CLOUD?.isSignedIn?.())schedule('startup',250);
 window.NOLU_REPLICATION={state,sync:(reason='manual',force=true)=>sync(reason,force),activeTier,markStandbyDirty};

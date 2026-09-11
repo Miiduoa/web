@@ -16,16 +16,22 @@ function render(){
   const healthy=[...new Set(mesh.healthyProviders||[])];
   const target=Number(mesh.requiredRemoteProviders||3);
   const ready=configured.length>=target;
+  const replica=window.NOLU_REPLICATION?.state;
+  const missing=['neon','render'].filter(provider=>!configured.includes(provider));
   $('#providerMeshSummary').textContent=ready
     ?`已設定 ${configured.length} 個獨立雲端供應商；目前偵測 ${healthy.length} 個可用。`
     :`目前只有 ${configured.length}/${target} 個獨立雲端供應商完成設定。`;
   $('#providerMeshState').textContent=`目標 ${target} 雲端 + 本機副本｜${configured.join(' · ')||'尚未設定'}`;
   $('#providerMeshHint').textContent=ready
     ?'遠端救援必須至少兩個獨立鏡像對同一版資料達成一致，避免單一故障或錯誤副本覆寫。'
-    :'目前仍會使用本機 IndexedDB 與既有 Supabase 備援，但要達到真正跨供應商容錯，還需要啟用 Neon 與 Render 鏡像。';
+    :replica?.disabled
+      ?`本機 IndexedDB 持續保護資料；Tokyo 跨區同步目前未啟用，不計為可接管的遠端副本。${missing.length?`尚未完成：${missing.join('、')}。`:''}`
+      :`目前已設定 ${configured.length}/${target} 個獨立遠端供應商；${missing.length?`尚未完成：${missing.join('、')}。`:''}只有達成遠端 quorum 才會自動救援。`;
 }
 
 document.addEventListener('nolu:provider-mesh',render);
 document.addEventListener('nolu:provider-recovered',render);
+document.addEventListener('nolu:replica-disabled',render);
+document.addEventListener('nolu:replica-synced',render);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')render()});
 setTimeout(render,0);setInterval(render,15000);
