@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'package.json'
+      - 'package-lock.json'
       - 'netlify.toml'
       - 'netlify/functions/**'
       - 'pu-plan/provider-config.js'
@@ -11,6 +12,7 @@ on:
   pull_request:
     paths:
       - 'package.json'
+      - 'package-lock.json'
       - 'netlify.toml'
       - 'netlify/functions/**'
       - 'pu-plan/provider-config.js'
@@ -24,12 +26,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install runtime and type-check dependencies
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.12.0'
+          package-manager-cache: false
+
+      - name: Install locked runtime and type-check dependencies
         run: |
-          npm install --ignore-scripts --no-audit --no-fund
-          npm install --no-save --ignore-scripts --no-audit --no-fund typescript @types/node
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund typescript @types/node
 
       - name: Type-check Netlify mirror
         run: >-
