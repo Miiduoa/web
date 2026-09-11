@@ -1,15 +1,9 @@
-# pu-plan-replica-v2
+# pu-plan-replica-v2 — retired
 
-Production peer-replication runtime is deployed directly to the two Supabase projects and intentionally keeps its per-project private signing keys out of this public repository.
+`pu-plan-replica-v2` is retired and deployed as a fail-closed HTTP 410 `DISABLED` stub in both Supabase projects.
 
-Protocol goals:
-- authenticate the local browser with that project's existing Nolu session v4;
-- export only the authenticated user's core account/profile/schedule/semester rows server-to-server;
-- sign every replication envelope with a project-specific P-256 key;
-- verify the peer project's public key before accepting a replication envelope;
-- reject expired, replayed, cross-project, or credential-version-mismatched envelopes;
-- seed the Tokyo standby with password verifier material without ever returning password hashes to the browser;
-- return only a peer-local session token after the peer confirms matching credential version;
-- on failback to Mumbai, accept profile/schedule/semester updates but never let the standby create a new primary identity or overwrite primary password/role authority.
+The v2 design is no longer permitted because the deployed implementation embedded project signing-key material in function source. No private key value is retained in this repository. Production must not route replication traffic to v2 and tests must keep the endpoint disabled.
 
-The browser integration lives in `pu-plan/cloud-replication.js`. Runtime source should not be copied here with embedded private JWK material.
+Its replacement is `pu-plan-replica-v3`, which derives a project-local Ed25519 signing seed at runtime from that project's own `SUPABASE_SERVICE_ROLE_KEY`, pins only public peer keys in source, rejects malformed or expired envelopes, uses nonce replay protection, and currently allows automatic replication only from the Mumbai primary to the Tokyo standby.
+
+Automatic Tokyo-to-Mumbai failback remains intentionally disabled until an explicit reconciliation/versioning protocol exists. Browser integration lives in `pu-plan/cloud-replication.js`.
