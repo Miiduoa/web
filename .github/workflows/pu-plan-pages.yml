@@ -50,6 +50,7 @@ jobs:
           pu-plan/views/settings.js
           pu-plan/views/dialogs.js
           pu-plan/cloud.js
+          pu-plan/cloud-replication.js
           pu-plan/social-ui.js
           pu-plan/import.js
           pu-plan/auth.js
@@ -64,6 +65,10 @@ jobs:
           pu-plan/durable-bridge.js
           pu-plan/transport-bridge.js
           pu-plan/resilience.js
+          pu-plan/offline-session-rescue.js
+          pu-plan/provider-config.js
+          pu-plan/provider-mesh.js
+          pu-plan/provider-status.js
           pu-plan/sw.js
           FILES
           python3 - <<'PY'
@@ -75,10 +80,12 @@ jobs:
           main=(root/'main.js').read_text(encoding='utf-8')
           sw=(root/'sw.js').read_text(encoding='utf-8')
           manifest=json.loads((root/'manifest.webmanifest').read_text(encoding='utf-8'))
+          jwks=json.loads((root/'nolu-mesh-jwks.json').read_text(encoding='utf-8'))
 
           required_files=[
-              'main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js',
-              'avatar-guard.js','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js',
+              'main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js','nolu-mesh-jwks.json',
+              'avatar-guard.js','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js','offline-session-rescue.js',
+              'cloud-replication.js','provider-config.js','provider-mesh.js','provider-status.js',
               'core/state.js',
               'features/schedule.js','features/friends.js','features/share.js','features/analysis.js','features/navigation.js','features/settings.js','features/planner.js',
               'views/auth.js','views/shell.js','views/schedule.js','views/friends.js','views/assistant.js','views/settings.js','views/dialogs.js',
@@ -110,8 +117,6 @@ jobs:
           versioned=[str(p.relative_to(root)) for p in root.rglob('*') if p.is_file() and re.search(r'(?:^|[-_])v\d+(?:\.|[-_])',p.name,re.I)]
           assert not versioned, f'versioned override files are not allowed: {versioned}'
 
-          # Compare quoted asset paths exactly. A substring check made the valid
-          # ./features/planner.js look like the obsolete root ./planner.js.
           def exact_asset_reference(text,item):
               for ref in re.findall(r'''['"]([^'"]+)['"]''',text):
                   path=ref.split('?',1)[0].split('#',1)[0]
@@ -123,7 +128,8 @@ jobs:
 
           for module in [
               './features/planner.js','./auth.js','./community.js','./discover.js','./pwa.js',
-              './avatar-guard.js','./durable-bridge.js','./transport-bridge.js','./resilience.js'
+              './avatar-guard.js','./durable-bridge.js','./transport-bridge.js','./resilience.js',
+              './offline-session-rescue.js','./cloud-replication.js','./provider-mesh.js','./provider-status.js'
           ]:
               assert module in main, f'main.js missing runtime module {module}'
           assert 'boot.js' not in main, 'legacy bootstrap reference returned'
@@ -131,7 +137,11 @@ jobs:
           assert manifest.get('name')=='nolu'
           assert manifest.get('short_name')=='nolu'
           assert manifest.get('start_url')=='./' and manifest.get('scope')=='./'
-          for asset in ['nolu-icon.svg','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js']:
+          assert len(jwks.get('keys',[]))>=1, 'provider mesh JWKS missing public verification key'
+          key=jwks['keys'][0]
+          assert key.get('kty')=='EC' and key.get('crv')=='P-256' and key.get('alg')=='ES256', 'provider mesh JWKS must use ES256'
+          assert 'd' not in key, 'private signing key must never be published in JWKS'
+          for asset in ['nolu-icon.svg','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js','offline-session-rescue.js','provider-config.js','provider-mesh.js','provider-status.js','nolu-mesh-jwks.json']:
               assert asset in sw, f'service worker missing offline asset {asset}'
           assert 'style.css' not in sw and 'boot.js' not in sw
           assert 'PU/PLAN' not in index and 'PU PLAN' not in index
