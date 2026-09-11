@@ -54,7 +54,8 @@ jobs:
           grep -q "hasStandbyDirty" pu-plan/cloud-replication.js
           grep -q "primary-returned" pu-plan/cloud-replication.js
           grep -q "nolu:replica-failback-complete" pu-plan/cloud-replication.js
-          grep -q "markStandbyDirty('standby-active',true)" pu-plan/cloud-replication.js
+          grep -q "nolu:standby-write" pu-plan/cloud-replication.js
+          ! grep -q "markStandbyDirty('standby-active',true)" pu-plan/cloud-replication.js
           ! grep -q "STANDBY_SYNC" pu-plan/cloud-replication.js
       - name: Keep failback failure visible instead of silently overwriting
         run: |
