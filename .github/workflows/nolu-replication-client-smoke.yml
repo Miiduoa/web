@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/provider-status.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-replication-client-smoke.yml'
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/cloud-replication.js'
+      - 'pu-plan/provider-status.js'
       - 'pu-plan/sw.js'
       - 'pu-plan/pwa.js'
       - '.github/workflows/nolu-replication-client-smoke.yml'
@@ -27,6 +29,7 @@ jobs:
       - name: Parse JavaScript
         run: |
           node --check pu-plan/cloud-replication.js
+          node --check pu-plan/provider-status.js
           node --check pu-plan/sw.js
           node --check pu-plan/pwa.js
       - name: Require replica v3 and reject retired v2
@@ -37,7 +40,14 @@ jobs:
         run: |
           grep -q "tier!=='primary'" pu-plan/cloud-replication.js
           grep -q "reverse replication is intentionally disabled" pu-plan/cloud-replication.js
+          grep -q "manualReconcileRequired" pu-plan/cloud-replication.js
+          grep -q "hasStandbyDirty" pu-plan/cloud-replication.js
           ! grep -q "STANDBY_SYNC" pu-plan/cloud-replication.js
+      - name: Surface unresolved failback state to the user
+        run: |
+          grep -q "nolu:replica-manual-reconcile-required" pu-plan/provider-status.js
+          grep -q "manualReconcileRequired" pu-plan/provider-status.js
+          grep -q "已停止自動回切覆寫" pu-plan/provider-status.js
       - name: Keep installed PWA on current replica v3 shell
         run: |
           grep -q "nolu-shell-20260911-device-rescue1-mesh3" pu-plan/sw.js
