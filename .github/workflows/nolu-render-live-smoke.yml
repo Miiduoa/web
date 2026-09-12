@@ -79,10 +79,10 @@ jobs:
             exit 1
           fi
           grep -Eqi '^cache-control:[[:space:]]*no-store' "$headers"
-          ! grep -Eqi '(postgres(?:ql)?://|password|service_role|private[[:space:]_-]*key|database_url)' "$body"
+          ! grep -Eqi '(postgres(ql)?://|password|service_role|private[[:space:]_-]*key|database_url)' "$body"
 
           CODE="$code" BODY="$body" python3 - <<'PY'
-          import json, os, sys
+          import json, os
           code=int(os.environ['CODE'])
           with open(os.environ['BODY'], encoding='utf-8') as f:
               data=json.load(f)
