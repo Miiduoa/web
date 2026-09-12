@@ -24,7 +24,7 @@ jobs:
       PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
       PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       - name: Verify peer-review and approval source guardrails
         run: |
