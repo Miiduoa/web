@@ -40,9 +40,11 @@ jobs:
           transport = text('supabase/migrations/20260911154002_nolu_hot_standby_primary_transport.sql')
           runtime = text('supabase/migrations/20260911154003_nolu_hot_standby_primary_runtime.sql')
           cleanup = text('supabase/migrations/20260911154004_nolu_hot_standby_primary_cleanup.sql')
+          social_payload = text('supabase/migrations/20260912095000_nolu_hot_standby_primary_social_payload.sql')
           standby_tables = text('supabase/standby/20260911_nolu_hot_standby_tables.sql')
           standby_apply = text('supabase/standby/20260911_nolu_hot_standby_apply.sql')
           social_apply = text('supabase/standby/20260911_nolu_social_replica_apply.sql')
+          shared_authority = text('supabase/standby/20260912_nolu_shared_domain_authority.sql')
           failback_snapshot = text('supabase/standby/20260911_nolu_failback_snapshot.sql')
           relay = text('supabase/functions/pu-plan-replica-relay-v2/index.ts')
           ingest = text('supabase/functions/pu-plan-replica-ingest-v3/index.ts')
@@ -63,6 +65,17 @@ jobs:
           assert 'AFTER INSERT OR UPDATE OR DELETE' in runtime
           assert 'DROP TABLE IF EXISTS public.puplan_replication_shared_secret' in cleanup
 
+          # Primary source must build the same social dependency sets that the
+          # standby apply and failback snapshot consume.
+          assert 'puplan_build_replication_payload' in social_payload
+          for field in ('friendships','meetups','posts','post_likes','conversations','conversation_members','messages','feed_preferences','author_affinity'):
+              assert f"'{field}'" in social_payload
+          assert 'f.requester_id=p_uid OR f.addressee_id=p_uid' in social_payload
+          assert 'm.creator_id=p_uid OR m.invitee_id=p_uid' in social_payload
+          assert 'cm.user_id=p_uid' in social_payload
+          assert 'FROM PUBLIC,anon,authenticated' in social_payload
+          assert 'TO service_role' in social_payload
+
           assert 'puplan_replica_server_nonces' in standby_tables
           assert 'ENABLE ROW LEVEL SECURITY' in standby_tables
           assert 'puplan_apply_server_replica' in standby_apply
@@ -70,9 +83,9 @@ jobs:
           assert 'last_revision' in standby_apply
           assert 'FROM PUBLIC,anon,authenticated' in standby_apply
 
-          # Later social rollout extends the core standby apply. Keep the target
-          # source explicit and ensure the previously duplicated chat upserts do
-          # not return.
+          # Earlier social rollout source remains for deterministic rebuilds of
+          # the rollout history. The final owner-domain override below is the
+          # current authority contract.
           assert 'puplan_apply_server_replica' in social_apply
           for field in ('friendships','meetups','posts','post_likes','conversations','conversation_members','messages','feed_preferences','author_affinity'):
               assert f"'{{bundle,{field}}}'" in social_apply
@@ -82,6 +95,24 @@ jobs:
           assert 'text-only standby social path' in social_apply
           assert 'FROM PUBLIC, anon, authenticated' in social_apply
           assert 'TO service_role' in social_apply
+
+          # Shared rows must have one authoritative per-user revision stream.
+          # These checks specifically prevent the old bug where a removed chat
+          # participant snapshot could delete the creator's whole conversation.
+          assert "'shared_authority','owner-domain-v1'" in shared_authority
+          assert "current_setting('nolu.replica_apply', true)='1'" in shared_authority
+          assert 'WHERE f.requester_id=v_uid' in shared_authority
+          assert 'WHERE m.creator_id=v_uid' in shared_authority
+          assert 'WHERE p.author_id=v_uid AND p.parent_id IS NULL' in shared_authority
+          assert 'WHERE c.created_by=v_uid' in shared_authority
+          assert 'c.created_by=v_uid' in shared_authority
+          assert 'DELETE FROM public.puplan_app_conversation_members cm' in shared_authority
+          assert 'DELETE FROM public.puplan_app_messages msg' in shared_authority
+          assert 'WHERE requester_id=v_uid' in shared_authority
+          assert 'WHERE creator_id=v_uid' in shared_authority
+          assert 'FROM PUBLIC, anon, authenticated' in shared_authority
+          assert 'TO service_role' in shared_authority
+          assert "c.id in (select cm.conversation_id from public.puplan_app_conversation_members cm where cm.user_id=v_uid)" not in shared_authority.lower()
 
           # Failback must be reproducible from Git, not only from dashboard history.
           assert 'puplan_build_failback_snapshot' in failback_snapshot
