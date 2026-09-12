@@ -7,8 +7,11 @@ const MAX_SESSION_SECONDS=45*24*60*60;
 const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
 let trackedAccountUid='';
 
+const RENDERABLE_ACCOUNT_DATA_KEYS=[
+  'puplan_courses','puplan_friends','puplan_schedule_meta'
+];
 const ACCOUNT_DATA_KEYS=[
-  'puplan_courses','puplan_friends','puplan_schedule_meta','puplan_course_owner'
+  ...RENDERABLE_ACCOUNT_DATA_KEYS,'puplan_course_owner'
 ];
 const PROFILE_KEYS=[
   'puplan_name','puplan_username','puplan_bio','puplan_avatar','puplan_discoverable'
@@ -46,9 +49,16 @@ function clearPrivateCaches(uid=''){
 }
 function quarantineRenderableCache(candidateUid=''){
   const ownerBefore=localStorage.getItem('puplan_course_owner')||'';
-  clearLocal([...ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
+
+  // Renderable account data is always quarantined until an exact durable binding
+  // or cloud bootstrap restores it. The owner marker itself is not renderable data:
+  // preserving it for the same session prevents Safari tabs / installed PWA windows
+  // from misreading normal startup quarantine as a cross-account logout.
+  clearLocal([...RENDERABLE_ACCOUNT_DATA_KEYS,...PROFILE_KEYS]);
   clearAssistantSession();
+
   if(ownerBefore&&candidateUid&&ownerBefore!==candidateUid){
+    localStorage.removeItem('puplan_course_owner');
     clearResilienceFor(ownerBefore);
     clearLocal(CLOUD_SESSION_KEYS);
   }
