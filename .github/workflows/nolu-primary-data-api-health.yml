@@ -39,7 +39,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          endpoint="$PROJECT_URL/rest/v1/"
+          # Probe the intentionally public catalog with limit=0 so the request
+          # exercises PostgREST schema cache + database connectivity without
+          # downloading catalog rows or any user data. The OpenAPI root itself
+          # requires a secret key on current Supabase and is not a valid
+          # publishable-key health target.
+          endpoint="$PROJECT_URL/rest/v1/public_course_catalog?select=*&limit=0"
           body=/tmp/nolu-primary-data-api-health.json
           code='000'
           rc=1
