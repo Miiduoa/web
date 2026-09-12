@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/account-boundary.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/session-recovery.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
       - '.github/workflows/nolu-account-boundary-smoke.yml'
@@ -12,6 +15,9 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/account-boundary.js'
+      - 'pu-plan/guest-privacy.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/session-recovery.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
       - '.github/workflows/nolu-account-boundary-smoke.yml'
@@ -38,7 +44,7 @@ jobs:
           assert s.index("await import('./guest-privacy.js')") < s.index("await import('./account-boundary.js')") < s.index("await import('./durable-bridge.js')")
           PY
 
-      - name: Account transitions cannot reload forever
+      - name: Session identity transitions cannot reload forever
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -46,67 +52,111 @@ jobs:
           const vm=require('vm');
           const code=fs.readFileSync('pu-plan/account-boundary.js','utf8');
           const KEY='nolu_account_boundary_v2';
+          const A='11111111-1111-4111-8111-111111111111';
+          const B='22222222-2222-4222-8222-222222222222';
+          const token=uid=>`${Buffer.from(JSON.stringify({v:4,uid})).toString('base64url')}.sig`;
 
           class Target {
-            constructor(){this.handlers=new Map()}
+            constructor(){this.handlers=new Map();this.documentElement={setAttribute(){}}}
             addEventListener(type,fn){const a=this.handlers.get(type)||[];a.push(fn);this.handlers.set(type,a)}
             emit(type,event={}){for(const fn of this.handlers.get(type)||[])fn(event)}
           }
-          function runtime(initialOwner,{session=new Map(),signed=false}={}){
+          function runtime(initialToken='',{session=new Map(),signed=false,profileId=''}={}){
             const data=new Map();
-            if(initialOwner)data.set('puplan_course_owner',initialOwner);
+            if(initialToken)data.set('puplan_session',initialToken);
             let reloads=0;
             const document=new Target(),window=new Target();
-            window.PUPLAN_CLOUD={isSignedIn:()=>signed};
+            window.PUPLAN_CLOUD={isSignedIn:()=>signed,getProfile:()=>profileId?{id:profileId}:null};
             const localStorage={getItem:k=>data.has(k)?data.get(k):null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)};
             const sessionStorage={getItem:k=>session.has(k)?session.get(k):null,setItem:(k,v)=>session.set(k,String(v)),removeItem:k=>session.delete(k)};
-            const context=vm.createContext({document,window,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON});
+            const context=vm.createContext({document,window,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON,atob,escape,decodeURIComponent});
             vm.runInContext(code,context,{filename:'account-boundary.js'});
             return {document,window,localStorage,sessionStorage,reloads:()=>reloads,guard:window.NOLU_ACCOUNT_BOUNDARY};
           }
 
-          let r=runtime('',{signed:true});
-          r.localStorage.setItem('puplan_course_owner','A');
+          let r=runtime('',{signed:true,profileId:A});
+          r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('first verified sign-in must not reload');
-          if(r.guard?.version!=='20260912-account-boundary2')throw new Error('guard version missing');
+          if(r.guard?.version!=='20260912-account-boundary3')throw new Error('guard version missing');
 
-          r=runtime('A');
-          r.localStorage.setItem('puplan_course_owner','B');
+          r=runtime(token(A));
+          r.localStorage.setItem('puplan_session',token(B));
           r.document.emit('puplan:profile-changed');
-          if(r.reloads()!==1)throw new Error('A -> B must hard reload');
+          if(r.reloads()!==1)throw new Error('A -> B session switch must hard reload');
 
-          r=runtime('A');
-          r.localStorage.setItem('puplan_course_owner','B');
+          // Startup cache quarantine may clear/restore the owner marker. It is not
+          // authentication and must not make Safari/PWA windows bounce each other.
+          r=runtime(token(A));
+          r.localStorage.setItem('puplan_course_owner',A);
+          r.localStorage.removeItem('puplan_course_owner');
           r.window.emit('storage',{key:'puplan_course_owner'});
-          if(r.reloads()!==1)throw new Error('cross-tab account switch must hard reload');
+          if(r.reloads()!==0)throw new Error('owner cache churn must not reload');
+
+          r=runtime(token(A));
+          r.localStorage.setItem('puplan_session',token(B));
+          r.window.emit('storage',{key:'puplan_session'});
+          if(r.reloads()!==1)throw new Error('cross-tab session switch must hard reload');
 
           const sharedSession=new Map();
-          r=runtime('A',{session:sharedSession});
-          r.localStorage.removeItem('puplan_course_owner');
+          r=runtime(token(A),{session:sharedSession});
+          r.localStorage.removeItem('puplan_session');
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==1)throw new Error('first logout/session rejection must hard reload');
           if(!sharedSession.get(KEY))throw new Error('reload transition was not persisted');
 
-          // Reproduce the reported loop: after reload a recovery layer reconstructs
-          // owner A, cloud bootstrap rejects it again, and owner returns to empty.
-          // The same A -> empty transition must now render login in-place, not reload.
+          // Reproduce a stale credential resurrection attempt. The same rejected
+          // identity may appear transiently, but its second A -> empty transition
+          // must settle on login instead of reloading forever.
           r=runtime('',{session:sharedSession,signed:false});
-          r.localStorage.setItem('puplan_course_owner','A');
+          r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('transient recovery must not reload');
           if(!sharedSession.get(KEY))throw new Error('transient recovery incorrectly re-armed loop guard');
-          r.localStorage.removeItem('puplan_course_owner');
+          r.localStorage.removeItem('puplan_session');
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('repeated A -> empty transition caused reload loop');
 
           // A real, cloud-verified sign-in re-arms the boundary for a future logout.
-          r=runtime('',{session:sharedSession,signed:true});
-          r.localStorage.setItem('puplan_course_owner','A');
+          r=runtime('',{session:sharedSession,signed:true,profileId:A});
+          r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
           if(sharedSession.has(KEY))throw new Error('verified sign-in did not re-arm boundary');
-          r=runtime('A',{session:sharedSession});
-          r.localStorage.removeItem('puplan_course_owner');
+          r=runtime(token(A),{session:sharedSession});
+          r.localStorage.removeItem('puplan_session');
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==1)throw new Error('future logout was incorrectly suppressed');
           NODE
+
+      - name: Startup quarantine does not churn same-account owner
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/guest-privacy.js').read_text()
+          assert "const RENDERABLE_ACCOUNT_DATA_KEYS=" in s
+          assert "clearLocal([...RENDERABLE_ACCOUNT_DATA_KEYS,...PROFILE_KEYS])" in s
+          assert "ownerBefore&&candidateUid&&ownerBefore!==candidateUid" in s
+          assert "localStorage.removeItem('puplan_course_owner')" in s
+          PY
+
+      - name: Confirmed auth rejection revokes every credential copy once
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/cloud.js').read_text()
+          for key in ['puplan_session','puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1']:
+              assert key in s, f'missing credential key: {key}'
+          assert "if(res.status===401&&auth)invalidateSession();" in s
+          assert "function clearCredentialCopies()" in s
+          assert "for(const key of CREDENTIAL_KEYS)localStorage.removeItem(key);" in s
+          assert "function invalidateSession(){clearSession(false);purgeAccountCache();showGate('login')}" in s
+          assert "if(e?.status===401){clearSession(false);purgeAccountCache()}" not in s
+          PY
+
+      - name: Syntax check
+        run: |
+          node --check pu-plan/account-boundary.js
+          node --check pu-plan/guest-privacy.js
+          node --check pu-plan/cloud.js
