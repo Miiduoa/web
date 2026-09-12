@@ -1,0 +1,109 @@
+name: nolu auth trace smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/auth-trace.js'
+      - 'pu-plan/account-boundary.js'
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-auth-trace-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/auth-trace.js'
+      - 'pu-plan/account-boundary.js'
+      - 'pu-plan/session-recovery.js'
+      - 'pu-plan/cloud.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-auth-trace-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax and shell contract
+        run: |
+          set -euo pipefail
+          node --check pu-plan/auth-trace.js
+          node --check pu-plan/account-boundary.js
+          node --check pu-plan/session-recovery.js
+          node --check pu-plan/cloud.js
+          node --check pu-plan/pwa.js
+          node --check pu-plan/sw.js
+          grep -q "import './auth-trace.js'" pu-plan/main.js
+          grep -q "'./auth-trace.js'" pu-plan/sw.js
+          grep -q "nolu-shell-20260912-auth-trace6" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_auth_trace6" pu-plan/pwa.js
+          grep -q "20260912-auth-trace6" pu-plan/index.html
+          grep -q "auth-boundary-reload" pu-plan/account-boundary.js
+          grep -q "session-recovery" pu-plan/session-recovery.js
+          grep -q "auth-invalidated" pu-plan/cloud.js
+          grep -q "pwa-controllerchange" pu-plan/pwa.js
+
+      - name: Trace never persists auth secrets or identity data
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const code=fs.readFileSync('pu-plan/auth-trace.js','utf8');
+          function storage(){
+            const m=new Map();
+            return {
+              getItem:k=>m.has(k)?m.get(k):null,
+              setItem:(k,v)=>m.set(k,String(v)),
+              removeItem:k=>m.delete(k),
+              dump:()=>Object.fromEntries(m)
+            };
+          }
+          const localStorage=storage(),sessionStorage=storage(),window={};
+          vm.runInNewContext(code,{window,localStorage,sessionStorage,Date,Math,JSON,Object,String,Number,Set});
+          const trace=window.NOLU_AUTH_TRACE;
+          assert.equal(trace.version,'20260912-auth-trace1');
+          trace.record('security-test',{
+            status:'unauthorized',reason:'http-401',httpStatus:401,
+            token:'super-secret-token',password:'hunter2',email:'private@example.com',
+            uid:'11111111-1111-4111-8111-111111111111',profile:'private profile'
+          });
+          for(let i=0;i<100;i++)trace.record('ring-test',{status:`event-${i}`});
+          const raw=localStorage.getItem('nolu_auth_trace_v1')||'';
+          for(const secret of ['super-secret-token','hunter2','private@example.com','11111111-1111-4111-8111-111111111111','private profile']){
+            assert(!raw.includes(secret),`trace leaked sensitive value: ${secret}`);
+          }
+          const events=trace.snapshot();
+          assert(events.length<=80,'trace ring exceeded max size');
+          assert(events.some(x=>x.type==='ring-test'),'trace failed to retain events');
+          const allowed=new Set(['at','tab','type','reason','status','source','transition','action','outcome','mode','stage','httpStatus','reload','controller','recovered','expired','connectivity','guest']);
+          for(const event of events)for(const key of Object.keys(event))assert(allowed.has(key),`unexpected persisted trace field: ${key}`);
+          console.log('NOLU_AUTH_TRACE_PRIVACY_OK');
+          NODE
+
+      - name: Trace is diagnostic only
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/auth-trace.js').read_text()
+          assert 'fetch(' not in s
+          assert 'Authorization' not in s
+          assert 'puplan_session' not in s
+          assert 'email' not in s.lower()
+          assert 'password' not in s.lower()
+          assert 'uid' not in s.lower()
+          assert 'MAX_EVENTS=80' in s
+          PY
