@@ -1,0 +1,81 @@
+name: nolu owner-domain child replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/standby/20260912_nolu_shared_domain_authority.sql'
+      - 'supabase/standby/20260912_nolu_standby_dirty_fence_authority.sql'
+      - 'supabase/standby/20260912_nolu_standby_atomic_media_replica.sql'
+      - 'supabase/standby/20260912_nolu_owner_domain_child_replica_fix.sql'
+      - '.github/workflows/nolu-owner-domain-child-replay.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/standby/20260912_nolu_shared_domain_authority.sql'
+      - 'supabase/standby/20260912_nolu_standby_dirty_fence_authority.sql'
+      - 'supabase/standby/20260912_nolu_standby_atomic_media_replica.sql'
+      - 'supabase/standby/20260912_nolu_owner_domain_child_replica_fix.sql'
+      - '.github/workflows/nolu-owner-domain-child-replay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Owner aggregate may replay cross-user child rows
+        shell: python
+        run: |
+          from pathlib import Path
+
+          owner = Path('supabase/standby/20260912_nolu_shared_domain_authority.sql').read_text()
+          fence = Path('supabase/standby/20260912_nolu_standby_dirty_fence_authority.sql').read_text()
+          atomic = Path('supabase/standby/20260912_nolu_standby_atomic_media_replica.sql').read_text()
+          fix = Path('supabase/standby/20260912_nolu_owner_domain_child_replica_fix.sql').read_text()
+
+          # Aggregate authority lives in the apply routine, not in each child
+          # row's author/member/sender identity.
+          assert "'shared_authority','owner-domain-v1'" in owner
+          assert 'WHERE p.author_id=v_uid AND p.parent_id IS NULL' in owner
+          assert 'WHERE c.created_by=v_uid' in owner
+          assert 'JOIN public.puplan_app_conversations c ON c.id=cm.conversation_id' in owner
+          assert 'JOIN public.puplan_app_conversations c ON c.id=msg.conversation_id' in owner
+
+          # The dirty-fence rollout originally installed generic row guards. A
+          # reply by B under A's root and a B message in A's conversation are
+          # legitimate children of A's authoritative aggregate, so the final
+          # migration must remove those four mismatched guards.
+          for trigger in (
+              'nolu_replica_authority_posts',
+              'nolu_replica_authority_likes',
+              'nolu_replica_authority_members',
+              'nolu_replica_authority_messages',
+          ):
+              assert f'DROP TRIGGER IF EXISTS {trigger}' in fix
+
+          # Keep the correctly aligned row guards for standalone/shared roots.
+          for trigger in (
+              'nolu_replica_authority_friendships',
+              'nolu_replica_authority_meetups',
+              'nolu_replica_authority_conversations',
+              'nolu_replica_authority_media',
+              'nolu_replica_authority_feed_preferences',
+              'nolu_replica_authority_affinity',
+          ):
+              assert trigger in fence
+              assert f'DROP TRIGGER IF EXISTS {trigger}' not in fix
+
+          # Only the guarded public wrapper is callable by service_role. The
+          # implementation helpers must remain unreachable from Data API roles
+          # and directly unreachable even to service_role callers.
+          assert 'puplan_apply_server_replica_unchecked(jsonb)' in fix
+          assert 'puplan_apply_replica_media_unchecked(jsonb)' in fix
+          assert 'FROM PUBLIC, anon, authenticated, service_role' in fix
+          assert 'GRANT EXECUTE ON FUNCTION public.puplan_apply_server_replica(jsonb) TO service_role' in fix
+          assert 'puplan_apply_server_replica_unchecked' in atomic
+          assert 'puplan_apply_replica_media_unchecked' in atomic
+
+          print('owner-domain child replay contract: ok')
