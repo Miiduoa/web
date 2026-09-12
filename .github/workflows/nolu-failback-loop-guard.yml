@@ -1,0 +1,40 @@
+name: nolu failback loop guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260912101000_nolu_hot_standby_primary_failback_loop_guard.sql'
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-failback-loop-guard.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260912101000_nolu_hot_standby_primary_failback_loop_guard.sql'
+      - 'supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql'
+      - '.github/workflows/nolu-failback-loop-guard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Failback writes cannot enqueue a replication echo
+        shell: python
+        run: |
+          from pathlib import Path
+          core = Path('supabase/migrations/20260912101000_nolu_hot_standby_primary_failback_loop_guard.sql').read_text()
+          social = Path('supabase/migrations/20260911174000_nolu_social_replication_media_integrity.sql').read_text()
+          guard = "current_setting('nolu.failback_apply', true)='1'"
+          assert 'puplan_enqueue_replication' in core
+          assert guard in core.replace(' = ', '=')
+          assert 'puplan_dispatch_replication' in core
+          assert 'FROM PUBLIC,anon,authenticated' in core
+          assert 'TO service_role' in core
+          assert 'puplan_enqueue_social_replication' in social
+          assert "current_setting('nolu.failback_apply', true) = '1'" in social
+          assert 'TO service_role' in social
+          print('failback replication echo guard: ok')
