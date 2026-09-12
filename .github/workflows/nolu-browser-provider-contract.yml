@@ -69,11 +69,12 @@ jobs:
 
           const versions=[...html.matchAll(/\?v=([^"']+)/g)].map(m=>m[1]);
           assert(versions.length>=10,'expected versioned shell assets');
-          assert.deepEqual([...new Set(versions)],['20260912-auth-stability5'],'all shell assets must roll together');
-          assert.match(sw,/const CACHE='nolu-shell-20260912-auth-stability5'/);
+          assert.deepEqual([...new Set(versions)],['20260912-auth-trace6'],'all shell assets must roll together');
+          assert.match(sw,/const CACHE='nolu-shell-20260912-auth-trace6'/);
+          assert.match(sw,/auth-trace\.js/);
           assert.match(sw,/login-failover-budget\.js/);
           assert.match(sw,/media-failback-guard\.js/);
-          assert.match(pwa,/nolu_shell_reload_20260912_auth_stability5/);
+          assert.match(pwa,/nolu_shell_reload_20260912_auth_trace6/);
           assert.match(loginBudget,/OVERALL_LOGIN_TIMEOUT_MS=14000/);
           assert.match(loginPatience,/primaryLoginTimeoutMs:5000/);
           assert.match(loginPatience,/standbyLoginTimeoutMs:6500/);
