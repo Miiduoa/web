@@ -62,8 +62,9 @@ jobs:
       - name: Require current installed shell
         run: |
           set -euo pipefail
-          grep -Fq 'nolu-shell-20260911-login-failover3' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260911_login_failover3' pu-plan/pwa.js
-          grep -Fq '20260911-login-failover3' pu-plan/index.html
+          grep -Fq 'nolu-shell-20260912-media-failback1' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260912_media_failback1' pu-plan/pwa.js
+          grep -Fq '20260912-media-failback1' pu-plan/index.html
           grep -Fq "'./offline-session-rescue.js'" pu-plan/sw.js
           grep -Fq "'./account-boundary.js'" pu-plan/sw.js
+          grep -Fq "'./media-failback-guard.js'" pu-plan/sw.js
