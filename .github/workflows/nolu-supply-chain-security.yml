@@ -8,12 +8,20 @@ on:
       - 'package-lock.json'
       - '.github/dependabot.yml'
       - '.github/workflows/nolu-supply-chain-security.yml'
+      - 'pu-plan/**'
+      - 'supabase/**'
+      - 'netlify/**'
+      - 'services/nolu-render-mirror/**'
   pull_request:
     paths:
       - 'package.json'
       - 'package-lock.json'
       - '.github/dependabot.yml'
       - '.github/workflows/nolu-supply-chain-security.yml'
+      - 'pu-plan/**'
+      - 'supabase/**'
+      - 'netlify/**'
+      - 'services/nolu-render-mirror/**'
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
