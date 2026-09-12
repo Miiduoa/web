@@ -12,7 +12,7 @@ function sessionUid(raw=''){
     const [payload,signature,...extra]=String(raw).split('.');
     if(!payload||!signature||extra.length)return'';
     const normalized=payload.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(payload.length/4)*4,'=');
-    const data=JSON.parse(deURIComponent(escape(atob(normalized))));
+    const data=JSON.parse(decodeURIComponent(escape(atob(normalized))));
     return data?.v===4&&UUID.test(String(data?.uid||''))?String(data.uid):'';
   }catch{return''}
 }
