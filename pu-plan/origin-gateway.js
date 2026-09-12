@@ -1,3 +1,5 @@
+import './media-failback-guard.js';
+
 (()=>{
   const baseFetch=window.fetch.bind(window);
   const GATEWAY_SLUG='nolu-browser-gateway-v1';
@@ -40,7 +42,7 @@
   };
 
   window.NOLU_ORIGIN_GATEWAY={
-    version:'20260911-origin-gateway1',
+    version:'20260912-origin-gateway2-media-failback',
     route:routedUrl,
     gateway:GATEWAY_SLUG
   };
