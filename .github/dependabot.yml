@@ -18,3 +18,15 @@ updates:
       time: '04:37'
       timezone: Asia/Taipei
     open-pull-requests-limit: 5
+    groups:
+      official-actions-major:
+        patterns:
+          - 'actions/*'
+        update-types:
+          - major
+      official-actions-routine:
+        patterns:
+          - 'actions/*'
+        update-types:
+          - minor
+          - patch
