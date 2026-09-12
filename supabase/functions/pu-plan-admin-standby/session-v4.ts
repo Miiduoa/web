@@ -58,6 +58,8 @@ export async function credentialVersion(passwordSalt: string) {
   const digest = new Uint8Array(
     await crypto.subtle.digest('SHA-256', encoder.encode(`nolu-session-v4:${passwordSalt}`)),
   );
+  // 132 bits is ample for a non-secret credential version marker while keeping
+  // session payloads compact. The HMAC on the whole payload prevents tampering.
   return b64url(digest).slice(0, 22);
 }
 
@@ -109,6 +111,7 @@ export async function verifySignedSessionV4(
   if (payload.exp < nowSeconds) {
     throw new SessionError('SESSION_EXPIRED', '登入已過期，請重新登入');
   }
+  // Reject tokens with implausible future issue times to narrow replay/clock abuse.
   if (payload.iat > nowSeconds + 300) {
     throw new SessionError('UNAUTHORIZED', '登入狀態無效，請重新登入');
   }
