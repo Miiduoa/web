@@ -38,44 +38,75 @@ jobs:
           assert s.index("await import('./guest-privacy.js')") < s.index("await import('./account-boundary.js')") < s.index("await import('./durable-bridge.js')")
           PY
 
-      - name: Account transitions cannot keep prior in-memory context
+      - name: Account transitions cannot reload forever
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs=require('fs');
           const vm=require('vm');
           const code=fs.readFileSync('pu-plan/account-boundary.js','utf8');
+          const KEY='nolu_account_boundary_v2';
 
           class Target {
             constructor(){this.handlers=new Map()}
             addEventListener(type,fn){const a=this.handlers.get(type)||[];a.push(fn);this.handlers.set(type,a)}
             emit(type,event={}){for(const fn of this.handlers.get(type)||[])fn(event)}
           }
-          function scenario(initialOwner,mutate,emit){
+          function runtime(initialOwner,{session=new Map(),signed=false}={}){
             const data=new Map();
             if(initialOwner)data.set('puplan_course_owner',initialOwner);
-            const session=new Map();
             let reloads=0;
             const document=new Target(),window=new Target();
+            window.PUPLAN_CLOUD={isSignedIn:()=>signed};
             const localStorage={getItem:k=>data.has(k)?data.get(k):null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)};
             const sessionStorage={getItem:k=>session.has(k)?session.get(k):null,setItem:(k,v)=>session.set(k,String(v)),removeItem:k=>session.delete(k)};
             const context=vm.createContext({document,window,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON});
             vm.runInContext(code,context,{filename:'account-boundary.js'});
-            mutate(localStorage);
-            emit({document,window});
-            return {reloads,guard:window.NOLU_ACCOUNT_BOUNDARY};
+            return {document,window,localStorage,sessionStorage,reloads:()=>reloads,guard:window.NOLU_ACCOUNT_BOUNDARY};
           }
 
-          let r=scenario('',s=>s.setItem('puplan_course_owner','A'),({document})=>document.emit('puplan:profile-changed'));
-          if(r.reloads!==0)throw new Error('first sign-in must not reload');
-          if(r.guard?.version!=='20260911-account-boundary1')throw new Error('guard version missing');
+          let r=runtime('',{signed:true});
+          r.localStorage.setItem('puplan_course_owner','A');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==0)throw new Error('first verified sign-in must not reload');
+          if(r.guard?.version!=='20260912-account-boundary2')throw new Error('guard version missing');
 
-          r=scenario('A',s=>s.setItem('puplan_course_owner','B'),({document})=>document.emit('puplan:profile-changed'));
-          if(r.reloads!==1)throw new Error('A -> B must hard reload');
+          r=runtime('A');
+          r.localStorage.setItem('puplan_course_owner','B');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==1)throw new Error('A -> B must hard reload');
 
-          r=scenario('A',s=>s.removeItem('puplan_course_owner'),({document})=>document.emit('puplan:profile-changed'));
-          if(r.reloads!==1)throw new Error('logout/guest transition must hard reload');
+          r=runtime('A');
+          r.localStorage.setItem('puplan_course_owner','B');
+          r.window.emit('storage',{key:'puplan_course_owner'});
+          if(r.reloads()!==1)throw new Error('cross-tab account switch must hard reload');
 
-          r=scenario('A',s=>s.setItem('puplan_course_owner','B'),({window})=>window.emit('storage',{key:'puplan_course_owner'}));
-          if(r.reloads!==1)throw new Error('cross-tab account switch must hard reload');
+          const sharedSession=new Map();
+          r=runtime('A',{session:sharedSession});
+          r.localStorage.removeItem('puplan_course_owner');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==1)throw new Error('first logout/session rejection must hard reload');
+          if(!sharedSession.get(KEY))throw new Error('reload transition was not persisted');
+
+          // Reproduce the reported loop: after reload a recovery layer reconstructs
+          // owner A, cloud bootstrap rejects it again, and owner returns to empty.
+          // The same A -> empty transition must now render login in-place, not reload.
+          r=runtime('',{session:sharedSession,signed:false});
+          r.localStorage.setItem('puplan_course_owner','A');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==0)throw new Error('transient recovery must not reload');
+          if(!sharedSession.get(KEY))throw new Error('transient recovery incorrectly re-armed loop guard');
+          r.localStorage.removeItem('puplan_course_owner');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==0)throw new Error('repeated A -> empty transition caused reload loop');
+
+          // A real, cloud-verified sign-in re-arms the boundary for a future logout.
+          r=runtime('',{session:sharedSession,signed:true});
+          r.localStorage.setItem('puplan_course_owner','A');
+          r.document.emit('puplan:profile-changed');
+          if(sharedSession.has(KEY))throw new Error('verified sign-in did not re-arm boundary');
+          r=runtime('A',{session:sharedSession});
+          r.localStorage.removeItem('puplan_course_owner');
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==1)throw new Error('future logout was incorrectly suppressed');
           NODE
