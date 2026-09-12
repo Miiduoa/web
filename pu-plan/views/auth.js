@@ -1,5 +1,5 @@
-export function authView(){return `
-<div class="auth-gate" id="authGate">
+export function authView({hidden=false}={}){return `
+<div class="auth-gate${hidden?' off':''}" id="authGate">
   <section class="auth-poster" aria-label="nolu">
     <div class="auth-brand"><img src="nolu-icon.svg" alt=""><strong>nolu</strong></div>
     <div class="auth-copy"><h1>有空，就碰面。</h1><p>課表、朋友、動態和聊天，都放在同一個地方。</p></div>
