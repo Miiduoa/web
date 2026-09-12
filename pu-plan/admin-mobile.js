@@ -31,7 +31,7 @@ function sync(profile=currentProfile()){
     button.textContent='管理';
     button.setAttribute('aria-label','網站管理');
     button.addEventListener('click',async()=>{
-      if(!window.PUPLAN_ADMIN)await import('./admin.js?v=20260912-admin-mobile1');
+      if(!window.PUPLAN_ADMIN)await import('./admin.js');
       window.PUPLAN_ADMIN?.install?.();
       window.PUPLAN_ADMIN?.open?.();
       markActive(button);
