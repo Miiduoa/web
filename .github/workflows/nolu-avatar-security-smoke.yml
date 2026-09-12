@@ -36,19 +36,25 @@ jobs:
           node --check pu-plan/admin.js
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
+          def imports_from_state(src):
+              groups = re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"]\./core/state\.js['\"]\s*;", src)
+              return {part.strip().split(' as ')[-1].strip() for group in groups for part in group.split(',') if part.strip()}
+
           social = Path('pu-plan/social-ui.js').read_text()
           community = Path('pu-plan/community.js').read_text()
           admin = Path('pu-plan/admin.js').read_text()
-          assert "import {cleanAvatar} from './core/state.js';" in social
-          assert "cleanAvatar(person?.avatar||person?.avatar_data||'')" in social
-          assert "import {cleanAvatar} from './core/state.js';" in community
-          assert "cleanAvatar(p?.avatar_data||'')" in community
-          assert "cleanAvatar(f.avatar||f.avatar_data||'')" in community
-          assert "import {cleanAvatar} from './core/state.js';" in admin
-          assert "cleanAvatar(u?.avatar_data||'')" in admin
-          assert "const src=person?.avatar||person?.avatar_data||''" not in social
-          assert 'src="${esc(f.avatar)}"' not in community
-          print('avatar source guardrails passed')
+
+          for name, src in [('social-ui.js', social), ('community.js', community), ('admin.js', admin)]:
+              assert 'cleanAvatar' in imports_from_state(src), f'{name} must import cleanAvatar from core/state.js'
+
+          assert re.search(r"cleanAvatar\s*\(\s*person\?\.avatar\s*\|\|\s*person\?\.avatar_data\s*\|\|\s*['\"]['\"]\s*\)", social), 'social avatar must be sanitized'
+          assert re.search(r"cleanAvatar\s*\(\s*p\?\.avatar_data\s*\|\|\s*['\"]['\"]\s*\)", community), 'community profile avatar must be sanitized'
+          assert re.search(r"cleanAvatar\s*\(\s*u\?\.avatar_data\s*\|\|\s*['\"]['\"]\s*\)", admin), 'admin avatar must be sanitized'
+          assert "const src=person?.avatar||person?.avatar_data||''" not in social, 'social renderer must not use a raw avatar source'
+          assert 'src="${esc(f.avatar)}"' not in community, 'community renderer must not inject raw friend avatars'
+          print('avatar semantic source guardrails passed')
           PY
 
       - name: Verify strict avatar allowlist
@@ -116,20 +122,23 @@ jobs:
               const page=await context.newPage();
               const errors=[];
               const failed=[];
+              const requests=[];
               page.on('pageerror',e=>errors.push(`pageerror: ${e.message}`));
               page.on('console',m=>{if(m.type()==='error')errors.push(`console: ${m.text()}`)});
               page.on('requestfailed',r=>failed.push(`${r.url()} :: ${r.failure()?.errorText||''}`));
               await page.route('https://*.supabase.co/**',async route=>{
-                const url=route.request().url();
+                const req=route.request();
+                const url=req.url();
                 const parsed=new URL(url);
                 let body={};
-                try{body=route.request().postDataJSON()||{}}catch{}
+                try{body=req.postDataJSON()||{}}catch{}
                 const action=body.action||'';
+                const gateway=parsed.pathname.endsWith('/functions/v1/nolu-browser-gateway-v1');
+                const target=gateway?(parsed.searchParams.get('target')||''):(parsed.pathname.split('/').filter(Boolean).at(-1)||'');
+                requests.push({host:parsed.hostname,target,action});
                 const respond=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
 
-                // v8 is the active regional API. Exercise Mumbai v8 directly and
-                // keep Tokyo unavailable so this avatar-focused test stays isolated.
-                if(parsed.pathname.endsWith('/functions/v1/pu-plan-api-v8')){
+                if(target==='pu-plan-api-v8'){
                   if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'){
                     if(action==='login'||action==='bootstrap')return respond(bundle());
                     if(action==='social')return respond({social:bundle().social});
@@ -137,23 +146,21 @@ jobs:
                   return respond({message:'standby not seeded in avatar test'},503);
                 }
 
-                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&url.includes('/functions/v1/pu-plan-admin')){
+                if(target==='pu-plan-admin'&&parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'){
                   if(action==='whoami')return respond({is_admin:true,profile:{id:USER_ID,email:'admin@example.invalid',display_name:'Admin',username:'admin',role:'admin'}});
                   if(action==='overview')return respond({stats:{users:4,posts:0,replies:0,messages:0,conversations:0,friendships:0,semesters:0,media:0}});
                   if(action==='users')return respond({users:evil.map(x=>({id:x.id,email:`${x.username}@example.invalid`,display_name:x.display_name,username:x.username,avatar_data:x.avatar_data,role:'user',profile_visibility:'public',discoverable:true})),total:evil.length});
                   return respond({message:'unsupported test action'},400);
                 }
-                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&(url.includes('/functions/v1/pu-plan-api-v6')||url.includes('/functions/v1/pu-plan-core-v1'))){
-                  if(action==='login')return respond(bundle());
+                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&(target==='pu-plan-api-v6'||target==='pu-plan-core-v1')){
+                  if(action==='login'||action==='bootstrap')return respond(bundle());
                   if(action==='social')return respond({social:bundle().social});
-                  if(action==='bootstrap')return respond(bundle());
                 }
-                if(parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'&&url.includes('/functions/v1/pu-plan-social')){
+                if(target==='pu-plan-social'&&parsed.hostname==='hrrmkrayvrgnwcroyttp.supabase.co'){
                   if(action==='inbox')return respond({conversations:[]});
                   return respond({});
                 }
-                // Never let the frontend security test reach a real Supabase region.
-                return respond({message:'test endpoint not mocked'},401);
+                return respond({message:`test endpoint not mocked: ${target}`},401);
               });
               await page.addInitScript(()=>{
                 localStorage.clear();sessionStorage.clear();
@@ -164,14 +171,28 @@ jobs:
                 await page.waitForFunction(()=>window.PUPLAN_APP&&window.PUPLAN_CLOUD,null,{timeout:15000});
               }catch(error){
                 const startup=await page.evaluate(()=>({app:!!window.PUPLAN_APP,durable:!!window.NOLU_DURABLE,transport:!!window.NOLU_TRANSPORT,resilience:!!window.NOLU_RESILIENCE,offlineRescue:!!window.NOLU_OFFLINE_RESCUE,cloud:!!window.PUPLAN_CLOUD,replication:!!window.NOLU_REPLICATION,readyState:document.readyState}));
-                console.error('AVATAR_STARTUP_STATE',startup,'ERRORS',errors,'FAILED',failed);
+                console.error('AVATAR_STARTUP_STATE',startup,'ERRORS',errors,'FAILED',failed,'REQUESTS',requests);
                 throw error;
               }
               await page.locator('[data-auth-tab="login"]').click();
               await page.locator('#loginEmail').fill('test@example.invalid');
               await page.locator('#loginPassword').fill('test-password');
               await page.locator('#loginForm').evaluate(form=>form.requestSubmit());
-              await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.(),null,{timeout:10000});
+              try{
+                await page.waitForFunction(()=>window.PUPLAN_CLOUD?.isSignedIn?.(),null,{timeout:10000});
+              }catch(error){
+                const auth=await page.evaluate(()=>({
+                  signedIn:!!window.PUPLAN_CLOUD?.isSignedIn?.(),
+                  authStatus:document.querySelector('#authStatus')?.textContent||'',
+                  gateOff:document.querySelector('#authGate')?.classList.contains('off')||false,
+                  session:!!localStorage.getItem('puplan_session'),
+                  primary:!!localStorage.getItem('puplan_session_primary_v1'),
+                  standby:!!localStorage.getItem('puplan_session_standby_v1'),
+                  owner:localStorage.getItem('puplan_course_owner')||''
+                }));
+                console.error('AVATAR_LOGIN_DEBUG',auth,'ERRORS',errors,'FAILED',failed,'REQUESTS',requests);
+                throw error;
+              }
 
               const sanitized=await page.evaluate(()=>window.PUPLAN_APP.friends().map(f=>({id:f.id,avatar:f.avatar})));
               const byId=Object.fromEntries(sanitized.map(x=>[x.id,x.avatar]));
