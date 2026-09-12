@@ -1,0 +1,97 @@
+name: Nolu Auth Session Hygiene Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/admin-failover.js'
+      - '.github/workflows/nolu-auth-session-hygiene-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/admin-failover.js'
+      - '.github/workflows/nolu-auth-session-hygiene-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  auth-session-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Manual login reopens Mumbai authority circuit
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const code=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+          const primary='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+          const values=new Map([['nolu_preferred_cloud_v1','standby']]);
+          const localStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
+          const health={openUntil:Date.now()+60000,failures:3,lastError:'old outage'};
+          let observedOpenUntil=null;
+          const window={
+            NOLU_RESILIENCE:{PRIMARY:primary,state:{endpoints:{[primary]:health}}},
+            fetch:async()=>{observedOpenUntil=health.openUntil;return new Response('{}',{status:200})}
+          };
+          Object.assign(window,{window,localStorage});
+          const ctx=vm.createContext({window,localStorage,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Response,Date,Object,console});
+          vm.runInContext(code,ctx);
+          (async()=>{
+            await ctx.window.fetch(primary,{method:'POST',body:JSON.stringify({action:'login'})});
+            assert.equal(values.get('nolu_preferred_cloud_v1'),'primary');
+            assert.equal(observedOpenUntil,0,'fresh password login must probe Mumbai even if an old circuit is open');
+            console.log('MANUAL_LOGIN_PRIMARY_REPROBE_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Cross-region admin token contamination is scrubbed
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const code=fs.readFileSync('pu-plan/admin-failover.js','utf8');
+          const values=new Map([
+            ['puplan_session','tokyo-token'],
+            ['puplan_session_primary_v1','tokyo-token'],
+            ['puplan_session_standby_v1','tokyo-token'],
+            ['nolu_preferred_cloud_v1','standby']
+          ]);
+          const calls=[];
+          const localStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
+          class HeadersX{
+            constructor(src={}){this.m=new Map();for(const [k,v] of Object.entries(src))this.m.set(k.toLowerCase(),String(v))}
+            set(k,v){this.m.set(k.toLowerCase(),String(v))}
+            get(k){return this.m.get(k.toLowerCase())||null}
+          }
+          const nativeFetch=async(url,opt={})=>{
+            calls.push({url:String(url),auth:opt.headers?.get?.('Authorization')||''});
+            return new Response('{}',{status:String(url).includes('ltfurqaspqsvswmebyzw')?200:401});
+          };
+          const window={fetch:nativeFetch};Object.assign(window,{window,localStorage});
+          const ctx=vm.createContext({window,localStorage,location:{href:'https://miiduoa.github.io/web/'},URL,Headers:HeadersX,Response,console});
+          vm.runInContext(code,ctx);
+          const admin='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
+          (async()=>{
+            const read=await ctx.window.fetch(admin,{method:'POST',body:JSON.stringify({action:'whoami'})});
+            assert(read.ok,'standby read should succeed');
+            assert.equal(values.has('puplan_session_primary_v1'),false,'Tokyo token must be scrubbed from Mumbai slot');
+            assert.equal(calls.length,1);
+            assert(calls[0].url.includes('ltfurqaspqsvswmebyzw'),'contaminated Tokyo token must never reach Mumbai');
+            calls.length=0;
+            const write=await ctx.window.fetch(admin,{method:'POST',body:JSON.stringify({action:'moderate_post'})});
+            assert.equal(write.status,503,'standby-only admin mutation must fail closed');
+            assert.equal(calls.length,0,'standby-only admin mutation must not be sent to Tokyo');
+            console.log('ADMIN_SESSION_CONTAMINATION_SCRUB_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Syntax check
+        run: |
+          node --check pu-plan/login-failover-budget.js
+          node --check pu-plan/admin-failover.js
