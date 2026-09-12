@@ -9,11 +9,14 @@ function tokenFor(tier){
   const primary=localStorage.getItem('puplan_session_primary_v1')||'';
   const standby=localStorage.getItem('puplan_session_standby_v1')||'';
   if(tier==='standby')return standby;
+  // Tokyo and Mumbai sign Session v4 independently. When the current canonical
+  // login is Tokyo, an older Mumbai token may still be left on the device. That
+  // stale token must not be treated as authoritative: doing so makes a valid
+  // standby login look like an invalid login after Mumbai answers 401. In this
+  // state, read-only admin calls may use Tokyo while writes stay fail-closed.
+  const canonicalIsStandby=localStorage.getItem('nolu_preferred_cloud_v1')==='standby'||(standby&&canonical===standby);
+  if(canonicalIsStandby)return'';
   if(primary)return primary;
-  // Tokyo and Mumbai sign Session v4 independently. Never infer a Mumbai admin
-  // credential from a canonical token that is known (or currently preferred) to
-  // be Tokyo; that turns a valid standby login into a misleading primary 401.
-  if(localStorage.getItem('nolu_preferred_cloud_v1')==='standby'||(standby&&canonical===standby))return'';
   return canonical;
 }
 function adminTarget(raw){try{const u=new URL(typeof raw==='string'||raw instanceof URL?String(raw):raw?.url||'',location.href);return u.hostname===`${PRIMARY_REF}.supabase.co`&&u.pathname==='/functions/v1/pu-plan-admin'}catch{return false}}
@@ -25,9 +28,10 @@ window.fetch=async function noluAdminRegionalFailover(input,options={}){
   try{action=String(JSON.parse(String(options?.body||'{}'))?.action||'')}catch{}
   const primary=await call(PRIMARY,options,'primary').catch(()=>null);
   if(primary?.ok){localStorage.setItem('nolu_admin_cloud_v1','primary');return primary}
-  // A 4xx from the authority is a decision, not an outage. In particular, never
-  // turn primary 401/403/session-revoked/admin-demoted responses into a standby
-  // retry where replicated credentials or roles may still be stale.
+  // A 4xx from the current authority is a decision, not an outage. In particular,
+  // never turn an actual Mumbai 401/403 into a Tokyo retry when Mumbai owns the
+  // current session. Tokyo is considered only when there is no trusted Mumbai
+  // credential or Mumbai is unavailable.
   if(primary&&!failoverEligible(primary))return primary;
   if(!READ_ONLY.has(action))return primary||new Response(JSON.stringify({error:'PRIMARY_REQUIRED',message:'這個管理操作需要主雲端'}),{status:503,headers:{'Content-Type':'application/json'}});
   const standby=await call(STANDBY,options,'standby').catch(()=>null);
@@ -35,4 +39,4 @@ window.fetch=async function noluAdminRegionalFailover(input,options={}){
   if(primary)return primary;
   return new Response(JSON.stringify({error:'ADMIN_UNAVAILABLE',message:'管理功能暫時無法使用'}),{status:503,headers:{'Content-Type':'application/json'}})
 };
-window.NOLU_ADMIN_FAILOVER={version:'20260912-admin-read-failover3',PRIMARY,STANDBY,READ_ONLY};
+window.NOLU_ADMIN_FAILOVER={version:'20260912-admin-read-failover4',PRIMARY,STANDBY,READ_ONLY};
