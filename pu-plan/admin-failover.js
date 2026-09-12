@@ -6,9 +6,15 @@ const READ_ONLY=new Set(['whoami','overview','users','user_detail','posts','conv
 const nativeFetch=window.fetch.bind(window);
 function tokenFor(tier){
   const canonical=localStorage.getItem('puplan_session')||'';
-  const primary=localStorage.getItem('puplan_session_primary_v1')||'';
+  let primary=localStorage.getItem('puplan_session_primary_v1')||'';
   const standby=localStorage.getItem('puplan_session_standby_v1')||'';
   if(tier==='standby')return standby;
+  // If an older admin client accidentally promoted the Tokyo token into the
+  // Mumbai slot, scrub it before it can ever be sent to the primary authority.
+  if(primary&&standby&&primary===standby){
+    localStorage.removeItem('puplan_session_primary_v1');
+    primary='';
+  }
   // Tokyo and Mumbai sign Session v4 independently. When the current canonical
   // login is Tokyo, an older Mumbai token may still be left on the device. That
   // stale token must not be treated as authoritative: doing so makes a valid
@@ -39,4 +45,4 @@ window.fetch=async function noluAdminRegionalFailover(input,options={}){
   if(primary)return primary;
   return new Response(JSON.stringify({error:'ADMIN_UNAVAILABLE',message:'管理功能暫時無法使用'}),{status:503,headers:{'Content-Type':'application/json'}})
 };
-window.NOLU_ADMIN_FAILOVER={version:'20260912-admin-read-failover4',PRIMARY,STANDBY,READ_ONLY};
+window.NOLU_ADMIN_FAILOVER={version:'20260912-admin-read-failover5',PRIMARY,STANDBY,READ_ONLY};
