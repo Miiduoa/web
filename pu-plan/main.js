@@ -1,4 +1,5 @@
 import './auth-trace.js';
+import './media-input-guard.js';
 import './origin-gateway.js';
 import './login-transport-patience.js';
 import './avatar-guard.js';
