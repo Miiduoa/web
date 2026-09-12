@@ -1,0 +1,54 @@
+name: nolu media failback smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/media-failback-guard.js'
+      - 'pu-plan/origin-gateway.js'
+      - 'supabase/functions/pu-plan-media-ingest-v1/**'
+      - 'supabase/standby/functions/pu-plan-media-failback-v1/**'
+      - 'supabase/standby/20260912_nolu_media_bucket.sql'
+      - '.github/workflows/nolu-media-failback-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/media-failback-guard.js'
+      - 'pu-plan/origin-gateway.js'
+      - 'supabase/functions/pu-plan-media-ingest-v1/**'
+      - 'supabase/standby/functions/pu-plan-media-failback-v1/**'
+      - 'supabase/standby/20260912_nolu_media_bucket.sql'
+      - '.github/workflows/nolu-media-failback-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static media failback invariants
+        run: |
+          node --check pu-plan/media-failback-guard.js
+          node --check pu-plan/origin-gateway.js
+          grep -q "import './media-failback-guard.js'" pu-plan/origin-gateway.js
+          grep -q "pu-plan-media-failback-v1" pu-plan/media-failback-guard.js
+          grep -q "pu-plan-failback-v1" pu-plan/media-failback-guard.js
+          grep -q "BROWSER_ORIGIN_NOT_ALLOWED" supabase/functions/pu-plan-media-ingest-v1/index.ts
+          grep -q "STANDBY_PUBLIC_KEY" supabase/functions/pu-plan-media-ingest-v1/index.ts
+          grep -q "source.hostname" supabase/functions/pu-plan-media-ingest-v1/index.ts
+          grep -q "nolu-failback-ed25519-v1-20260911" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
+          grep -q "createSignedUrl" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
+          grep -q "pu-plan-media-ingest-v1" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
+          grep -q "public=false" supabase/standby/20260912_nolu_media_bucket.sql
+      - name: Simulate object-first ordering
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const src=fs.readFileSync('pu-plan/media-failback-guard.js','utf8');
+          const media=src.indexOf('syncMedia(auth)');
+          const metadata=src.indexOf('return baseFetch(input,init)',media);
+          if(media<0||metadata<0||media>metadata)throw new Error('metadata failback can run before media guard');
+          console.log('MEDIA_BEFORE_METADATA_FAILBACK_OK');
+          NODE
