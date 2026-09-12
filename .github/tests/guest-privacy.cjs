@@ -45,6 +45,7 @@ const privateSeed={
   puplan_schedule_meta:'{"school":"Private"}',
   puplan_course_owner:UID_A
 };
+const renderablePrivateKeys=Object.keys(privateSeed).filter(key=>key!=='puplan_course_owner');
 
 {
   const x=boot({...privateSeed,puplan_guest:'1'},{puplan_assistant_history:'private chat'});
@@ -82,7 +83,8 @@ const privateSeed={
   assert.equal(data.puplan_session,session,'canonical session must remain available for verification');
   assert.equal(data.puplan_session_primary_v1,session,'same-account regional recovery credential should survive quarantine');
   assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],'{"trusted":"later"}','same-account recovery material should survive quarantine');
-  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`pre-render cache survived quarantine: ${key}`);
+  assert.equal(data.puplan_course_owner,UID_A,'same-account owner marker must stay stable across startup quarantine');
+  for(const key of renderablePrivateKeys)assert.equal(data[key],undefined,`pre-render cache survived quarantine: ${key}`);
   assert.equal(x.sessionStorage.getItem('puplan_assistant_history'),null);
 }
 
@@ -108,21 +110,25 @@ const privateSeed={
   const x=boot({...privateSeed,puplan_session:expired},{puplan_assistant_history:'private chat'},{status:'local-grace',uid:UID_A});
   const data=x.localStorage.dump();
   assert.equal(data.puplan_session,expired);
-  for(const key of Object.keys(privateSeed))assert.equal(data[key],undefined,`local grace exposed ${key}`);
+  assert.equal(data.puplan_course_owner,UID_A,'local-grace for same account must not churn owner marker');
+  for(const key of renderablePrivateKeys)assert.equal(data[key],undefined,`local grace exposed ${key}`);
 }
 
 {
   const expired=tokenFor(UID_A,now()-1);
   const x=boot({...privateSeed,puplan_session:expired},{puplan_assistant_history:'private chat'});
   assert.equal(x.localStorage.getItem('puplan_session'),null);
+  assert.equal(x.localStorage.getItem('puplan_course_owner'),null,'expired session must clear owner marker without recovery grace');
 }
 {
   const x=boot({...privateSeed,puplan_session:tokenFor(UID_A,now()+3600,3)});
   assert.equal(x.localStorage.getItem('puplan_session'),null);
+  assert.equal(x.localStorage.getItem('puplan_course_owner'),null,'legacy session version must clear owner marker');
 }
 {
   const x=boot({...privateSeed,puplan_session:'malformed-token'});
   assert.equal(x.localStorage.getItem('puplan_session'),null);
+  assert.equal(x.localStorage.getItem('puplan_course_owner'),null,'malformed session must clear owner marker');
 }
 
 // If the server rejects a syntactically valid session, the UID tracked before
@@ -142,6 +148,7 @@ const privateSeed={
   assert.equal(x.localStorage.getItem(`nolu_account_snapshot_v1:${UID_A}`),null);
   assert.equal(x.localStorage.getItem(`nolu_pending_mutations_v1:${UID_A}`),null);
   assert.equal(x.localStorage.getItem('puplan_session_primary_v1'),null);
+  assert.equal(x.localStorage.getItem('puplan_course_owner'),null,'server-rejected session must clear owner marker');
 }
 
 {
@@ -154,6 +161,7 @@ const privateSeed={
   assert.equal(data.nolu_guest_scope_v1,'1');
   assert.equal(data.puplan_session,undefined);
   assert.equal(data.puplan_session_primary_v1,undefined);
+  assert.equal(data.puplan_course_owner,undefined,'guest switch must clear owner marker');
   assert.equal(data[`nolu_account_snapshot_v1:${UID_A}`],undefined);
   assert.equal(x.sessionStorage.getItem(PURGE_KEY),UID_A,'guest click must request durable purge');
 }
