@@ -1,4 +1,0 @@
-restart requested 2026-09-11
-incident: Nolu production login still fails because primary database connections time out
-reason: Supabase project reports ACTIVE_HEALTHY but SQL control-plane probe terminates on connection timeout; Tokyo standby is healthy but has not been seeded for existing production accounts
-request: invoke the emergency Management API restart and validate the Data API auth boundary
