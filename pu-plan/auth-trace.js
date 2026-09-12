@@ -1,7 +1,7 @@
 const TRACE_KEY='nolu_auth_trace_v1';
 const TAB_KEY='nolu_auth_trace_tab_v1';
 const MAX_EVENTS=80;
-const VERSION='20260912-auth-trace1';
+const VERSION='20260913-auth-trace2';
 const ALLOWED_FIELDS=new Set([
   'reason','status','source','transition','action','outcome','mode','stage',
   'httpStatus','reload','controller','recovered','expired','connectivity','guest'
@@ -58,6 +58,9 @@ function record(type,details={}){
   }catch{return null}
 }
 
+function navigationSource(){
+  try{return performance.getEntriesByType?.('navigation')?.[0]?.type||'unknown'}catch{return'unknown'}
+}
 function snapshot(){return read().map(event=>({...event}))}
 function clear(){try{localStorage.removeItem(TRACE_KEY)}catch{}}
 function exportText(){return JSON.stringify({version:VERSION,events:snapshot()},null,2)}
@@ -72,4 +75,9 @@ window.NOLU_AUTH_TRACE={
   exportText
 };
 
-record('trace-ready',{stage:'startup'});
+record('trace-ready',{stage:'startup',source:navigationSource()});
+addEventListener('pageshow',event=>record('page-lifecycle',{stage:'pageshow',source:event.persisted?'bfcache':'document'}));
+addEventListener('pagehide',event=>record('page-lifecycle',{stage:'pagehide',outcome:event.persisted?'bfcache':'unload'}));
+addEventListener('beforeunload',()=>record('page-lifecycle',{stage:'beforeunload'}));
+addEventListener('error',()=>record('page-runtime-error',{stage:'error',status:'uncaught'}));
+addEventListener('unhandledrejection',()=>record('page-runtime-error',{stage:'promise',status:'unhandled'}));
