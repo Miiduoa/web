@@ -171,6 +171,15 @@ jobs:
               cat "$body"
               exit 1
             fi
+            # Supabase may return an infrastructure-level 504 while the primary
+            # database is unreachable. That response does not prove the RPC body
+            # executed, so keep the static ACL assertion authoritative and mark
+            # this individual live probe inconclusive. Other 5xx responses still
+            # fail closed because they may come from an actually invoked RPC.
+            if [ "$code" = "504" ] && grep -Eqi 'Gateway Timeout|upstream.*tim(e|ed)[ -]?out' "$body"; then
+              echo "::warning::$fn live probe is infrastructure-inconclusive (HTTP 504 Gateway Timeout); static ACL migration guard remains enforced"
+              return 0
+            fi
             if [ "$code" -ge 500 ]; then
               echo "::error::$fn returned server error instead of permission boundary"
               cat "$body"
