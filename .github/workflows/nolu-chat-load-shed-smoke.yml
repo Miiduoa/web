@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Validate community module syntax
         run: node --check pu-plan/community.js
       - name: Guard adaptive polling and request coalescing

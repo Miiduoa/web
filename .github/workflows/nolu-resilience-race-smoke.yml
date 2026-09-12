@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-race init -y >/dev/null 2>&1

@@ -33,7 +33,7 @@ jobs:
   replica-client-contract:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Parse JavaScript
         run: |
           node --check pu-plan/cloud-replication.js
