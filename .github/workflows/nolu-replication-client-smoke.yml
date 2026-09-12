@@ -69,9 +69,9 @@ jobs:
           grep -q "return baseFetch(input,init)" pu-plan/media-failback-guard.js
       - name: Keep installed PWA on current shell
         run: |
-          grep -q "nolu-shell-20260912-media-failback1" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260912_media_failback1" pu-plan/pwa.js
-          grep -q "20260912-media-failback1" pu-plan/index.html
+          grep -q "nolu-shell-20260912-auth-stability5" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_auth_stability5" pu-plan/pwa.js
+          grep -q "20260912-auth-stability5" pu-plan/index.html
           grep -q "nolu-browser-gateway-v1" pu-plan/origin-gateway.js
           grep -q "media-failback-guard.js" pu-plan/origin-gateway.js
           grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
