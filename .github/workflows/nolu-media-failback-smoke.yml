@@ -41,7 +41,7 @@ jobs:
           grep -q "nolu-failback-ed25519-v1-20260911" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
           grep -q "createSignedUrl" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
           grep -q "pu-plan-media-ingest-v1" supabase/standby/functions/pu-plan-media-failback-v1/index.ts
-          grep -q "public=false" supabase/standby/20260912_nolu_media_bucket.sql
+          grep -q "'puplan-media','puplan-media',false" supabase/standby/20260912_nolu_media_bucket.sql
       - name: Simulate object-first ordering
         run: |
           node <<'NODE'
