@@ -7,6 +7,7 @@ const ACCOUNT_BOUNDARY_KEY='nolu_account_boundary_v2';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SESSION_SECONDS=45*24*60*60;
 const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
+const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 
 function parse(raw,{allowRecentlyExpired=false}={}){
   try{
@@ -26,6 +27,13 @@ function parse(raw,{allowRecentlyExpired=false}={}){
 
 function writeState(result){
   sessionStorage.setItem(RECOVERY_STATE_KEY,JSON.stringify({...result,at:Date.now()}));
+  trace('session-recovery',{
+    status:result.status||'unknown',
+    source:result.source||'',
+    recovered:result.recovered===true,
+    expired:result.expired===true,
+    guest:result.status==='guest'
+  });
   return result;
 }
 
