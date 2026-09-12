@@ -2,7 +2,7 @@ name: nolu retired Edge endpoint guard
 
 on:
   push:
-    branches: [main, security/nolu-data-api-exposure-20260911]
+    branches: [main]
     paths:
       - 'supabase/functions/pu-plan-social-core-v1/**'
       - 'supabase/functions/pu-plan-social-v*/**'
@@ -29,15 +29,21 @@ on:
       - 'supabase/functions/pu-plan-load-fixture/**'
       - 'supabase/functions/campus-member-profile/**'
       - '.github/workflows/nolu-retired-edge-smoke.yml'
+  schedule:
+    - cron: '47 */6 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: nolu-retired-edge-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   retired-endpoints:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - name: Retired nolu Edge endpoints must remain disabled
         shell: bash
@@ -65,12 +71,29 @@ jobs:
           check_disabled() {
             local base="$1" slug="$2" tag="$3"
             local body="/tmp/${tag}-${slug}.body"
-            local code
-            code=$(curl -sS --max-time 15 -o "$body" -w '%{http_code}' "$base/$slug" || true)
-            echo "$tag/$slug HTTP=$code"
-            if [ "$code" != '410' ] || ! grep -q 'DISABLED' "$body"; then
-              echo "ERROR: $tag/$slug must remain HTTP 410 DISABLED"
+            local headers="/tmp/${tag}-${slug}.headers"
+            local code rc attempt
+            code='000'; rc=1
+            for attempt in 1 2 3; do
+              : >"$body"
+              : >"$headers"
+              set +e
+              code=$(curl -sS --connect-timeout 5 --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' "$base/$slug")
+              rc=$?
+              set -e
+              [ "$rc" -eq 0 ] && break
+              echo "::warning::$tag/$slug transport attempt $attempt failed (curl=$rc)"
+              sleep "$attempt"
+            done
+            echo "$tag/$slug rc=$rc HTTP=$code"
+            if [ "$rc" -ne 0 ] || [ "$code" != '410' ] || ! grep -q 'DISABLED' "$body"; then
+              echo "::error::$tag/$slug must remain reachable only as HTTP 410 DISABLED"
               cat "$body" 2>/dev/null || true
+              failed=1
+              return
+            fi
+            if ! grep -Eqi '^cache-control:[[:space:]]*no-store' "$headers"; then
+              echo "::error::$tag/$slug retired response must be no-store"
               failed=1
             fi
           }
