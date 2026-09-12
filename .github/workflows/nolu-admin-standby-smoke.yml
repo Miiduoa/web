@@ -1,0 +1,64 @@
+name: Nolu Admin Standby Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-admin-standby-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-admin-standby-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and invariants
+        run: |
+          node --check pu-plan/admin-failover.js
+          node --check pu-plan/main.js
+          grep -q "puplan_session_primary_v1" pu-plan/admin-failover.js
+          grep -q "puplan_session_standby_v1" pu-plan/admin-failover.js
+          grep -q "READ_ONLY" pu-plan/admin-failover.js
+          grep -q "PRIMARY_REQUIRED" pu-plan/admin-failover.js
+          grep -q "admin-failover.js" pu-plan/main.js
+      - name: Simulate primary outage and standby read failover
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const code=fs.readFileSync('pu-plan/admin-failover.js','utf8');
+          const calls=[];
+          const store=new Map([
+            ['puplan_session_primary_v1','PRIMARY_TOKEN'],
+            ['puplan_session_standby_v1','STANDBY_TOKEN']
+          ]);
+          class HeadersX{constructor(src={}){this.m=new Map(Object.entries(src));}set(k,v){this.m.set(k.toLowerCase(),v)}get(k){return this.m.get(k.toLowerCase())||null}}
+          const context={
+            URL,Headers:HeadersX,Response,
+            location:{href:'https://miiduoa.github.io/web/pu-plan/'},
+            localStorage:{getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v)},
+            window:{fetch:async(url,opt={})=>{calls.push({url:String(url),auth:opt.headers?.get?.('authorization')||opt.headers?.get?.('Authorization')||''});if(String(url).includes('hrrmkray'))return new Response('{"error":"down"}',{status:503,headers:{'Content-Type':'application/json'}});return new Response('{"is_admin":true,"cloud_tier":"standby"}',{status:200,headers:{'Content-Type':'application/json'}});}}
+          };
+          context.window.window=context.window;context.window.localStorage=context.localStorage;context.window.location=context.location;context.window.URL=URL;context.window.Headers=HeadersX;context.window.Response=Response;
+          vm.createContext(context);vm.runInContext(code,context);
+          (async()=>{
+            const read=await context.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'overview'})});
+            if(!read.ok)throw new Error('read did not fail over');
+            const readBody=await read.json();if(readBody.cloud_tier!=='standby')throw new Error('standby not used');
+            if(calls.length!==2||!calls[0].auth.includes('PRIMARY_TOKEN')||!calls[1].auth.includes('STANDBY_TOKEN'))throw new Error('regional tokens wrong');
+            calls.length=0;
+            const write=await context.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'moderate_post'})});
+            if(write.status!==503)throw new Error('write should remain primary-only');
+            if(calls.length!==1||!calls[0].url.includes('hrrmkray'))throw new Error('write leaked to standby');
+            console.log('ADMIN_STANDBY_FAILOVER_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
