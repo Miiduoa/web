@@ -1,0 +1,65 @@
+name: nolu standby authority dirty fence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/standby/20260912_nolu_authority_dirty_edges.sql'
+      - '.github/workflows/nolu-standby-authority-dirty-fence.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/standby/20260912_nolu_authority_dirty_edges.sql'
+      - '.github/workflows/nolu-standby-authority-dirty-fence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-dirty-fence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Shared child writes must record aggregate authority
+        run: |
+          set -euo pipefail
+          f=supabase/standby/20260912_nolu_authority_dirty_edges.sql
+          grep -Fq 'CREATE TABLE IF NOT EXISTS public.puplan_standby_dirty_authorities' "$f"
+          grep -Fq 'public.puplan_mark_standby_dirty_authority' "$f"
+          grep -Fq "pg_advisory_xact_lock(hashtextextended(v_authority::text,90210))" "$f"
+          grep -Fq "WHERE id=v_parent AND parent_id IS NULL" "$f"
+          grep -Fq "WHERE id=v_post AND parent_id IS NULL" "$f"
+          grep -Fq 'FROM public.puplan_app_conversations' "$f"
+          grep -Fq "'message:'||lower(TG_OP)" "$f"
+          grep -Fq "'conversation_member:'||lower(TG_OP)" "$f"
+
+      - name: Actor failback must generation-clear authority edges
+        run: |
+          set -euo pipefail
+          f=supabase/standby/20260912_nolu_authority_dirty_edges.sql
+          grep -Fq 'IF v_generation<>p_expected_generation THEN RETURN false; END IF;' "$f"
+          grep -Fq 'DELETE FROM public.puplan_standby_dirty_authorities' "$f"
+          grep -Fq 'WHERE actor_user_id=p_uid AND generation<=p_expected_generation;' "$f"
+          ! grep -Eq 'DELETE FROM public\.puplan_standby_dirty_authorities[[:space:]]+WHERE authority_user_id=p_uid' "$f"
+
+      - name: Primary replay must stop at dirty shared authority domains
+        run: |
+          set -euo pipefail
+          f=supabase/standby/20260912_nolu_authority_dirty_edges.sql
+          grep -Fq 'JOIN public.puplan_standby_dirty_users d' "$f"
+          grep -Fq 'WHERE da.authority_user_id=v_uid' "$f"
+          grep -Fq "'STANDBY_SHARED_DIRTY'" "$f"
+          grep -Fq "PERFORM set_config('nolu.replica_apply','1',true);" "$f"
+          grep -Fq 'RETURN public.puplan_apply_server_replica_unchecked(p_payload);' "$f"
+
+      - name: Public roles must not reach dirty-fence internals
+        run: |
+          set -euo pipefail
+          f=supabase/standby/20260912_nolu_authority_dirty_edges.sql
+          grep -Fq 'REVOKE ALL ON TABLE public.puplan_standby_dirty_authorities FROM PUBLIC, anon, authenticated;' "$f"
+          grep -Fq 'REVOKE ALL ON FUNCTION public.puplan_mark_standby_dirty_authority(uuid,uuid,text) FROM PUBLIC, anon, authenticated;' "$f"
+          grep -Fq 'REVOKE ALL ON FUNCTION public.puplan_apply_server_replica(jsonb) FROM PUBLIC, anon, authenticated;' "$f"
+          ! grep -Eq 'GRANT EXECUTE .* TO (anon|authenticated)' "$f"
