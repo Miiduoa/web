@@ -48,7 +48,7 @@ jobs:
             assert(main.indexOf("await import('./resilience.js')") < main.indexOf("await import('./login-failover-budget.js')"));
             assert(main.indexOf("await import('./login-failover-budget.js')") < main.indexOf("await import('./offline-session-rescue.js')"));
             assert(sw.includes("'./login-failover-budget.js'"));
-            assert(sw.includes('nolu-shell-20260912-media-failback1'));
+            assert(sw.includes('nolu-shell-20260912-admin-auth4'));
 
             assert(patience.includes('hrrmkrayvrgnwcroyttp.supabase.co'));
             assert(patience.includes('ltfurqaspqsvswmebyzw.supabase.co'));
