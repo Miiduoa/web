@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260912-media-failback1';
+const CACHE='nolu-shell-20260912-admin-auth4';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
@@ -14,7 +14,8 @@ async function seed(cache){
   for(const key of keys){
     const old=await caches.open(key),requests=await old.keys();
     for(const request of requests){
-      const hit=await old.match(request);if(hit)await cache.put(request,hit).catch(()=>{});
+      const hit=await old.match(request);
+      if(hit)await cache.put(request,hit).catch(()=>{});
     }
   }
   await Promise.all(SHELL.map(async url=>{
@@ -60,5 +61,5 @@ self.addEventListener('notificationclick',event=>{
   event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(async windows=>{
     for(const win of windows){try{await win.navigate(target);return win.focus()}catch{}}
     return clients.openWindow(target);
-  }));
+  })());
 });
