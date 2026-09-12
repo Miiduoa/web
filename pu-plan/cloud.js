@@ -7,6 +7,7 @@ const CREDENTIAL_KEYS=['puplan_session','puplan_session_primary_v1','puplan_sess
 const PREFERRED_CLOUD_KEY='nolu_preferred_cloud_v1';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
+const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 let token=localStorage.getItem('puplan_session')||'', profile=null;
 let preferredApi=Math.max(0,Math.min(APIS.length-1,Number(sessionStorage.getItem('puplan_api_index')||0)||0));
 let socialData={relationships:[],profiles:[],friends:[],meetups:[]}, searchTimer=null, syncTimer=null, socialLoading=null, socialLoaded=false, socialSummary={};
@@ -42,12 +43,14 @@ async function api(action,payload={},auth=true){
     if(res.status>=500&&n<order.length-1){lastFailure=cloudError(data.message||`雲端服務錯誤 (${res.status})`,{status:res.status});continue}
     preferredApi=index;sessionStorage.setItem('puplan_api_index',String(index));
     if(!res.ok){
-      if(res.status===401&&auth)invalidateSession();
+      trace('cloud-api-error',{action,httpStatus:res.status,status:res.status===401?'unauthorized':'rejected'});
+      if(res.status===401&&auth)invalidateSession(action);
       throw cloudError(data.message||'操作失敗',{status:res.status,code:data.error||''});
     }
     return data;
   }
   const timedOut=lastFailure?.name==='AbortError';
+  trace('cloud-api-connectivity',{action,connectivity:true,outcome:timedOut?'timeout':'unreachable'});
   throw cloudError(timedOut?'雲端回應逾時，已自動切換備援仍失敗，請稍後再試':'目前連不上雲端，已自動切換備援仍失敗',{connectivity:true,cause:lastFailure});
 }
 function isSignedIn(){return !!token&&!!profile}
@@ -86,18 +89,35 @@ function clearCredentialCopies(){
   for(const key of CREDENTIAL_KEYS)localStorage.removeItem(key);
   localStorage.removeItem(PREFERRED_CLOUD_KEY);
 }
-function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};clearCredentialCopies();const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
-function invalidateSession(){clearSession(false);purgeAccountCache();showGate('login')}
+function clearSession(toast=true,reason='clear-session'){trace('auth-session-cleared',{reason});token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};clearCredentialCopies();const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
+function invalidateSession(action='unknown'){trace('auth-invalidated',{reason:'http-401',action,httpStatus:401});clearSession(false,'http-401');purgeAccountCache();showGate('login')}
 function emitSocial(){document.dispatchEvent(new CustomEvent('puplan:social-changed',{detail:socialData}))}
 function applySocial(social){socialData=social||{relationships:[],profiles:[],friends:[],meetups:[]};if(!socialData.meetups)socialData.meetups=[];const cloud=Array.isArray(socialData.friends)?socialData.friends:[];const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.([...cloud,...legacy]);renderRequests();emitSocial()}
 function relationFor(id){return (socialData.relationships||[]).find(r=>r.requester_id===id||r.addressee_id===id)}
 function profileFor(id){return (socialData.profiles||[]).find(p=>p.id===id)||{display_name:'使用者',username:'',avatar_data:'',bio:''}}
 function applyCoreBundle(data){isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);socialSummary=data.social_summary||{};applySocial(data.social||{relationships:[],profiles:[],friends:[],meetups:[]})}
 
-async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn('cloud bootstrap',e);return false}}
-async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
-async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
-async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
+async function bootstrap(){
+  if(!token){trace('auth-bootstrap-skip',{status:'no-token'});return false}
+  trace('auth-bootstrap-start',{stage:'bootstrap'});
+  try{
+    const data=await api('bootstrap');
+    applyCoreBundle(data);hideGate();
+    trace('auth-bootstrap-success',{status:'verified'});
+    return true;
+  }catch(e){
+    trace('auth-bootstrap-failure',{httpStatus:Number(e?.status)||0,connectivity:e?.connectivity===true,outcome:e?.status===401?'unauthorized':e?.connectivity?'connectivity':'error'});
+    console.warn('cloud bootstrap',e);return false
+  }
+}
+async function login(email,password){
+  trace('auth-login-start',{stage:'password'});
+  try{
+    const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-login-success',{status:'verified'});return data
+  }catch(e){trace('auth-login-failure',{httpStatus:Number(e?.status)||0,connectivity:e?.connectivity===true,outcome:e?.connectivity?'connectivity':'rejected'});throw e}
+}
+async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-signup-success',{status:'verified'});return data}
+async function logout(){trace('auth-logout',{reason:'user'});clearSession(true,'logout');purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
 async function updateProfile(display_name,username,opts={}){
   username=normalizeUsername(username);if(!display_name?.trim())return app?.toast?.('請輸入顯示名稱');if(!/^[a-z0-9_.]{2,24}$/.test(username))return app?.toast?.('@帳號需 2–24 字，只能英文、數字、底線、句點');
   const payload={display_name:display_name.trim(),username,bio:String(opts.bio??profile?.bio??'').slice(0,120),discoverable:opts.discoverable!==false};if(Object.prototype.hasOwnProperty.call(opts,'avatar_data'))payload.avatar_data=cleanAvatar(opts.avatar_data||'');
@@ -134,7 +154,7 @@ async function respondMeetup(meetup_id,decision){try{const data=await api('respo
 async function cancelMeetup(meetup_id){try{const data=await api('cancel_meetup',{meetup_id});applySocial(data.social);socialLoaded=true;app?.toast?.('邀約已取消');return true}catch(e){app?.toast?.(e.message);return false}}
 
 $$('[data-auth-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.authTab));
-$('#guestMode')?.addEventListener('click',()=>{clearSession(false);purgeAccountCache();localStorage.setItem('puplan_guest','1');hideGate();app?.toast?.('目前使用訪客模式')});
+$('#guestMode')?.addEventListener('click',()=>{trace('auth-guest-mode',{reason:'user'});clearSession(false,'guest-mode');purgeAccountCache();localStorage.setItem('puplan_guest','1');hideGate();app?.toast?.('目前使用訪客模式')});
 $('#registerForm')?.addEventListener('submit',async e=>{e.preventDefault();const display_name=$('#regName').value.trim(),username=normalizeUsername($('#regUsername').value),email=$('#regEmail').value.trim(),password=$('#regPassword').value;if(!/^[a-z0-9_.]{2,24}$/.test(username))return setAuthStatus('@帳號需 2–24 字，只能英文、數字、底線、句點',true);if(password.length<8)return setAuthStatus('密碼至少 8 個字元',true);setAuthStatus('建立帳號中…');try{await signup(display_name,username,email,password);setAuthStatus('註冊完成');app?.toast?.('帳號建立完成')}catch(err){setAuthStatus(err.message,true)}});
 $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault();setAuthStatus('登入中…');try{await login($('#loginEmail').value.trim(),$('#loginPassword').value);setAuthStatus('');app?.toast?.('登入成功')}catch(err){setAuthStatus(err.message,true)}});
 $('#cloudFriendSearch')?.addEventListener('input',e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchPeople(e.target.value),260)});
