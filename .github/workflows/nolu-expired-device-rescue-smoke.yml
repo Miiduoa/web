@@ -39,7 +39,7 @@ jobs:
           node --check pu-plan/origin-gateway.js
           node --check pu-plan/login-failover-budget.js
           grep -q "LOCAL_EXPIRED_GRACE_SECONDS=7\*24\*60\*60" pu-plan/session-recovery.js
-          grep -q "device-rescue2" pu-plan/session-recovery.js
+          grep -q "device-rescue3" pu-plan/session-recovery.js
           grep -q "nolu-shell-20260912-media-failback1" pu-plan/sw.js
           grep -q "nolu_shell_reload_20260912_media_failback1" pu-plan/pwa.js
           grep -q "20260912-media-failback1" pu-plan/index.html
