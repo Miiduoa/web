@@ -1,0 +1,57 @@
+name: nolu replication conflict backoff
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql'
+      - '.github/workflows/nolu-replication-conflict-backoff.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql'
+      - '.github/workflows/nolu-replication-conflict-backoff.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conflict-backoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Standby conflicts must not redispatch in the same sweep
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql
+          grep -Fq 'WHEN v_status=409 THEN now()+interval '\''5 minutes'\''' "$f"
+          grep -Fq 'ELSE now()+interval '\''1 minute'\''' "$f"
+          grep -Fq "next_attempt_at=now()+interval '1 minute'" "$f"
+          grep -Fq "v_req.created_at<now()-interval '30 seconds'" "$f"
+          grep -Fq 'WHERE o.next_attempt_at<=now()' "$f"
+
+      - name: Failed acknowledgements may never become immediately eligible
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql').read_text()
+          response=s[s.index('IF coalesce(v_found,false) THEN'):s.index('FOR v_out IN')]
+          forbidden=('next_attempt_at=now(),','next_attempt_at = now(),')
+          assert not any(x in response for x in forbidden), response
+          assert "WHEN v_status=409 THEN now()+interval '5 minutes'" in response
+          assert response.count("now()+interval '1 minute'") >= 2
+          PY
+
+      - name: Sweep remains server-only
+        run: |
+          set -euo pipefail
+          f=supabase/migrations/20260912105000_nolu_replication_conflict_backoff.sql
+          grep -Fq 'SECURITY DEFINER' "$f"
+          grep -Fq 'REVOKE ALL ON FUNCTION public.puplan_sweep_replication() FROM PUBLIC, anon, authenticated;' "$f"
+          grep -Fq 'GRANT EXECUTE ON FUNCTION public.puplan_sweep_replication() TO service_role;' "$f"
+          ! grep -Eq 'GRANT EXECUTE .* TO (anon|authenticated)' "$f"
