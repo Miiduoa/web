@@ -104,6 +104,10 @@ await Promise.all([
   './privacy.js'
 ].map(startModule));
 
+// Mobile hides the desktop sidebar entirely. Mount a dedicated admin entry only
+// after the authenticated profile and the guarded admin module are ready.
+await startModule('./admin-mobile.js');
+
 // social-ui.js still contains a legacy timetable renderer. Until that module is
 // split, make features/schedule.js the final owner of schedule DOM and controls.
 // This prevents the legacy renderer from hiding #classicSchedule or replacing
