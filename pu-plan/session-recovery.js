@@ -1,7 +1,9 @@
 const CANONICAL_KEY='puplan_session';
 const PRIMARY_KEY='puplan_session_primary_v1';
 const STANDBY_KEY='puplan_session_standby_v1';
+const PORTABLE_KEY='puplan_portable_session_v1';
 const RECOVERY_STATE_KEY='nolu_session_recovery_v1';
+const ACCOUNT_BOUNDARY_KEY='nolu_account_boundary_v2';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SESSION_SECONDS=45*24*60*60;
 const LOCAL_EXPIRED_GRACE_SECONDS=7*24*60*60;
@@ -27,10 +29,30 @@ function writeState(result){
   return result;
 }
 
+function signedOutBoundary(){
+  try{
+    const state=JSON.parse(sessionStorage.getItem(ACCOUNT_BOUNDARY_KEY)||'null');
+    return !!state&&typeof state==='object'&&!!state.from&&state.to==='';
+  }catch{return false}
+}
+
+function clearCredentialCopies(){
+  for(const key of [CANONICAL_KEY,PRIMARY_KEY,STANDBY_KEY,PORTABLE_KEY])localStorage.removeItem(key);
+}
+
 function recover(){
   // Guest mode is an explicit privacy choice and must win over every credential,
   // including a leftover canonical token from an interrupted logout/older build.
   if(localStorage.getItem('puplan_guest')==='1')return writeState({status:'guest',uid:'',recovered:false});
+
+  // A hard account boundary that ended signed-out is authoritative for this tab.
+  // Do not reconstruct a server-rejected/logout credential from regional copies on
+  // the next reload; doing so recreates bootstrap -> 401 -> reload loops forever.
+  if(signedOutBoundary()){
+    clearCredentialCopies();
+    document.documentElement.dataset.noluSessionRecovered='blocked-by-account-boundary';
+    return writeState({status:'boundary-signed-out',uid:'',recovered:false});
+  }
 
   const canonicalRaw=localStorage.getItem(CANONICAL_KEY)||'';
   const canonical=parse(canonicalRaw);
@@ -86,6 +108,6 @@ function recover(){
 const result=recover();
 window.NOLU_SESSION_RECOVERY={
   result,recover,parse,
-  version:'20260911-device-rescue2',
+  version:'20260912-device-rescue3',
   localExpiredGraceSeconds:LOCAL_EXPIRED_GRACE_SECONDS
 };
