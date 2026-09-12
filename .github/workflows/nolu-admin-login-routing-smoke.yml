@@ -1,0 +1,85 @@
+name: Nolu Admin Login Routing Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-admin-login-routing-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/login-failover-budget.js'
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - '.github/workflows/nolu-admin-login-routing-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax and routing invariants
+        run: |
+          set -euo pipefail
+          node --check pu-plan/login-failover-budget.js
+          node --check pu-plan/admin-failover.js
+          grep -q "PREFERRED_CLOUD_KEY='nolu_preferred_cloud_v1'" pu-plan/login-failover-budget.js
+          grep -q "localStorage.setItem(PREFERRED_CLOUD_KEY,'primary')" pu-plan/login-failover-budget.js
+          grep -q "puplan_session_primary_v1" pu-plan/admin-failover.js
+          grep -q "puplan_session_standby_v1" pu-plan/admin-failover.js
+          grep -q "canonical===standby" pu-plan/admin-failover.js
+          grep -q "primary&&!failoverEligible(primary)" pu-plan/admin-failover.js
+          grep -q "login-failover-budget.js" pu-plan/main.js
+          grep -q "admin-failover.js" pu-plan/main.js
+
+      - name: Fresh login resets authority preference
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const code=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+          const store=new Map([['nolu_preferred_cloud_v1','standby']]);
+          const calls=[];
+          const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,String(v))};
+          const context={URL,Response,AbortController,DOMException,Date,setTimeout,clearTimeout,location:{href:'https://miiduoa.github.io/web/'},localStorage,window:{fetch:async(input,options={})=>{calls.push({url:String(input),preferred:store.get('nolu_preferred_cloud_v1')});return new Response('{}',{status:200})}}};
+          Object.assign(context.window,{window:context.window,localStorage,location:context.location,URL,Response,AbortController,DOMException,Date,setTimeout,clearTimeout});
+          vm.createContext(context);vm.runInContext(code,context);
+          (async()=>{
+            const url='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
+            await context.window.fetch(url,{method:'POST',body:JSON.stringify({action:'login'})});
+            if(store.get('nolu_preferred_cloud_v1')!=='primary')throw new Error('fresh login did not restore primary preference');
+            if(calls.length!==1||calls[0].preferred!=='primary')throw new Error('login transport saw stale standby preference');
+            console.log('LOGIN_AUTHORITY_ROUTING_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Standby session stays out of Mumbai admin auth
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const code=fs.readFileSync('pu-plan/admin-failover.js','utf8');
+          const calls=[];
+          const store=new Map([['puplan_session','standby-test'],['puplan_session_standby_v1','standby-test'],['nolu_preferred_cloud_v1','standby']]);
+          class HeadersX{constructor(src={}){this.m=new Map();for(const [k,v] of Object.entries(src))this.m.set(k.toLowerCase(),String(v))}set(k,v){this.m.set(k.toLowerCase(),String(v))}get(k){return this.m.get(k.toLowerCase())||null}}
+          const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,String(v))};
+          const context={URL,Headers:HeadersX,Response,location:{href:'https://miiduoa.github.io/web/'},localStorage,window:{fetch:async(url,opt={})=>{calls.push({url:String(url),auth:opt.headers?.get?.('Authorization')||''});return new Response('{}',{status:String(url).includes('ltfurq')?200:401})}}};
+          Object.assign(context.window,{window:context.window,localStorage,location:context.location,URL,Headers:HeadersX,Response});
+          vm.createContext(context);vm.runInContext(code,context);
+          const adminUrl='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
+          const opts=action=>({method:'POST',body:JSON.stringify({action})});
+          (async()=>{
+            const read=await context.window.fetch(adminUrl,opts('whoami'));
+            if(!read.ok)throw new Error('standby read fallback failed');
+            if(calls.length!==1||!calls[0].url.includes('ltfurqaspqsvswmebyzw'))throw new Error('standby session reached Mumbai');
+            calls.length=0;
+            const write=await context.window.fetch(adminUrl,opts('moderate_post'));
+            if(write.status!==503||calls.length!==0)throw new Error('admin write did not fail closed');
+            console.log('ADMIN_REGION_ISOLATION_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
