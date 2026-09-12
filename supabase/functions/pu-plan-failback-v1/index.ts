@@ -131,6 +131,9 @@ Deno.serve(async (req: Request) => {
   try {
     const uid = await requireUser(req);
     await rateLimit(req, uid);
+    const dirty = await db.rpc('puplan_get_standby_dirty_generation', { p_uid: uid });
+    if (dirty.error) throw new ApiError(503, '無法讀取備援寫入保護狀態', 'FAILBACK_UNAVAILABLE');
+    const dirtyGeneration = Math.max(0, Number(dirty.data || 0));
     const { data, error } = await db.rpc('puplan_build_failback_snapshot', { p_uid: uid });
     if (error || !data) throw new ApiError(503, '無法建立備援快照', 'FAILBACK_UNAVAILABLE');
 
@@ -155,7 +158,14 @@ Deno.serve(async (req: Request) => {
       if (!res.ok || out.ok !== true) {
         return json(origin, res.status >= 500 ? 503 : res.status, { error: out.error || 'FAILBACK_FAILED', message: out.message || '主雲端回灌失敗' });
       }
-      return json(origin, 200, { ok: true, reconciled: true, uid, primary_applied: true, protocol: 2 });
+      const cleared = await db.rpc('puplan_clear_standby_dirty_user', { p_uid: uid, p_expected_generation: dirtyGeneration });
+      if (cleared.error) {
+        return json(origin, 503, { error: 'FAILBACK_FENCE_CLEAR_FAILED', message: '主雲端已接收資料，但備援寫入保護尚未解除', primary_applied: true });
+      }
+      if (cleared.data !== true) {
+        return json(origin, 409, { error: 'FAILBACK_STANDBY_CHANGED', message: '回灌期間偵測到新的備援寫入，保護狀態維持，請再同步一次', conflict: true, primary_applied: true });
+      }
+      return json(origin, 200, { ok: true, reconciled: true, uid, primary_applied: true, dirty_generation: dirtyGeneration, protocol: 2 });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ApiError(503, '主雲端回灌逾時', 'FAILBACK_UNAVAILABLE');
