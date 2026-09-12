@@ -8,6 +8,7 @@ on:
       - 'pu-plan/guest-privacy.js'
       - 'pu-plan/cloud.js'
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/auth-trace.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
       - '.github/tests/guest-privacy.cjs'
@@ -19,6 +20,7 @@ on:
       - 'pu-plan/guest-privacy.js'
       - 'pu-plan/cloud.js'
       - 'pu-plan/session-recovery.js'
+      - 'pu-plan/auth-trace.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
       - '.github/tests/guest-privacy.cjs'
@@ -38,11 +40,14 @@ jobs:
       - name: Verify guard is installed before app state
         run: |
           set -euo pipefail
+          grep -q "import './auth-trace.js'" pu-plan/main.js
           grep -q "await import('./account-boundary.js')" pu-plan/main.js
+          grep -q "'./auth-trace.js'" pu-plan/sw.js
           grep -q "'./account-boundary.js'" pu-plan/sw.js
           python - <<'PY'
           from pathlib import Path
           s=Path('pu-plan/main.js').read_text()
+          assert s.index("import './auth-trace.js'") < s.index("await import('./session-recovery.js')")
           assert s.index("await import('./guest-privacy.js')") < s.index("await import('./account-boundary.js')") < s.index("await import('./durable-bridge.js')")
           PY
 
@@ -69,6 +74,7 @@ jobs:
             let reloads=0;
             const document=new Target(),window=new Target();
             window.PUPLAN_CLOUD={isSignedIn:()=>signed,getProfile:()=>profileId?{id:profileId}:null};
+            window.NOLU_AUTH_TRACE={record(){}};
             const localStorage={getItem:k=>data.has(k)?data.get(k):null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)};
             const sessionStorage={getItem:k=>session.has(k)?session.get(k):null,setItem:(k,v)=>session.set(k,String(v)),removeItem:k=>session.delete(k)};
             const context=vm.createContext({document,window,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON,atob,escape,decodeURIComponent});
@@ -80,7 +86,7 @@ jobs:
           r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('first verified sign-in must not reload');
-          if(r.guard?.version!=='20260912-account-boundary3')throw new Error('guard version missing');
+          if(r.guard?.version!=='20260912-account-boundary4')throw new Error('guard version missing');
 
           r=runtime(token(A));
           r.localStorage.setItem('puplan_session',token(B));
@@ -137,15 +143,17 @@ jobs:
           s=Path('pu-plan/cloud.js').read_text()
           for key in ['puplan_session','puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1']:
               assert key in s, f'missing credential key: {key}'
-          assert "if(res.status===401&&auth)invalidateSession();" in s
+          assert "if(res.status===401&&auth)invalidateSession(action);" in s
           assert "function clearCredentialCopies()" in s
           assert "for(const key of CREDENTIAL_KEYS)localStorage.removeItem(key);" in s
-          assert "function invalidateSession(){clearSession(false);purgeAccountCache();showGate('login')}" in s
+          assert "function invalidateSession(action='unknown')" in s
+          assert "clearSession(false,'http-401')" in s
           assert "if(e?.status===401){clearSession(false);purgeAccountCache()}" not in s
           PY
 
       - name: Syntax check
         run: |
+          node --check pu-plan/auth-trace.js
           node --check pu-plan/account-boundary.js
           node --check pu-plan/guest-privacy.js
           node --check pu-plan/cloud.js
