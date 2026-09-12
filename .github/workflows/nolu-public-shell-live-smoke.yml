@@ -7,6 +7,7 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/main.js'
       - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/media-failback-guard.js'
       - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/login-transport-patience.js'
       - 'pu-plan/provider-config.js'
@@ -19,6 +20,7 @@ on:
       - 'pu-plan/index.html'
       - 'pu-plan/main.js'
       - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/media-failback-guard.js'
       - 'pu-plan/login-failover-budget.js'
       - 'pu-plan/login-transport-patience.js'
       - 'pu-plan/provider-config.js'
@@ -41,12 +43,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '20260911-login-failover3' pu-plan/index.html
-          grep -q "nolu-shell-20260911-login-failover3" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260911_login_failover3" pu-plan/pwa.js
+          grep -q '20260912-media-failback1' pu-plan/index.html
+          grep -q "nolu-shell-20260912-media-failback1" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_media_failback1" pu-plan/pwa.js
           grep -q "./origin-gateway.js" pu-plan/sw.js
+          grep -q "./media-failback-guard.js" pu-plan/sw.js
           grep -q "./login-failover-budget.js" pu-plan/sw.js
           grep -q "import './origin-gateway.js'" pu-plan/main.js
+          grep -q "import './media-failback-guard.js'" pu-plan/origin-gateway.js
           grep -q "await import('./login-failover-budget.js')" pu-plan/main.js
           grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
           grep -q "standbyLoginTimeoutMs:6500" pu-plan/login-transport-patience.js
@@ -60,22 +64,18 @@ jobs:
           BASE='https://miiduoa.github.io/web'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
-
-          # GitHub Pages may update individual objects at slightly different times.
-          # Wait until the whole login shell is coherent instead of keying readiness
-          # off sw.js alone and producing a false failure during propagation.
           ready=0
           for attempt in $(seq 1 24); do
             ok=1
-            curl -fsS --max-time 15 "$BASE/sw.js?loginfix=20260911v3" -o "$tmp/sw.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/?loginfix=20260911v3" -o "$tmp/index.html" || ok=0
-            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?loginfix=20260911v3" -o "$tmp/login-patience.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/pwa.js?loginfix=20260911v3" -o "$tmp/pwa.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/sw.js?shell=20260912media1" -o "$tmp/sw.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/?shell=20260912media1" -o "$tmp/index.html" || ok=0
+            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?shell=20260912media1" -o "$tmp/login-patience.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/pwa.js?shell=20260912media1" -o "$tmp/pwa.js" || ok=0
             if [ "$ok" = 1 ] \
-              && grep -q 'nolu-shell-20260911-login-failover3' "$tmp/sw.js" \
-              && grep -q '20260911-login-failover3' "$tmp/index.html" \
+              && grep -q 'nolu-shell-20260912-media-failback1' "$tmp/sw.js" \
+              && grep -q '20260912-media-failback1' "$tmp/index.html" \
               && grep -q 'deadlineAware:true' "$tmp/login-patience.js" \
-              && grep -q 'nolu_shell_reload_20260911_login_failover3' "$tmp/pwa.js"; then
+              && grep -q 'nolu_shell_reload_20260912_media_failback1' "$tmp/pwa.js"; then
               ready=1
               break
             fi
@@ -88,16 +88,19 @@ jobs:
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?loginfix=20260911v3" -o "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?shell=20260912media1" -o "$tmp/main.js"
           grep -q "import './origin-gateway.js'" "$tmp/main.js"
           grep -q "await import('./login-failover-budget.js')" "$tmp/main.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?loginfix=20260911v3" -o "$tmp/origin-gateway.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?shell=20260912media1" -o "$tmp/origin-gateway.js"
           grep -q 'nolu-browser-gateway-v1' "$tmp/origin-gateway.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-failover-budget.js?loginfix=20260911v3" -o "$tmp/login-budget.js"
+          grep -q "import './media-failback-guard.js'" "$tmp/origin-gateway.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/media-failback-guard.js?shell=20260912media1" -o "$tmp/media-failback-guard.js"
+          grep -q 'pu-plan-media-failback-v1' "$tmp/media-failback-guard.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-failover-budget.js?shell=20260912media1" -o "$tmp/login-budget.js"
           grep -q 'OVERALL_LOGIN_TIMEOUT_MS=14000' "$tmp/login-budget.js"
           grep -q 'standbyLoginTimeoutMs:6500' "$tmp/login-patience.js"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?loginfix=20260911v3" -o "$tmp/provider-config.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?shell=20260912media1" -o "$tmp/provider-config.js"
           grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
           grep -q 'pu-plan-portable-v2' "$tmp/provider-config.js"
           ! grep -q 'pu-plan-portable-v1' "$tmp/provider-config.js"
@@ -105,6 +108,7 @@ jobs:
           grep -q "enabled:true" "$tmp/provider-config.js"
 
           grep -q "./origin-gateway.js" "$tmp/sw.js"
+          grep -q "./media-failback-guard.js" "$tmp/sw.js"
           grep -q "./login-failover-budget.js" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
           echo 'PUBLIC_SHELL_LIVE_OK'
@@ -117,14 +121,12 @@ jobs:
           tmp=$(mktemp)
           headers=$(mktemp)
           trap 'rm -f "$tmp" "$headers"' EXIT
-
           code=$(curl -sS --retry 3 --retry-delay 2 --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' "$URL/health")
           echo "[health] HTTP $code :: $(cat "$tmp")"
           test "$code" = 200
           grep -q '"provider":"netlify"' "$tmp"
           grep -q '"status":"available"' "$tmp"
           grep -qi '^cache-control: no-store' "$headers"
-
           check_cors() {
             local origin="$1"
             : > "$headers"
@@ -133,16 +135,13 @@ jobs:
             test "$code" = 204
             tr -d '\r' < "$headers" | grep -Fqi "access-control-allow-origin: ${origin}"
           }
-
           check_cors 'https://miiduoa.github.io'
           if getent hosts nolu.tw >/dev/null 2>&1; then check_cors 'https://nolu.tw'; else echo '[mirror][https://nolu.tw] inactive DNS; live CORS check skipped'; fi
           if getent hosts nolu-8r2.pages.dev >/dev/null 2>&1; then check_cors 'https://nolu-8r2.pages.dev'; else echo '[mirror][https://nolu-8r2.pages.dev] inactive DNS; live CORS check skipped'; fi
-
           code=$(curl -sS --max-time 15 -o "$tmp" -w '%{http_code}' -X POST "$URL/mirror" -H 'Origin: https://miiduoa.github.io' -H 'Content-Type: application/json' --data '{"action":"get_snapshot"}')
           echo "[unauth] HTTP $code :: $(cat "$tmp")"
           test "$code" = 401
           grep -q 'UNAUTHORIZED' "$tmp"
-
           : > "$headers"
           code=$(curl -sS --max-time 15 -D "$headers" -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL/mirror" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
           echo "[evil origin] HTTP $code :: $(cat "$tmp")"
