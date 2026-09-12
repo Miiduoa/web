@@ -175,7 +175,7 @@ jobs:
                 await page.evaluate(()=>import('./session-recovery.js?case=durable'));
                 await page.evaluate(()=>import('./guest-privacy.js?case=durable'));
                 const quarantined=await page.evaluate(()=>({owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:localStorage.getItem('puplan_courses')}));
-                assert(!quarantined.owner&&!quarantined.name&&!quarantined.courses,'renderable cache was not quarantined before durable bind');
+                assert(quarantined.owner===uid&&!quarantined.name&&!quarantined.courses,'same-account owner must stay stable while renderable cache is quarantined');
                 await page.evaluate(()=>import('./durable-bridge.js?case=durable'));
                 const state=await page.evaluate(()=>({canonical:localStorage.getItem('puplan_session'),owner:localStorage.getItem('puplan_course_owner'),name:localStorage.getItem('puplan_name'),courses:JSON.parse(localStorage.getItem('puplan_courses')||'[]'),bound:NOLU_DURABLE.state.bound}));
                 assert(state.canonical===primary,'canonical session was not restored before durable bridge');
