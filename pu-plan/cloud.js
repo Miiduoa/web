@@ -3,6 +3,8 @@ import {cleanAvatar} from './core/state.js';
 const API_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6';
 const API_FALLBACK='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const APIS=[API_PRIMARY,API_FALLBACK];
+const CREDENTIAL_KEYS=['puplan_session','puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1'];
+const PREFERRED_CLOUD_KEY='nolu_preferred_cloud_v1';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
 let token=localStorage.getItem('puplan_session')||'', profile=null;
@@ -40,7 +42,7 @@ async function api(action,payload={},auth=true){
     if(res.status>=500&&n<order.length-1){lastFailure=cloudError(data.message||`雲端服務錯誤 (${res.status})`,{status:res.status});continue}
     preferredApi=index;sessionStorage.setItem('puplan_api_index',String(index));
     if(!res.ok){
-      if(res.status===401&&auth){clearSession(false);purgeAccountCache();showGate('login')}
+      if(res.status===401&&auth)invalidateSession();
       throw cloudError(data.message||'操作失敗',{status:res.status,code:data.error||''});
     }
     return data;
@@ -80,14 +82,19 @@ function saveProfileLocal(p){
   if(avatar)localStorage.setItem('puplan_avatar',avatar);else localStorage.removeItem('puplan_avatar');
   localStorage.setItem('puplan_discoverable',profile.discoverable===false?'0':'1');updateAccountUI();app?.renderShare?.();
 }
-function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};localStorage.removeItem('puplan_session');const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
+function clearCredentialCopies(){
+  for(const key of CREDENTIAL_KEYS)localStorage.removeItem(key);
+  localStorage.removeItem(PREFERRED_CLOUD_KEY);
+}
+function clearSession(toast=true){token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};clearCredentialCopies();const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
+function invalidateSession(){clearSession(false);purgeAccountCache();showGate('login')}
 function emitSocial(){document.dispatchEvent(new CustomEvent('puplan:social-changed',{detail:socialData}))}
 function applySocial(social){socialData=social||{relationships:[],profiles:[],friends:[],meetups:[]};if(!socialData.meetups)socialData.meetups=[];const cloud=Array.isArray(socialData.friends)?socialData.friends:[];const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.([...cloud,...legacy]);renderRequests();emitSocial()}
 function relationFor(id){return (socialData.relationships||[]).find(r=>r.requester_id===id||r.addressee_id===id)}
 function profileFor(id){return (socialData.profiles||[]).find(p=>p.id===id)||{display_name:'使用者',username:'',avatar_data:'',bio:''}}
 function applyCoreBundle(data){isolateAccountCache(data.profile.id);saveProfileLocal(data.profile);app?.setRemoteCourses?.(Array.isArray(data.courses)?data.courses:[]);socialSummary=data.social_summary||{};applySocial(data.social||{relationships:[],profiles:[],friends:[],meetups:[]})}
 
-async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn('cloud bootstrap',e);if(e?.status===401){clearSession(false);purgeAccountCache()}return false}}
+async function bootstrap(){if(!token)return false;try{const data=await api('bootstrap');applyCoreBundle(data);hideGate();return true}catch(e){console.warn('cloud bootstrap',e);return false}}
 async function login(email,password){const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
 async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();return data}
 async function logout(){clearSession(true);purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
