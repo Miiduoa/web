@@ -61,7 +61,9 @@ jobs:
 
             function context(baseFetch){
               const window={fetch:baseFetch};window.window=window;
-              return vm.createContext({window,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,Date,Number,Infinity,console});
+              const values=new Map();
+              const localStorage={getItem:k=>values.has(k)?values.get(k):null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
+              return vm.createContext({window,localStorage,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,Date,Number,Infinity,console});
             }
             for(const host of ['hrrmkrayvrgnwcroyttp.supabase.co','ltfurqaspqsvswmebyzw.supabase.co']){
               const caller=new AbortController();let observedSignal=null;
