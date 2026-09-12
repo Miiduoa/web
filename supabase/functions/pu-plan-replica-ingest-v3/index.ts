@@ -51,7 +51,7 @@ async function consumeNonce(payload: any) {
 
 Deno.serve(async (req: Request) => {
   try {
-    if (req.method === 'GET') return json({ ok: true, service: 'nolu-replica-ingest-v3', role: SELF_REF === STANDBY_REF ? 'standby' : 'invalid' });
+    if (req.method === 'GET') return json({ ok: true, service: 'nolu-replica-ingest-v3', protocol: 2, role: SELF_REF === STANDBY_REF ? 'standby' : 'invalid' });
     if (req.method !== 'POST') return json({ error: 'METHOD_NOT_ALLOWED' }, 405);
     if (req.headers.get('origin')) return json({ error: 'BROWSER_ORIGIN_NOT_ALLOWED' }, 403);
     const body = await readJson(req);
@@ -62,7 +62,7 @@ Deno.serve(async (req: Request) => {
     if (data?.conflict === true || data?.ok === false) {
       return json({ ok: false, error: 'REPLICA_STANDBY_DIRTY', message: 'standby has local changes awaiting signed failback', result: data }, 409);
     }
-    return json({ ok: true, result: data });
+    return json({ ok: true, result: data, media: data?.media || { ok: true, count: 0, skipped: true } });
   } catch (error) {
     if (error instanceof ApiError) return json({ error: error.code, message: error.message }, error.status);
     console.error('replica ingest v3 failed');
