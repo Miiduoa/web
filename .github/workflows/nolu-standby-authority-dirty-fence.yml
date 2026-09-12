@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'supabase/standby/20260912_nolu_authority_dirty_edges.sql'
+      - 'supabase/standby/20260912_nolu_authority_dirty_edge_index.sql'
       - '.github/workflows/nolu-standby-authority-dirty-fence.yml'
   pull_request:
     branches: [main]
     paths:
       - 'supabase/standby/20260912_nolu_authority_dirty_edges.sql'
+      - 'supabase/standby/20260912_nolu_authority_dirty_edge_index.sql'
       - '.github/workflows/nolu-standby-authority-dirty-fence.yml'
   workflow_dispatch:
 
@@ -54,6 +56,13 @@ jobs:
           grep -Fq "'STANDBY_SHARED_DIRTY'" "$f"
           grep -Fq "PERFORM set_config('nolu.replica_apply','1',true);" "$f"
           grep -Fq 'RETURN public.puplan_apply_server_replica_unchecked(p_payload);' "$f"
+
+      - name: Authority-side replay lookup must stay indexed
+        run: |
+          set -euo pipefail
+          f=supabase/standby/20260912_nolu_authority_dirty_edge_index.sql
+          grep -Fq 'CREATE INDEX IF NOT EXISTS puplan_standby_dirty_authorities_authority_idx' "$f"
+          grep -Fq 'ON public.puplan_standby_dirty_authorities(authority_user_id, actor_user_id);' "$f"
 
       - name: Public roles must not reach dirty-fence internals
         run: |
