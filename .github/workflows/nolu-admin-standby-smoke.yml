@@ -1,0 +1,46 @@
+name: Nolu Admin Standby Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'supabase/standby/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-admin-standby-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/admin-failover.js'
+      - 'pu-plan/main.js'
+      - 'pu-plan/sw.js'
+      - 'supabase/standby/functions/pu-plan-admin/**'
+      - '.github/workflows/nolu-admin-standby-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          node --check pu-plan/admin-failover.js
+          node --check pu-plan/main.js
+          node --check pu-plan/sw.js
+      - name: Admin regional invariants
+        run: |
+          grep -q "puplan_session_primary_v1" pu-plan/admin-failover.js
+          grep -q "puplan_session_standby_v1" pu-plan/admin-failover.js
+          grep -q "READ_ONLY" pu-plan/admin-failover.js
+          grep -q "PRIMARY_REQUIRED" pu-plan/admin-failover.js
+          grep -q "admin-failover.js" pu-plan/main.js
+          grep -q "admin-failover.js" pu-plan/sw.js
+          grep -q "cloud_tier:'standby'" supabase/standby/functions/pu-plan-admin/index.ts
+          grep -q "備援區管理模式目前為唯讀" supabase/standby/functions/pu-plan-admin/index.ts
+          ! grep -q "set_user_privacy.*return json" supabase/standby/functions/pu-plan-admin/index.ts
+          ! grep -q "moderate_post.*return json" supabase/standby/functions/pu-plan-admin/index.ts
+          ! grep -q "remove_message.*return json" supabase/standby/functions/pu-plan-admin/index.ts
