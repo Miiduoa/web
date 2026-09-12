@@ -34,7 +34,8 @@ jobs:
           grep -q "localStorage.setItem(PREFERRED_CLOUD_KEY,'primary')" pu-plan/login-failover-budget.js
           grep -q "puplan_session_primary_v1" pu-plan/admin-failover.js
           grep -q "puplan_session_standby_v1" pu-plan/admin-failover.js
-          grep -q "canonical===standby" pu-plan/admin-failover.js
+          grep -q "canonicalIsStandby" pu-plan/admin-failover.js
+          grep -q "if(canonicalIsStandby)return''" pu-plan/admin-failover.js
           grep -q "primary&&!failoverEligible(primary)" pu-plan/admin-failover.js
           grep -q "login-failover-budget.js" pu-plan/main.js
           grep -q "admin-failover.js" pu-plan/main.js
@@ -59,14 +60,19 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
-      - name: Standby session stays out of Mumbai admin auth
+      - name: Standby session ignores stale Mumbai admin token
         run: |
           node <<'NODE'
           const fs=require('fs'),vm=require('vm');
           const code=fs.readFileSync('pu-plan/admin-failover.js','utf8');
           const calls=[];
-          const store=new Map([['puplan_session','standby-test'],['puplan_session_standby_v1','standby-test'],['nolu_preferred_cloud_v1','standby']]);
-          class HeadersX{constructor(src={}){this.m=new Map();for(const [k,v] of Object.entries(src))this.m.set(k.toLowerCase(),String(v))}set(k,v){this.m.set(k.toLowerCase(),String(v))}get(k){return this.m.get(k.toLowerCase())||null}}
+          const store=new Map([
+            ['puplan_session','standby-current'],
+            ['puplan_session_primary_v1','stale-primary-token'],
+            ['puplan_session_standby_v1','standby-current'],
+            ['nolu_preferred_cloud_v1','standby']
+          ]);
+          class HeadersX{constructor(src={}){this.m=new Map();if(src instanceof HeadersX){for(const [k,v] of src.m)this.m.set(k,v)}else{for(const [k,v] of Object.entries(src))this.m.set(k.toLowerCase(),String(v))}}set(k,v){this.m.set(k.toLowerCase(),String(v))}get(k){return this.m.get(k.toLowerCase())||null}}
           const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,String(v))};
           const context={URL,Headers:HeadersX,Response,location:{href:'https://miiduoa.github.io/web/'},localStorage,window:{fetch:async(url,opt={})=>{calls.push({url:String(url),auth:opt.headers?.get?.('Authorization')||''});return new Response('{}',{status:String(url).includes('ltfurq')?200:401})}}};
           Object.assign(context.window,{window:context.window,localStorage,location:context.location,URL,Headers:HeadersX,Response});
@@ -76,10 +82,11 @@ jobs:
           (async()=>{
             const read=await context.window.fetch(adminUrl,opts('whoami'));
             if(!read.ok)throw new Error('standby read fallback failed');
-            if(calls.length!==1||!calls[0].url.includes('ltfurqaspqsvswmebyzw'))throw new Error('standby session reached Mumbai');
+            if(calls.length!==1||!calls[0].url.includes('ltfurqaspqsvswmebyzw'))throw new Error('stale primary token reached Mumbai');
+            if(calls[0].auth!=='Bearer standby-current')throw new Error('wrong standby token used');
             calls.length=0;
             const write=await context.window.fetch(adminUrl,opts('moderate_post'));
             if(write.status!==503||calls.length!==0)throw new Error('admin write did not fail closed');
-            console.log('ADMIN_REGION_ISOLATION_OK');
+            console.log('STALE_PRIMARY_ADMIN_TOKEN_IGNORED_OK');
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
