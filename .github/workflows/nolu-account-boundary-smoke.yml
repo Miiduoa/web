@@ -10,6 +10,7 @@ on:
       - 'pu-plan/session-recovery.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
+      - '.github/tests/guest-privacy.cjs'
       - '.github/workflows/nolu-account-boundary-smoke.yml'
   pull_request:
     branches: [main]
@@ -20,6 +21,7 @@ on:
       - 'pu-plan/session-recovery.js'
       - 'pu-plan/main.js'
       - 'pu-plan/sw.js'
+      - '.github/tests/guest-privacy.cjs'
       - '.github/workflows/nolu-account-boundary-smoke.yml'
   workflow_dispatch:
 
@@ -85,8 +87,6 @@ jobs:
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==1)throw new Error('A -> B session switch must hard reload');
 
-          // Startup cache quarantine may clear/restore the owner marker. It is not
-          // authentication and must not make Safari/PWA windows bounce each other.
           r=runtime(token(A));
           r.localStorage.setItem('puplan_course_owner',A);
           r.localStorage.removeItem('puplan_course_owner');
@@ -105,9 +105,6 @@ jobs:
           if(r.reloads()!==1)throw new Error('first logout/session rejection must hard reload');
           if(!sharedSession.get(KEY))throw new Error('reload transition was not persisted');
 
-          // Reproduce a stale credential resurrection attempt. The same rejected
-          // identity may appear transiently, but its second A -> empty transition
-          // must settle on login instead of reloading forever.
           r=runtime('',{session:sharedSession,signed:false});
           r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
@@ -117,7 +114,6 @@ jobs:
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('repeated A -> empty transition caused reload loop');
 
-          // A real, cloud-verified sign-in re-arms the boundary for a future logout.
           r=runtime('',{session:sharedSession,signed:true,profileId:A});
           r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
@@ -128,17 +124,10 @@ jobs:
           if(r.reloads()!==1)throw new Error('future logout was incorrectly suppressed');
           NODE
 
-      - name: Startup quarantine does not churn same-account owner
+      - name: Guest privacy and same-account owner contract
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          s=Path('pu-plan/guest-privacy.js').read_text()
-          assert "const RENDERABLE_ACCOUNT_DATA_KEYS=" in s
-          assert "clearLocal([...RENDERABLE_ACCOUNT_DATA_KEYS,...PROFILE_KEYS])" in s
-          assert "ownerBefore&&candidateUid&&ownerBefore!==candidateUid" in s
-          assert "localStorage.removeItem('puplan_course_owner')" in s
-          PY
+          node .github/tests/guest-privacy.cjs
 
       - name: Confirmed auth rejection revokes every credential copy once
         run: |
