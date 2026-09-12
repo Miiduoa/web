@@ -70,8 +70,9 @@ jobs:
           grep -Fq "await import('./outage-mirror-bridge.js')" pu-plan/main.js
           grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
           grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
-          grep -Fq 'nolu-shell-20260911-login-failover3' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260911_login_failover3' pu-plan/pwa.js
+          grep -Fq "'./media-failback-guard.js'" pu-plan/sw.js
+          grep -Fq 'nolu-shell-20260912-media-failback1' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260912_media_failback1' pu-plan/pwa.js
       - name: Verify live portable v2 endpoints
         run: |
           set -euo pipefail
@@ -87,7 +88,7 @@ jobs:
             code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{}')
             echo "[$REF unauth] HTTP $code :: $(cat "$tmp")"
             test "$code" = 401
-            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+            code=$(curl -sS --max-time 12 -o "$tmp"" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
             echo "[$REF evil origin] HTTP $code"
             test "$code" = 403
           done
