@@ -1,0 +1,83 @@
+name: nolu primary Data API health
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nolu-primary-data-api-health.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nolu-primary-data-api-health.yml'
+      - 'supabase/migrations/**'
+  workflow_dispatch:
+  schedule:
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Health workflow is intentionally strict on main
+        run: |
+          echo 'PR validates workflow parsing; live health runs after merge, manually, on schedule, and after migrations.'
+
+  primary-data-api:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PROJECT_URL: https://hrrmkrayvrgnwcroyttp.supabase.co
+      PUBLISHABLE_KEY: sb_publishable_jXaj3aY5lPDvLEUBOzAuCQ_eKoAHTKN
+    steps:
+      - name: Primary PostgREST must be reachable and healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="$PROJECT_URL/rest/v1/"
+          body=/tmp/nolu-primary-data-api-health.json
+          code='000'
+          rc=1
+
+          for attempt in 1 2 3; do
+            set +e
+            code=$(curl -sS \
+              --connect-timeout 4 \
+              --max-time 10 \
+              -o "$body" \
+              -w '%{http_code}' \
+              "$endpoint" \
+              -H "apikey: $PUBLISHABLE_KEY")
+            rc=$?
+            set -e
+
+            echo "primary Data API attempt $attempt: curl=$rc HTTP=$code"
+            if [ "$rc" -eq 0 ] && [[ "$code" =~ ^2 ]]; then
+              break
+            fi
+            [ "$attempt" -lt 3 ] && sleep "$attempt"
+          done
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Primary Data API transport is unreachable after 3 attempts (curl=$rc)"
+            exit 1
+          fi
+
+          if ! [[ "$code" =~ ^2 ]]; then
+            echo "::error::Primary Data API is unhealthy: HTTP $code"
+            cat "$body" 2>/dev/null || true
+            exit 1
+          fi
+
+          if grep -Eqi 'PGRST002|Gateway Timeout|Could not query the database for the schema cache' "$body" 2>/dev/null; then
+            echo '::error::Primary Data API returned a database/schema-cache availability error'
+            cat "$body"
+            exit 1
+          fi
+
+          echo "Primary Data API healthy: HTTP $code"
