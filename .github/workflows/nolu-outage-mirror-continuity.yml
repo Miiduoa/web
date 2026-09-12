@@ -88,7 +88,7 @@ jobs:
             code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X POST "$URL" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{}')
             echo "[$REF unauth] HTTP $code :: $(cat "$tmp")"
             test "$code" = 401
-            code=$(curl -sS --max-time 12 -o "$tmp"" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
+            code=$(curl -sS --max-time 12 -o "$tmp" -w '%{http_code}' -X OPTIONS "$URL" -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')
             echo "[$REF evil origin] HTTP $code"
             test "$code" = 403
           done
