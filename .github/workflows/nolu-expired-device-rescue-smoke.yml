@@ -40,9 +40,9 @@ jobs:
           node --check pu-plan/login-failover-budget.js
           grep -q "LOCAL_EXPIRED_GRACE_SECONDS=7\*24\*60\*60" pu-plan/session-recovery.js
           grep -q "device-rescue3" pu-plan/session-recovery.js
-          grep -q "nolu-shell-20260912-auth-trace6" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260912_auth_trace6" pu-plan/pwa.js
-          grep -q "20260912-auth-trace6" pu-plan/index.html
+          grep -q "nolu-shell-20260912-gate-stability7" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_gate_stability7" pu-plan/pwa.js
+          grep -q "20260912-gate-stability7" pu-plan/index.html
           grep -q "nolu-browser-gateway-v1" pu-plan/origin-gateway.js
           grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
       - name: Verify recently expired regional session is local-rescue anchor only
