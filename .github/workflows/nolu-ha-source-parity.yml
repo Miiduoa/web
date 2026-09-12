@@ -1,0 +1,93 @@
+name: nolu HA source parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/pu-plan-failback-ingest-v1/**'
+      - 'supabase/functions/pu-plan-failback-v1/**'
+      - 'supabase/functions/pu-plan-replica-ingest-v3/**'
+      - 'supabase/migrations/20260911173100_nolu_failback_apply_v2.sql'
+      - 'supabase/standby/20260911_nolu_failback_snapshot.sql'
+      - 'supabase/standby/20260912_nolu_standby_atomic_media_replica.sql'
+      - 'supabase/standby/20260912_nolu_social_helper_acl_hardening.sql'
+      - '.github/workflows/nolu-ha-source-parity.yml'
+  pull_request:
+    paths:
+      - 'supabase/functions/pu-plan-failback-ingest-v1/**'
+      - 'supabase/functions/pu-plan-failback-v1/**'
+      - 'supabase/functions/pu-plan-replica-ingest-v3/**'
+      - 'supabase/migrations/20260911173100_nolu_failback_apply_v2.sql'
+      - 'supabase/standby/20260911_nolu_failback_snapshot.sql'
+      - 'supabase/standby/20260912_nolu_standby_atomic_media_replica.sql'
+      - 'supabase/standby/20260912_nolu_social_helper_acl_hardening.sql'
+      - '.github/workflows/nolu-ha-source-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify failback, replay, media and ACL invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          primary='supabase/functions/pu-plan-failback-ingest-v1/index.ts'
+          standby='supabase/functions/pu-plan-failback-v1/index.ts'
+          replica='supabase/functions/pu-plan-replica-ingest-v3/index.ts'
+          apply='supabase/migrations/20260911173100_nolu_failback_apply_v2.sql'
+          snapshot='supabase/standby/20260911_nolu_failback_snapshot.sql'
+          media='supabase/standby/20260912_nolu_standby_atomic_media_replica.sql'
+          acl='supabase/standby/20260912_nolu_social_helper_acl_hardening.sql'
+
+          for f in "$primary" "$standby" "$replica" "$apply" "$snapshot" "$media" "$acl"; do
+            test -s "$f"
+          done
+
+          grep -Fq 'BROWSER_ORIGIN_NOT_ALLOWED' "$primary"
+          grep -Fq 'FAILBACK_REPLAY' "$primary"
+          grep -Fq 'FAILBACK_CONFLICT' "$primary"
+          grep -Fq "db.rpc('puplan_apply_failback_snapshot'" "$primary"
+
+          grep -Fq 'verifySignedSessionV4' "$standby"
+          grep -Fq 'assertCredentialCurrent' "$standby"
+          grep -Fq 'puplan_get_standby_dirty_generation' "$standby"
+          grep -Fq 'puplan_clear_standby_dirty_user' "$standby"
+          grep -Fq 'FAILBACK_STANDBY_CHANGED' "$standby"
+
+          grep -Fq 'REPLICA_REPLAY' "$replica"
+          grep -Fq 'BROWSER_ORIGIN_NOT_ALLOWED' "$replica"
+          grep -Fq "db.rpc('puplan_apply_server_replica'" "$replica"
+
+          grep -Fq 'PRIMARY_ADVANCED' "$apply"
+          grep -Fq 'base_primary_revision' "$apply"
+          grep -Fq 'post_media' "$apply"
+          grep -Fq 'nolu.failback_apply' "$apply"
+          grep -Fq 'from public, anon, authenticated' "$apply"
+          grep -Fq 'to service_role' "$apply"
+
+          grep -Fq "'base_primary_revision'" "$snapshot"
+          grep -Fq "'post_media'" "$snapshot"
+          grep -Fq 'puplan_apply_replica_media_unchecked' "$media"
+          grep -Fq 'puplan_standby_dirty_users' "$media"
+
+          for fn in puplan_adjust_affinity puplan_affinity_like_change puplan_affinity_reply_change puplan_on_like_change puplan_on_message_insert puplan_on_reply_change; do
+            grep -Fqi "revoke all on function public.${fn}" "$acl"
+            grep -Fqi "grant execute on function public.${fn}" "$acl"
+          done
+
+          if grep -R -E "SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*['\"][A-Za-z0-9._-]+" \
+            supabase/functions/pu-plan-failback-ingest-v1 \
+            supabase/functions/pu-plan-failback-v1 \
+            supabase/functions/pu-plan-replica-ingest-v3; then
+            echo '::error::literal service-role secret found in HA source'
+            exit 1
+          fi
+
+          echo 'NOLU_HA_SOURCE_PARITY_OK'
