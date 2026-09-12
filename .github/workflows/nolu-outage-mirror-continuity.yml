@@ -72,8 +72,8 @@ jobs:
           grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
           grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
           grep -Fq "'./media-failback-guard.js'" pu-plan/sw.js
-          grep -Fq 'nolu-shell-20260912-auth-trace6' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260912_auth_trace6' pu-plan/pwa.js
+          grep -Fq 'nolu-shell-20260912-gate-stability7' pu-plan/sw.js
+          grep -Fq 'nolu_shell_reload_20260912_gate_stability7' pu-plan/pwa.js
       - name: Verify live portable v2 endpoints
         run: |
           set -euo pipefail
