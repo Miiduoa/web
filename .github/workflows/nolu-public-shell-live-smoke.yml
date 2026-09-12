@@ -45,9 +45,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '20260912-auth-trace6' pu-plan/index.html
-          grep -q "nolu-shell-20260912-auth-trace6" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260912_auth_trace6" pu-plan/pwa.js
+          grep -q '20260912-gate-stability7' pu-plan/index.html
+          grep -q "nolu-shell-20260912-gate-stability7" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_gate_stability7" pu-plan/pwa.js
           grep -q "./auth-trace.js" pu-plan/sw.js
           grep -q "import './auth-trace.js'" pu-plan/main.js
           grep -q "./origin-gateway.js" pu-plan/sw.js
@@ -71,17 +71,17 @@ jobs:
           ready=0
           for attempt in $(seq 1 24); do
             ok=1
-            curl -fsS --max-time 15 "$BASE/sw.js?shell=20260912authtrace6" -o "$tmp/sw.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/?shell=20260912authtrace6" -o "$tmp/index.html" || ok=0
-            curl -fsS --max-time 15 "$BASE/auth-trace.js?shell=20260912authtrace6" -o "$tmp/auth-trace.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?shell=20260912authtrace6" -o "$tmp/login-patience.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/pwa.js?shell=20260912authtrace6" -o "$tmp/pwa.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/sw.js?shell=20260912gatestability7" -o "$tmp/sw.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/?shell=20260912gatestability7" -o "$tmp/index.html" || ok=0
+            curl -fsS --max-time 15 "$BASE/auth-trace.js?shell=20260912gatestability7" -o "$tmp/auth-trace.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?shell=20260912gatestability7" -o "$tmp/login-patience.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/pwa.js?shell=20260912gatestability7" -o "$tmp/pwa.js" || ok=0
             if [ "$ok" = 1 ] \
-              && grep -q 'nolu-shell-20260912-auth-trace6' "$tmp/sw.js" \
-              && grep -q '20260912-auth-trace6' "$tmp/index.html" \
+              && grep -q 'nolu-shell-20260912-gate-stability7' "$tmp/sw.js" \
+              && grep -q '20260912-gate-stability7' "$tmp/index.html" \
               && grep -q '20260912-auth-trace1' "$tmp/auth-trace.js" \
               && grep -q 'deadlineAware:true' "$tmp/login-patience.js" \
-              && grep -q 'nolu_shell_reload_20260912_auth_trace6' "$tmp/pwa.js"; then
+              && grep -q 'nolu_shell_reload_20260912_gate_stability7' "$tmp/pwa.js"; then
               ready=1
               break
             fi
@@ -94,20 +94,20 @@ jobs:
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?shell=20260912authtrace6" -o "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?shell=20260912gatestability7" -o "$tmp/main.js"
           grep -q "import './auth-trace.js'" "$tmp/main.js"
           grep -q "import './origin-gateway.js'" "$tmp/main.js"
           grep -q "await import('./login-failover-budget.js')" "$tmp/main.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?shell=20260912authtrace6" -o "$tmp/origin-gateway.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?shell=20260912gatestability7" -o "$tmp/origin-gateway.js"
           grep -q 'nolu-browser-gateway-v1' "$tmp/origin-gateway.js"
           grep -q "import './media-failback-guard.js'" "$tmp/origin-gateway.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/media-failback-guard.js?shell=20260912authtrace6" -o "$tmp/media-failback-guard.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/media-failback-guard.js?shell=20260912gatestability7" -o "$tmp/media-failback-guard.js"
           grep -q 'pu-plan-media-failback-v1' "$tmp/media-failback-guard.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-failover-budget.js?shell=20260912authtrace6" -o "$tmp/login-budget.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/login-failover-budget.js?shell=20260912gatestability7" -o "$tmp/login-budget.js"
           grep -q 'OVERALL_LOGIN_TIMEOUT_MS=14000' "$tmp/login-budget.js"
           grep -q 'standbyLoginTimeoutMs:6500' "$tmp/login-patience.js"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?shell=20260912authtrace6" -o "$tmp/provider-config.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?shell=20260912gatestability7" -o "$tmp/provider-config.js"
           grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
           grep -q 'pu-plan-portable-v2' "$tmp/provider-config.js"
           ! grep -q 'pu-plan-portable-v1' "$tmp/provider-config.js"
