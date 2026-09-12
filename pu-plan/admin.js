@@ -2,7 +2,7 @@ import {cleanAvatar} from './core/state.js';
 const ADMIN_API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
-const token=()=>localStorage.getItem('puplan_session_primary_v1')||'';
+const token=()=>localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session')||'';
 const fallbackEsc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const esc=s=>app?.esc?.(String(s??''))||fallbackEsc(s);
 const fmtTime=v=>v?new Date(v).toLocaleString('zh-TW',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
