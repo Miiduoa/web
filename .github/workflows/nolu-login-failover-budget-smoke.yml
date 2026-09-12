@@ -48,7 +48,7 @@ jobs:
             assert(main.indexOf("await import('./resilience.js')") < main.indexOf("await import('./login-failover-budget.js')"));
             assert(main.indexOf("await import('./login-failover-budget.js')") < main.indexOf("await import('./offline-session-rescue.js')"));
             assert(sw.includes("'./login-failover-budget.js'"));
-            assert(sw.includes('nolu-shell-20260911-login-failover3'));
+            assert(sw.includes('nolu-shell-20260912-media-failback1'));
 
             assert(patience.includes('hrrmkrayvrgnwcroyttp.supabase.co'));
             assert(patience.includes('ltfurqaspqsvswmebyzw.supabase.co'));
@@ -60,63 +60,36 @@ jobs:
             assert(!/NO_STANDBY_ACTIONS[^;]*login/.test(resilience));
 
             function context(baseFetch){
-              const window={fetch:baseFetch};
-              window.window=window;
+              const window={fetch:baseFetch};window.window=window;
               return vm.createContext({window,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,Date,Number,Infinity,console});
             }
-
             for(const host of ['hrrmkrayvrgnwcroyttp.supabase.co','ltfurqaspqsvswmebyzw.supabase.co']){
-              const caller=new AbortController();
-              let observedSignal=null;
-              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});
-              vm.runInContext(patience,ctx);
-              await ctx.window.fetch(`https://${host}/functions/v1/pu-plan-api-v8`,{
-                method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal
-              });
-              assert(observedSignal && observedSignal!==caller.signal, `${host} must replace the short HA hop signal`);
+              const caller=new AbortController();let observedSignal=null;
+              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});vm.runInContext(patience,ctx);
+              await ctx.window.fetch(`https://${host}/functions/v1/pu-plan-api-v8`,{method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal});
+              assert(observedSignal&&observedSignal!==caller.signal,`${host} must replace the short HA hop signal`);
             }
-
             {
-              const caller=new AbortController();
-              let observed=null;
-              const ctx=context(async(_input,opts)=>{observed=opts;return {ok:true};});
-              vm.runInContext(budget,ctx);
-              await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{
-                method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal
-              });
-              assert(observed.signal && observed.signal!==caller.signal,'overall budget must replace cloud.js legacy signal');
+              const caller=new AbortController();let observed=null;
+              const ctx=context(async(_input,opts)=>{observed=opts;return {ok:true};});vm.runInContext(budget,ctx);
+              await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',body:JSON.stringify({action:'login'}),signal:caller.signal});
+              assert(observed.signal&&observed.signal!==caller.signal,'overall budget must replace cloud.js legacy signal');
               assert(Number(observed.__noluLoginDeadline)>Date.now(),'overall budget must propagate a future deadline');
             }
-
             {
-              const caller=new AbortController();
-              let observedSignal=null;
-              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});
-              vm.runInContext(budget,ctx);
-              await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{
-                method:'POST',body:JSON.stringify({action:'bootstrap'}),signal:caller.signal
-              });
+              const caller=new AbortController();let observedSignal=null;
+              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});vm.runInContext(budget,ctx);
+              await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',body:JSON.stringify({action:'bootstrap'}),signal:caller.signal});
               assert(observedSignal===caller.signal,'non-login traffic must keep its caller signal');
             }
-
             {
               let networkOptions=null;
-              const ctx=context((_input,opts)=>new Promise((resolve,reject)=>{
-                networkOptions=opts;
-                opts.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});
-                setTimeout(()=>resolve({ok:true}),150);
-              }));
-              vm.runInContext(patience,ctx);
-              const started=Date.now();
-              await assert.rejects(ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',{
-                method:'POST',
-                body:JSON.stringify({action:'login'}),
-                __noluLoginDeadline:Date.now()+35
-              }),e=>e?.name==='AbortError');
+              const ctx=context((_input,opts)=>new Promise((resolve,reject)=>{networkOptions=opts;opts.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});setTimeout(()=>resolve({ok:true}),150);}));
+              vm.runInContext(patience,ctx);const started=Date.now();
+              await assert.rejects(ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',{method:'POST',body:JSON.stringify({action:'login'}),__noluLoginDeadline:Date.now()+35}),e=>e?.name==='AbortError');
               assert(Date.now()-started<250,'per-hop wrapper must honor overall deadline');
-              assert(networkOptions && !('__noluLoginDeadline' in networkOptions),'private deadline field must be stripped before native fetch');
+              assert(networkOptions&&!('__noluLoginDeadline' in networkOptions),'private deadline field must be stripped before native fetch');
             }
-
             const publicText=`${patience}\n${budget}`;
             assert(!/(password_hash|recovery_hash|service_role|PRIVATE KEY)/i.test(publicText));
             console.log('NOLU_LOGIN_FAILOVER_BUDGET_OK');
