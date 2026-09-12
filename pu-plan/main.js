@@ -26,7 +26,10 @@ await import('./guest-privacy.js');
 await import('./account-boundary.js');
 
 const root=document.querySelector('#app');
-root.innerHTML=authView()+shellView()+dialogsView();
+const recoveryStatus=String(window.NOLU_SESSION_RECOVERY?.result?.status||'');
+const hideInitialAuthGate=localStorage.getItem('puplan_guest')==='1'||['canonical-ok','recovered','local-grace'].includes(recoveryStatus);
+root.innerHTML=authView({hidden:hideInitialAuthGate})+shellView()+dialogsView();
+window.NOLU_AUTH_TRACE?.record?.('auth-gate-initial',{status:hideInitialAuthGate?'hidden':'visible',source:recoveryStatus||'none'});
 
 // Bind the current raw session to its exact durable IndexedDB snapshot before app.js
 // reads profile/schedule state. If no exact binding exists, the cache stays empty and
