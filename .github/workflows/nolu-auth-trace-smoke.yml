@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/auth-trace.js'
+      - 'pu-plan/media-input-guard.js'
       - 'pu-plan/account-boundary.js'
       - 'pu-plan/session-recovery.js'
       - 'pu-plan/cloud.js'
@@ -17,6 +18,7 @@ on:
     branches: [main]
     paths:
       - 'pu-plan/auth-trace.js'
+      - 'pu-plan/media-input-guard.js'
       - 'pu-plan/account-boundary.js'
       - 'pu-plan/session-recovery.js'
       - 'pu-plan/cloud.js'
@@ -41,20 +43,25 @@ jobs:
         run: |
           set -euo pipefail
           node --check pu-plan/auth-trace.js
+          node --check pu-plan/media-input-guard.js
           node --check pu-plan/account-boundary.js
           node --check pu-plan/session-recovery.js
           node --check pu-plan/cloud.js
           node --check pu-plan/pwa.js
           node --check pu-plan/sw.js
           grep -q "import './auth-trace.js'" pu-plan/main.js
+          grep -q "import './media-input-guard.js'" pu-plan/main.js
           grep -q "'./auth-trace.js'" pu-plan/sw.js
-          grep -q "nolu-shell-20260912-auth-trace6" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260912_auth_trace6" pu-plan/pwa.js
-          grep -q "20260912-auth-trace6" pu-plan/index.html
+          grep -q "'./media-input-guard.js'" pu-plan/sw.js
+          grep -q "nolu-shell-20260912-gate-stability7" pu-plan/sw.js
+          grep -q "nolu_shell_reload_20260912_gate_stability7" pu-plan/pwa.js
+          grep -q "20260912-gate-stability7" pu-plan/index.html
           grep -q "auth-boundary-reload" pu-plan/account-boundary.js
           grep -q "session-recovery" pu-plan/session-recovery.js
           grep -q "auth-invalidated" pu-plan/cloud.js
           grep -q "pwa-controllerchange" pu-plan/pwa.js
+          grep -q "20260913-media-input1" pu-plan/media-input-guard.js
+          grep -q "page-lifecycle" pu-plan/auth-trace.js
 
       - name: Trace never persists auth secrets or identity data
         run: |
@@ -72,9 +79,13 @@ jobs:
             };
           }
           const localStorage=storage(),sessionStorage=storage(),window={};
-          vm.runInNewContext(code,{window,localStorage,sessionStorage,Date,Math,JSON,Object,String,Number,Set});
+          const listeners={};
+          const addEventListener=(type,fn)=>{listeners[type]=fn};
+          const performance={getEntriesByType:type=>type==='navigation'?[{type:'reload'}]:[]};
+          vm.runInNewContext(code,{window,localStorage,sessionStorage,Date,Math,JSON,Object,String,Number,Set,performance,addEventListener});
           const trace=window.NOLU_AUTH_TRACE;
-          assert.equal(trace.version,'20260912-auth-trace1');
+          assert.equal(trace.version,'20260913-auth-trace2');
+          assert(trace.snapshot().some(x=>x.type==='trace-ready'&&x.source==='reload'),'navigation source was not recorded');
           trace.record('security-test',{
             status:'unauthorized',reason:'http-401',httpStatus:401,
             token:'super-secret-token',password:'hunter2',email:'private@example.com',
@@ -92,6 +103,20 @@ jobs:
           for(const event of events)for(const key of Object.keys(event))assert(allowed.has(key),`unexpected persisted trace field: ${key}`);
           console.log('NOLU_AUTH_TRACE_PRIVACY_OK');
           NODE
+
+      - name: Media guard preserves non-images and caps image decode size
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('pu-plan/media-input-guard.js').read_text()
+          assert 'MAX_EDGE=2048' in s
+          assert "image/gif" not in s.split('CONVERTIBLE=new Set(',1)[1].split(']);',1)[0]
+          assert 'resizeWidth:MAX_EDGE' in s
+          assert "event.stopImmediatePropagation()" in s
+          assert "handler.call(input" in s
+          assert "fallback-original" in s
+          PY
 
       - name: Trace is diagnostic only
         run: |
