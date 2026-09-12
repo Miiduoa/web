@@ -7,6 +7,7 @@
   const LOGIN_PATH=/\/functions\/v1\/(?:nolu-browser-gateway-v1|pu-plan-api|pu-plan-api-v8|pu-plan-api-v6|pu-plan-core-v1)$/;
   const OVERALL_LOGIN_TIMEOUT_MS=14000;
   const DEADLINE_FIELD='__noluLoginDeadline';
+  const PREFERRED_CLOUD_KEY='nolu_preferred_cloud_v1';
 
   function requestUrl(input){
     try{return new URL(typeof input==='string'?input:input?.url||'',location.href)}catch{return null}
@@ -22,6 +23,12 @@
       return baseFetch(input,options);
     }
     if(options?.signal?.aborted)throw new DOMException('Aborted','AbortError');
+
+    // A fresh password login must always ask the Mumbai authority first. Tokyo is
+    // an outage fallback with an independently signed Session v4; allowing an old
+    // standby preference to win here can leave the canonical session signed for
+    // Tokyo and make primary-only/admin endpoints reject it as invalid.
+    localStorage.setItem(PREFERRED_CLOUD_KEY,'primary');
 
     // cloud.js historically gives the complete call about 6.5 seconds. That is
     // shorter than a bounded Mumbai attempt plus a real Tokyo attempt. Give the
@@ -40,7 +47,7 @@
   };
 
   window.NOLU_LOGIN_FAILOVER_BUDGET={
-    version:'20260911-login-budget3',
+    version:'20260912-login-authority1',
     overallLoginTimeoutMs:OVERALL_LOGIN_TIMEOUT_MS,
     deadlineField:DEADLINE_FIELD
   };
