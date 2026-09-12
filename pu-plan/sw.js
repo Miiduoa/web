@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260912-admin-auth4';
+const CACHE='nolu-shell-20260912-auth-stability5';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
