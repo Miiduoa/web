@@ -83,6 +83,10 @@ await import('./provider-mesh.js');
 await import('./outage-mirror-bridge.js');
 await startModule('./provider-status.js');
 
+// Read-only management screens may use the Tokyo copy during a Mumbai outage.
+// Mutating admin actions remain primary-only to prevent split-brain moderation.
+await startModule('./admin-failover.js');
+
 // Bind account controls first. The remaining modules all depend only on the shell,
 // app state, and the cloud bootstrap above, so fetch/evaluate them concurrently.
 // Keeping auth first preserves account-control ordering while removing the serial
