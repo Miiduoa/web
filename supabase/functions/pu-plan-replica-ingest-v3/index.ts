@@ -59,6 +59,9 @@ Deno.serve(async (req: Request) => {
     await consumeNonce(payload);
     const { data, error } = await db.rpc('puplan_apply_server_replica', { p_payload: payload });
     if (error) throw new ApiError(503, 'standby apply failed', 'STANDBY_APPLY_FAILED');
+    if (data?.conflict === true || data?.ok === false) {
+      return json({ ok: false, error: 'REPLICA_STANDBY_DIRTY', message: 'standby has local changes awaiting signed failback', result: data }, 409);
+    }
     return json({ ok: true, result: data });
   } catch (error) {
     if (error instanceof ApiError) return json({ error: error.code, message: error.message }, error.status);
