@@ -54,16 +54,22 @@ jobs:
           const index=fs.readFileSync('pu-plan/index.html','utf8');
           const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
           assert(generation,'service-worker shell generation missing');
-          const reload=pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1];
-          assert.equal(reload,generation.replace(/-/g,'_'),'PWA reload generation drifted');
           const versions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
           assert(versions.length>0,'HTML versioned assets missing');
           assert.deepEqual([...new Set(versions)],[generation],'HTML source shell generation drifted');
+          assert(!/location\.reload\(\)/.test(pwa),'PWA must not force mid-session reloads');
+          assert(/no-mid-session-reload/.test(pwa),'PWA no-reload controllerchange contract missing');
+          assert(!/skipWaiting\(\)/.test(sw),'worker must not take over an active compose session');
+          assert(!/clients\.claim\(\)/.test(sw),'worker must not claim active clients mid-session');
           console.log(`SOURCE_SHELL_GENERATION ${generation}`);
           NODE
           grep -q "20260913-auth-trace2" pu-plan/auth-trace.js
-          grep -q "20260913-media-input2" pu-plan/media-input-guard.js
-          grep -q "stage:'ios-safe-store'" pu-plan/media-input-guard.js
+          grep -q "20260913-media-input3" pu-plan/media-input-guard.js
+          grep -q "iosSingleFilePicker:IOS" pu-plan/media-input-guard.js
+          grep -q "removeAttribute('multiple')" pu-plan/media-input-guard.js
+          grep -q "input.onchange=null" pu-plan/media-input-guard.js
+          grep -q "media-files-received" pu-plan/media-input-guard.js
+          grep -q "media-safe-held" pu-plan/media-input-guard.js
           grep -q "if(IOS)return null" pu-plan/media-input-guard.js
           grep -q "stage:'ios-safe-upload-start'" pu-plan/media-input-guard.js
           grep -q "./auth-trace.js" pu-plan/sw.js
@@ -92,7 +98,6 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           EXPECTED_GEN=$(sed -n "s/^const CACHE='nolu-shell-\([^']*\)';/\1/p" pu-plan/sw.js | head -n1)
           test -n "$EXPECTED_GEN"
-          EXPECTED_RELOAD=$(printf '%s' "$EXPECTED_GEN" | tr '-' '_')
           ready=0
           for attempt in $(seq 1 24); do
             ok=1
@@ -108,12 +113,17 @@ jobs:
               && grep -Fq "nolu-shell-$EXPECTED_GEN" "$tmp/sw.js" \
               && [ "$live_versions" = "$EXPECTED_GEN" ] \
               && grep -q '20260913-auth-trace2' "$tmp/auth-trace.js" \
-              && grep -q '20260913-media-input2' "$tmp/media-input-guard.js" \
-              && grep -q "stage:'ios-safe-store'" "$tmp/media-input-guard.js" \
+              && grep -q '20260913-media-input3' "$tmp/media-input-guard.js" \
+              && grep -q 'iosSingleFilePicker:IOS' "$tmp/media-input-guard.js" \
+              && grep -q "removeAttribute('multiple')" "$tmp/media-input-guard.js" \
+              && grep -q 'media-safe-held' "$tmp/media-input-guard.js" \
               && grep -q 'if(IOS)return null' "$tmp/media-input-guard.js" \
               && grep -q 'deadlineAware:true' "$tmp/login-patience.js" \
               && grep -q 'auth401Quorum:true' "$tmp/login-budget.js" \
-              && grep -Fq "nolu_shell_reload_$EXPECTED_RELOAD" "$tmp/pwa.js"; then
+              && grep -q 'no-mid-session-reload' "$tmp/pwa.js" \
+              && ! grep -q 'location.reload()' "$tmp/pwa.js" \
+              && ! grep -q 'skipWaiting()' "$tmp/sw.js" \
+              && ! grep -q 'clients.claim()' "$tmp/sw.js"; then
               ready=1
               break
             fi
