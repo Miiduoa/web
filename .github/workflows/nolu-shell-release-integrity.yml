@@ -103,11 +103,12 @@ jobs:
           const assert=require('assert');
           const source=fs.readFileSync('pu-plan/sw.js','utf8');
           const generation=source.match(/const CACHE='(nolu-shell-[^']+)'/)?.[1];
+          const releaseGeneration=generation?.replace(/^nolu-shell-/,'');
           const block=source.match(/const PATHS=\[([\s\S]*?)\];/)?.[1]||'';
           const shellCount=[...block.matchAll(/'((?:\.\/)[^']*)'/g)].length;
-          assert(generation&&shellCount>0,'unable to inspect service-worker release');
+          assert(generation&&releaseGeneration&&shellCount>0,'unable to inspect service-worker release');
 
-          async function scenario({active=true,keys=['nolu-shell-old'],failFetchAt=0,failPutAt=0}={}){
+          async function scenario({active=true,keys=['nolu-shell-old'],failFetchAt=0,failPutAt=0,htmlGeneration=releaseGeneration,pwaGeneration=releaseGeneration}={}){
             const handlers={};
             const calls={fetch:0,put:0,open:[],deleted:[],skip:0};
             let installPromise;
@@ -123,10 +124,19 @@ jobs:
               open:async key=>{calls.open.push(key);return cache;},
               match:async()=>null
             };
-            const fetch=async()=>{
+            const makeResponse=body=>({
+              ok:true,
+              status:200,
+              clone(){return makeResponse(body)},
+              text:async()=>body
+            });
+            const fetch=async url=>{
               calls.fetch++;
               if(failFetchAt&&calls.fetch===failFetchAt)throw new Error('simulated fetch failure');
-              return {ok:true,status:200,clone(){return this}};
+              const href=String(url);
+              if(href.endsWith('/index.html'))return makeResponse(`<script type="module" src="main.js?v=${htmlGeneration}"></script>`);
+              if(href.endsWith('/pwa.js'))return makeResponse(`const key='nolu_shell_reload_${pwaGeneration.replace(/-/g,'_')}'`);
+              return makeResponse('ok');
             };
             const self={
               registration:{scope:'https://example.test/web/',active:active?{}:null},
@@ -146,7 +156,7 @@ jobs:
 
           (async()=>{
             const success=await scenario();
-            assert.equal(success.error,null,'complete release should install');
+            assert.equal(success.error,null,'complete coherent release should install');
             assert.equal(success.calls.fetch,shellCount,'complete release must fetch every shell asset');
             assert.equal(success.calls.put,shellCount,'complete release must cache every shell asset');
             assert.equal(success.calls.skip,1,'complete release must activate via skipWaiting');
@@ -157,6 +167,18 @@ jobs:
             assert.equal(fetchFailure.calls.open.length,0,'cache must not open before every shell fetch succeeds');
             assert.equal(fetchFailure.calls.put,0,'partial network release must not write cache entries');
             assert.equal(fetchFailure.calls.skip,0,'partial network release must not activate');
+
+            const htmlMismatch=await scenario({htmlGeneration:'stale-shell-generation'});
+            assert(htmlMismatch.error&&String(htmlMismatch.error.message).includes('SHELL_GENERATION_MISMATCH index.html'),'mixed HTML generation must fail installation');
+            assert.equal(htmlMismatch.calls.open.length,0,'mixed HTML generation must fail before opening cache');
+            assert.equal(htmlMismatch.calls.put,0,'mixed HTML generation must not write cache entries');
+            assert.equal(htmlMismatch.calls.skip,0,'mixed HTML generation must not activate');
+
+            const pwaMismatch=await scenario({pwaGeneration:'stale-shell-generation'});
+            assert(pwaMismatch.error&&String(pwaMismatch.error.message).includes('SHELL_GENERATION_MISMATCH pwa.js'),'mixed PWA generation must fail installation');
+            assert.equal(pwaMismatch.calls.open.length,0,'mixed PWA generation must fail before opening cache');
+            assert.equal(pwaMismatch.calls.put,0,'mixed PWA generation must not write cache entries');
+            assert.equal(pwaMismatch.calls.skip,0,'mixed PWA generation must not activate');
 
             const putFailure=await scenario({failPutAt:2});
             assert(putFailure.error,'cache write failure must fail installation');
@@ -169,6 +191,6 @@ jobs:
             assert.equal(reuse.calls.put,0,'same-generation update must not mutate active cache');
             assert.equal(reuse.calls.skip,0,'same-generation update must not activate');
 
-            console.log(`NOLU_ATOMIC_SHELL_INSTALL_OK generation=${generation} assets=${shellCount}`);
+            console.log(`NOLU_ATOMIC_SHELL_INSTALL_OK generation=${generation} assets=${shellCount} runtime_generation_guard=ok`);
           })().catch(error=>{console.error(error);process.exit(1)});
           NODE
