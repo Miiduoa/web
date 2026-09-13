@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Syntax checks
         run: |
           set -euo pipefail
@@ -62,7 +62,7 @@ jobs:
           grep -Fq "action:'get_snapshot'" "$f"
           grep -Fq "action:'put_snapshot'" "$f"
           ! grep -Eq "create_user|signup|login|password|recover_password" "$f"
-      - name: Verify production wiring uses portable v2 and caches bridge
+      - name: Verify production wiring uses portable v2 and coherent shell generation
         run: |
           set -euo pipefail
           grep -Fq 'pu-plan-portable-v2' pu-plan/provider-config.js
@@ -72,8 +72,17 @@ jobs:
           grep -Fq "'./outage-mirror-bridge.js'" pu-plan/sw.js
           grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
           grep -Fq "'./media-failback-guard.js'" pu-plan/sw.js
-          grep -Fq 'nolu-shell-20260912-gate-stability7' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260912_gate_stability7' pu-plan/pwa.js
+          node <<'NODE'
+          const fs=require('node:fs');
+          const assert=require('node:assert/strict');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+          assert(generation,'service-worker shell generation missing');
+          const reload=pwa.match(/nolu_shell_reload_([^']+)/)?.[1];
+          assert.equal(reload,generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          console.log(`OUTAGE_SHELL_GENERATION_OK ${generation}`);
+          NODE
       - name: Verify live portable v2 endpoints
         run: |
           set -euo pipefail
