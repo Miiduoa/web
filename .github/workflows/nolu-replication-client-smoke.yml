@@ -35,7 +35,7 @@ jobs:
   replica-client-contract:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Parse JavaScript
         run: |
           node --check pu-plan/cloud-replication.js
@@ -67,17 +67,33 @@ jobs:
           grep -q "nolu:replica-manual-reconcile-required" pu-plan/provider-status.js
           grep -q "pu-plan-media-failback-v1" pu-plan/media-failback-guard.js
           grep -q "return baseFetch(input,init)" pu-plan/media-failback-guard.js
-      - name: Keep installed PWA on current shell
+      - name: Keep installed PWA on one coherent shell generation
         run: |
-          grep -q "nolu-shell-20260912-gate-stability7" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260912_gate_stability7" pu-plan/pwa.js
-          grep -q "20260912-gate-stability7" pu-plan/index.html
-          grep -q "nolu-browser-gateway-v1" pu-plan/origin-gateway.js
-          grep -q "media-failback-guard.js" pu-plan/origin-gateway.js
-          grep -q "OVERALL_LOGIN_TIMEOUT_MS=14000" pu-plan/login-failover-budget.js
-          grep -q "'./auth-trace.js'" pu-plan/sw.js
-          grep -q "'./login-failover-budget.js'" pu-plan/sw.js
-          grep -q "'./media-failback-guard.js'" pu-plan/sw.js
-          grep -q "'./cloud-replication.js'" pu-plan/sw.js
-          grep -q "'./session-recovery.js'" pu-plan/sw.js
-          grep -q "'./outage-mirror-bridge.js'" pu-plan/sw.js
+          node <<'NODE'
+          const fs=require('fs');
+          const assert=require('assert');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const index=fs.readFileSync('pu-plan/index.html','utf8');
+          const gateway=fs.readFileSync('pu-plan/origin-gateway.js','utf8');
+          const budget=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+
+          const swMatch=sw.match(/const CACHE='nolu-shell-([^']+)'/);
+          assert(swMatch,'service-worker shell generation is missing');
+          const generation=swMatch[1];
+          const reloadMatch=pwa.match(/const key='nolu_shell_reload_([^']+)'/);
+          assert(reloadMatch,'PWA reload generation is missing');
+          assert.equal(reloadMatch[1],generation.replace(/-/g,'_'),'PWA reload generation drifted from service-worker cache');
+
+          const assetVersions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
+          assert(assetVersions.length>0,'HTML contains no versioned shell assets');
+          assert.deepEqual([...new Set(assetVersions)],[generation],'HTML asset generation drifted from service-worker cache');
+
+          assert(gateway.includes('nolu-browser-gateway-v1'));
+          assert(gateway.includes('media-failback-guard.js'));
+          assert(budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'));
+          for(const path of ['./auth-trace.js','./login-failover-budget.js','./media-failback-guard.js','./cloud-replication.js','./session-recovery.js','./outage-mirror-bridge.js']){
+            assert(sw.includes(`'${path}'`),`service worker is missing ${path}`);
+          }
+          console.log(`NOLU_SHELL_GENERATION_OK ${generation}`);
+          NODE
