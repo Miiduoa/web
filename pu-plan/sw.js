@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260913-media-safe11';
+const CACHE='nolu-shell-20260913-media-safe12';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
@@ -38,14 +38,19 @@ async function seed(){
 }
 
 self.addEventListener('install',event=>{
-  event.waitUntil(seed().then(()=>self.skipWaiting()));
+  // Do not take over an already-open Nolu window. In particular, never switch
+  // service-worker control while iOS is returning from the Photos picker or while
+  // the user is composing a post. The new shell becomes active after old clients
+  // close naturally, then controls the next normal navigation.
+  event.waitUntil(seed());
 });
 
 self.addEventListener('activate',event=>{
   event.waitUntil((async()=>{
     const keys=await caches.keys();
     await Promise.all(keys.filter(key=>key.startsWith('nolu-shell-')&&key!==CACHE).map(key=>caches.delete(key)));
-    await self.clients.claim();
+    // Intentionally no clients.claim(): mid-session takeover can fire
+    // controllerchange and bounce a standalone iPhone PWA back to its start view.
   })());
 });
 
