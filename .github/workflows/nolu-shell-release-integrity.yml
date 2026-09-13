@@ -1,0 +1,174 @@
+name: nolu shell release integrity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/nolu-shell-release-integrity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/nolu-shell-release-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      HEAD_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require coherent and advanced shell generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs');
+          const cp=require('child_process');
+          const assert=require('assert');
+
+          const read=p=>fs.readFileSync(p,'utf8');
+          const git=(args,opts={})=>cp.execFileSync('git',args,{encoding:'utf8',...opts}).trim();
+          function parseSw(source){
+            const generation=source.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+            assert(generation,'service-worker shell generation missing');
+            const block=source.match(/const PATHS=\[([\s\S]*?)\];/)?.[1];
+            assert(block,'service-worker PATHS list missing');
+            const paths=[...block.matchAll(/'((?:\.\/)[^']*)'/g)].map(m=>m[1]);
+            assert(paths.length>0,'service-worker PATHS list is empty');
+            return {generation,paths};
+          }
+          function repoPath(path){
+            if(path==='./')return 'pu-plan/index.html';
+            return `pu-plan/${path.replace(/^\.\//,'')}`;
+          }
+
+          const sw=read('pu-plan/sw.js');
+          const pwa=read('pu-plan/pwa.js');
+          const html=read('pu-plan/index.html');
+          const current=parseSw(sw);
+          const reload=pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1];
+          assert.equal(reload,current.generation.replace(/-/g,'_'),'PWA reload generation drifted from service-worker cache');
+          const versions=[...html.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
+          assert(versions.length>0,'HTML contains no versioned shell assets');
+          assert.deepEqual([...new Set(versions)],[current.generation],'HTML asset generation drifted from service-worker cache');
+
+          const base=String(process.env.BASE_SHA||'');
+          if(!base||/^0+$/.test(base)){
+            console.log(`SHELL_RELEASE_COHERENT generation=${current.generation}; base comparison unavailable`);
+            process.exit(0);
+          }
+          try{git(['cat-file','-e',`${base}^{commit}`]);}catch{
+            console.log(`SHELL_RELEASE_COHERENT generation=${current.generation}; base commit unavailable locally`);
+            process.exit(0);
+          }
+
+          let baseSource='';
+          try{baseSource=git(['show',`${base}:pu-plan/sw.js`]);}catch{
+            console.log(`SHELL_RELEASE_COHERENT generation=${current.generation}; base service worker unavailable`);
+            process.exit(0);
+          }
+          const previous=parseSw(baseSource);
+          const changed=git(['diff','--name-only',base,process.env.HEAD_SHA]).split('\n').filter(Boolean);
+          const cached=new Set([...previous.paths,...current.paths].map(repoPath));
+          const releaseRelevant=changed.filter(path=>path==='pu-plan/sw.js'||cached.has(path));
+
+          if(releaseRelevant.length&&previous.generation===current.generation){
+            console.error('Shell-cached files changed without advancing the service-worker generation:');
+            for(const path of releaseRelevant)console.error(`  ${path}`);
+            process.exit(1);
+          }
+          console.log(`SHELL_RELEASE_GENERATION_OK ${previous.generation} -> ${current.generation}`);
+          console.log(`SHELL_RELEASE_CHANGED_ASSETS ${releaseRelevant.length}`);
+          NODE
+
+      - name: Prove service-worker install is fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs');
+          const vm=require('vm');
+          const assert=require('assert');
+          const source=fs.readFileSync('pu-plan/sw.js','utf8');
+          const generation=source.match(/const CACHE='(nolu-shell-[^']+)'/)?.[1];
+          const block=source.match(/const PATHS=\[([\s\S]*?)\];/)?.[1]||'';
+          const shellCount=[...block.matchAll(/'((?:\.\/)[^']*)'/g)].length;
+          assert(generation&&shellCount>0,'unable to inspect service-worker release');
+
+          async function scenario({active=true,keys=['nolu-shell-old'],failFetchAt=0,failPutAt=0}={}){
+            const handlers={};
+            const calls={fetch:0,put:0,open:[],deleted:[],skip:0};
+            let installPromise;
+            const cache={
+              put:async()=>{
+                calls.put++;
+                if(failPutAt&&calls.put===failPutAt)throw new Error('simulated put failure');
+              }
+            };
+            const caches={
+              keys:async()=>[...keys],
+              delete:async key=>{calls.deleted.push(key);return true;},
+              open:async key=>{calls.open.push(key);return cache;},
+              match:async()=>null
+            };
+            const fetch=async()=>{
+              calls.fetch++;
+              if(failFetchAt&&calls.fetch===failFetchAt)throw new Error('simulated fetch failure');
+              return {ok:true,status:200,clone(){return this}};
+            };
+            const self={
+              registration:{scope:'https://example.test/web/',active:active?{}:null},
+              clients:{claim:async()=>{}},
+              skipWaiting:async()=>{calls.skip++;},
+              addEventListener:(type,handler)=>{handlers[type]=handler;}
+            };
+            const clients={matchAll:async()=>[],openWindow:async()=>null};
+            const context=vm.createContext({self,caches,fetch,URL,location:{origin:'https://example.test'},clients,Response:{error:()=>({})},console});
+            vm.runInContext(source,context,{filename:'sw.js'});
+            assert(handlers.install,'install handler was not registered');
+            handlers.install({waitUntil(promise){installPromise=Promise.resolve(promise);}});
+            let error=null;
+            try{await installPromise;}catch(e){error=e;}
+            return {calls,error};
+          }
+
+          (async()=>{
+            const success=await scenario();
+            assert.equal(success.error,null,'complete release should install');
+            assert.equal(success.calls.fetch,shellCount,'complete release must fetch every shell asset');
+            assert.equal(success.calls.put,shellCount,'complete release must cache every shell asset');
+            assert.equal(success.calls.skip,1,'complete release must activate via skipWaiting');
+            assert.deepEqual(success.calls.open,[generation],'only the new generation cache may be opened');
+
+            const fetchFailure=await scenario({failFetchAt:3});
+            assert(fetchFailure.error,'partial network release must fail installation');
+            assert.equal(fetchFailure.calls.open.length,0,'cache must not open before every shell fetch succeeds');
+            assert.equal(fetchFailure.calls.put,0,'partial network release must not write cache entries');
+            assert.equal(fetchFailure.calls.skip,0,'partial network release must not activate');
+
+            const putFailure=await scenario({failPutAt:2});
+            assert(putFailure.error,'cache write failure must fail installation');
+            assert.equal(putFailure.calls.skip,0,'cache write failure must not activate');
+            assert(putFailure.calls.deleted.filter(x=>x===generation).length>=2,'failed new cache must be cleaned up');
+
+            const reuse=await scenario({keys:[generation]});
+            assert(reuse.error&&String(reuse.error.message).includes('SHELL_GENERATION_REUSE'),'same-generation worker update must fail closed');
+            assert.equal(reuse.calls.fetch,0,'same-generation update must not touch network or active cache');
+            assert.equal(reuse.calls.put,0,'same-generation update must not mutate active cache');
+            assert.equal(reuse.calls.skip,0,'same-generation update must not activate');
+
+            console.log(`NOLU_ATOMIC_SHELL_INSTALL_OK generation=${generation} assets=${shellCount}`);
+          })().catch(error=>{console.error(error);process.exit(1)});
+          NODE

@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260913-auth-quorum8';
+const CACHE='nolu-shell-20260913-atomic-shell9';
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
@@ -9,22 +9,36 @@ const PATHS=[
 ];
 const SHELL=PATHS.map(path=>new URL(path,ROOT).href);
 
-async function seed(cache){
-  const keys=(await caches.keys()).filter(key=>key.startsWith('nolu-shell-')&&key!==CACHE);
-  for(const key of keys){
-    const old=await caches.open(key),requests=await old.keys();
-    for(const request of requests){
-      const hit=await old.match(request);
-      if(hit)await cache.put(request,hit).catch(()=>{});
-    }
-  }
-  await Promise.all(SHELL.map(async url=>{
-    try{const response=await fetch(url,{cache:'no-store'});if(response.ok)await cache.put(url,response)}catch{}
+async function seed(){
+  const keys=await caches.keys();
+  // Never mutate the cache used by the currently active worker. A worker code
+  // change must use a new shell generation so a failed install cannot corrupt
+  // the last-known-good offline shell.
+  if(self.registration.active&&keys.includes(CACHE))throw new Error('SHELL_GENERATION_REUSE');
+
+  // Clear only a stale/partial cache left by an earlier failed attempt for this
+  // new generation. The active generation has a different name by contract.
+  await caches.delete(CACHE);
+
+  // Fetch the complete release before writing any new cache entries. If even one
+  // asset is unavailable, installation fails and the old worker keeps control.
+  const fetched=await Promise.all(SHELL.map(async url=>{
+    const response=await fetch(url,{cache:'no-store'});
+    if(!response.ok)throw new Error(`SHELL_FETCH_FAILED ${new URL(url).pathname} ${response.status}`);
+    return [url,response];
   }));
+
+  const cache=await caches.open(CACHE);
+  try{
+    for(const [url,response] of fetched)await cache.put(url,response);
+  }catch(error){
+    await caches.delete(CACHE);
+    throw error;
+  }
 }
 
 self.addEventListener('install',event=>{
-  event.waitUntil(caches.open(CACHE).then(seed).then(()=>self.skipWaiting()));
+  event.waitUntil(seed().then(()=>self.skipWaiting()));
 });
 
 self.addEventListener('activate',event=>{
