@@ -1,4 +1,5 @@
-const CACHE='nolu-shell-20260913-media-safe12';
+const CACHE='nolu-shell-20260913-runtime-shell13';
+const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
@@ -8,6 +9,30 @@ const PATHS=[
   './styles/base.css','./styles/auth.css','./styles/layout.css','./styles/schedule.css','./styles/assistant.css','./styles/dialogs.css','./styles/schedule-ownership.css','./friends.css','./community.css','./discover.css','./admin.css','./pwa.css'
 ];
 const SHELL=PATHS.map(path=>new URL(path,ROOT).href);
+
+async function fetchedText(fetched,path){
+  const url=new URL(path,ROOT).href;
+  const entry=fetched.find(([candidate])=>candidate===url);
+  if(!entry)throw new Error(`SHELL_GENERATION_METADATA_MISSING ${path}`);
+  const copy=entry[1].clone();
+  if(!copy||typeof copy.text!=='function')throw new Error(`SHELL_GENERATION_METADATA_UNREADABLE ${path}`);
+  return copy.text();
+}
+
+async function verifyFetchedGeneration(fetched){
+  const [html,pwa]=await Promise.all([
+    fetchedText(fetched,'./index.html'),
+    fetchedText(fetched,'./pwa.js')
+  ]);
+  const versions=[...html.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(match=>match[1]);
+  if(!versions.length||versions.some(version=>version!==GENERATION)){
+    throw new Error(`SHELL_GENERATION_MISMATCH index.html expected=${GENERATION}`);
+  }
+  const pwaGeneration=pwa.match(/const SHELL_GENERATION='([^']+)'/)?.[1];
+  if(pwaGeneration!==GENERATION){
+    throw new Error(`SHELL_GENERATION_MISMATCH pwa.js expected=${GENERATION}`);
+  }
+}
 
 async function seed(){
   const keys=await caches.keys();
@@ -27,6 +52,12 @@ async function seed(){
     if(!response.ok)throw new Error(`SHELL_FETCH_FAILED ${new URL(url).pathname} ${response.status}`);
     return [url,response];
   }));
+
+  // A deploy can briefly expose files from different commits. Prove the fetched
+  // HTML and PWA runtime belong to this exact worker generation before opening
+  // or writing the new cache. Mixed releases fail closed and keep the active
+  // last-known-good shell untouched.
+  await verifyFetchedGeneration(fetched);
 
   const cache=await caches.open(CACHE);
   try{
