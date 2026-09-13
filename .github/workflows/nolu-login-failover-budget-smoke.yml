@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v6
-      - name: Validate login failover timing contract
+      - name: Validate login failover timing and auth quorum contract
         run: |
           node <<'NODE'
           const fs=require('fs');
@@ -48,7 +48,7 @@ jobs:
             assert(main.indexOf("await import('./resilience.js')") < main.indexOf("await import('./login-failover-budget.js')"));
             assert(main.indexOf("await import('./login-failover-budget.js')") < main.indexOf("await import('./offline-session-rescue.js')"));
             assert(sw.includes("'./login-failover-budget.js'"));
-            assert(sw.includes('nolu-shell-20260912-admin-auth4'));
+            assert(sw.includes('nolu-shell-20260913-auth-quorum8'));
 
             assert(patience.includes('hrrmkrayvrgnwcroyttp.supabase.co'));
             assert(patience.includes('ltfurqaspqsvswmebyzw.supabase.co'));
@@ -56,6 +56,8 @@ jobs:
             assert(patience.includes('standbyLoginTimeoutMs:6500'));
             assert(patience.includes("DEADLINE_FIELD='__noluLoginDeadline'"));
             assert(budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'));
+            assert(budget.includes('AUTH_REVALIDATE_TIMEOUT_MS=5500'));
+            assert(budget.includes('auth401Quorum:true'));
             assert(resilience.includes("const base=preferredCloud()==='standby'?[STANDBY,PRIMARY]:[PRIMARY,STANDBY]"));
             assert(!/NO_STANDBY_ACTIONS[^;]*login/.test(resilience));
 
@@ -63,7 +65,7 @@ jobs:
               const window={fetch:baseFetch};window.window=window;
               const values=new Map();
               const localStorage={getItem:k=>values.has(k)?values.get(k):null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
-              return vm.createContext({window,localStorage,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,Date,Number,Infinity,console});
+              return vm.createContext({window,localStorage,location:{href:'https://miiduoa.github.io/web/'},URL,AbortController,DOMException,setTimeout,clearTimeout,Headers,Response,Date,Number,Infinity,console});
             }
             for(const host of ['hrrmkrayvrgnwcroyttp.supabase.co','ltfurqaspqsvswmebyzw.supabase.co']){
               const caller=new AbortController();let observedSignal=null;
@@ -80,7 +82,7 @@ jobs:
             }
             {
               const caller=new AbortController();let observedSignal=null;
-              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true};});vm.runInContext(budget,ctx);
+              const ctx=context(async(_input,opts)=>{observedSignal=opts.signal;return {ok:true,status:200};});vm.runInContext(budget,ctx);
               await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',body:JSON.stringify({action:'bootstrap'}),signal:caller.signal});
               assert(observedSignal===caller.signal,'non-login traffic must keep its caller signal');
             }
@@ -91,6 +93,25 @@ jobs:
               await assert.rejects(ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8',{method:'POST',body:JSON.stringify({action:'login'}),__noluLoginDeadline:Date.now()+35}),e=>e?.name==='AbortError');
               assert(Date.now()-started<250,'per-hop wrapper must honor overall deadline');
               assert(networkOptions&&!('__noluLoginDeadline' in networkOptions),'private deadline field must be stripped before native fetch');
+            }
+            {
+              let calls=0;
+              const ctx=context(async(_input,opts)=>{
+                calls++;
+                const action=JSON.parse(String(opts?.body||'{}')).action;
+                if(action==='bootstrap')return new Response(JSON.stringify({profile:{id:'verified-user'}}),{status:200,headers:{'Content-Type':'application/json'}});
+                return new Response(JSON.stringify({error:'UNAUTHORIZED'}),{status:401,headers:{'Content-Type':'application/json'}});
+              });
+              vm.runInContext(budget,ctx);
+              const res=await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',headers:{Authorization:'Bearer opaque-session'},body:JSON.stringify({action:'social'})});
+              assert.equal(res.status,503,'a lone action 401 must not be allowed to clear a verified session');
+              assert(calls>=2,'401 protection must silently revalidate the session');
+            }
+            {
+              const ctx=context(async()=>new Response(JSON.stringify({error:'UNAUTHORIZED'}),{status:401,headers:{'Content-Type':'application/json'}}));
+              vm.runInContext(budget,ctx);
+              const res=await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',headers:{Authorization:'Bearer expired-session'},body:JSON.stringify({action:'bootstrap'})});
+              assert.equal(res.status,401,'a session confirmed invalid by bootstrap must still be allowed to log out');
             }
             const publicText=`${patience}\n${budget}`;
             assert(!/(password_hash|recovery_hash|service_role|PRIVATE KEY)/i.test(publicText));
