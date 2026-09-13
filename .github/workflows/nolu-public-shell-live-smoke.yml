@@ -62,7 +62,10 @@ jobs:
           console.log(`SOURCE_SHELL_GENERATION ${generation}`);
           NODE
           grep -q "20260913-auth-trace2" pu-plan/auth-trace.js
-          grep -q "20260913-media-input1" pu-plan/media-input-guard.js
+          grep -q "20260913-media-input2" pu-plan/media-input-guard.js
+          grep -q "stage:'ios-safe-store'" pu-plan/media-input-guard.js
+          grep -q "if(IOS)return null" pu-plan/media-input-guard.js
+          grep -q "stage:'ios-safe-upload-start'" pu-plan/media-input-guard.js
           grep -q "./auth-trace.js" pu-plan/sw.js
           grep -q "./media-input-guard.js" pu-plan/sw.js
           grep -q "import './auth-trace.js'" pu-plan/main.js
@@ -105,7 +108,9 @@ jobs:
               && grep -Fq "nolu-shell-$EXPECTED_GEN" "$tmp/sw.js" \
               && [ "$live_versions" = "$EXPECTED_GEN" ] \
               && grep -q '20260913-auth-trace2' "$tmp/auth-trace.js" \
-              && grep -q '20260913-media-input1' "$tmp/media-input-guard.js" \
+              && grep -q '20260913-media-input2' "$tmp/media-input-guard.js" \
+              && grep -q "stage:'ios-safe-store'" "$tmp/media-input-guard.js" \
+              && grep -q 'if(IOS)return null' "$tmp/media-input-guard.js" \
               && grep -q 'deadlineAware:true' "$tmp/login-patience.js" \
               && grep -q 'auth401Quorum:true' "$tmp/login-budget.js" \
               && grep -Fq "nolu_shell_reload_$EXPECTED_RELOAD" "$tmp/pwa.js"; then
