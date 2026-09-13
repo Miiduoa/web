@@ -23,11 +23,51 @@ function fileKind(file){
   const type=String(file?.type||'').toLowerCase();
   if(SERVER_IMAGE_TYPES.has(type))return'image';
   if(SERVER_VIDEO_TYPES.has(type))return'video';
+  const name=String(file?.name||'').toLowerCase();
+  if(/\.(?:jpe?g|png|webp|gif|heic|heif)$/.test(name))return'image';
+  if(/\.(?:mp4|mov|webm)$/.test(name))return'video';
   return'';
+}
+function mimeFor(file){
+  const type=String(file?.type||'').toLowerCase();
+  if(type)return type;
+  const name=String(file?.name||'').toLowerCase();
+  if(/\.heic$/.test(name))return'image/heic';
+  if(/\.heif$/.test(name))return'image/heif';
+  if(/\.png$/.test(name))return'image/png';
+  if(/\.webp$/.test(name))return'image/webp';
+  if(/\.gif$/.test(name))return'image/gif';
+  if(/\.jpe?g$/.test(name))return'image/jpeg';
+  if(/\.mov$/.test(name))return'video/quicktime';
+  if(/\.webm$/.test(name))return'video/webm';
+  if(/\.mp4$/.test(name))return'video/mp4';
+  return'application/octet-stream';
 }
 function emptyMeta(){return{width:null,height:null,duration_ms:null}}
 function toast(message){window.PUPLAN_APP?.toast?.(message)}
 function totalBytes(){return iosFiles.reduce((sum,file)=>sum+Number(file.size||0),0)}
+function mediaInput(){return document.querySelector('#postMediaInput')}
+
+function hardenIosInput(input=mediaInput()){
+  if(!IOS||!(input instanceof HTMLInputElement)||input.id!=='postMediaInput')return false;
+  input.multiple=false;
+  input.removeAttribute('multiple');
+  input.dataset.iosSafeInput='1';
+  // community.js still owns the legacy full-resolution preview path. On iPhone we
+  // deliberately disconnect that target handler and keep all selected File objects
+  // inside this module, where they are never decoded before publish.
+  if(input.onchange)input.onchange=null;
+  return true;
+}
+function hardenCurrentComposer(){
+  const input=mediaInput();
+  if(input)hardenIosInput(input);
+}
+if(IOS){
+  const observer=new MutationObserver(hardenCurrentComposer);
+  observer.observe(document.documentElement,{childList:true,subtree:true});
+  queueMicrotask(hardenCurrentComposer);
+}
 
 async function resizeWithBitmap(file){
   if(typeof createImageBitmap!=='function')return null;
@@ -106,22 +146,25 @@ function renderIosPreview(){
     placeholder.style.cssText='width:100%;height:100%;min-height:118px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px;text-align:center;background:rgba(127,127,127,.09);border-radius:inherit;overflow:hidden';
     const icon=document.createElement('span');icon.textContent=fileKind(file)==='video'?'🎬':'🖼️';icon.style.fontSize='28px';
     const label=document.createElement('b');label.textContent=fileKind(file)==='video'?`影片 ${index+1}`:`照片 ${index+1}`;
-    const name=document.createElement('small');name.textContent=String(file.name||'').slice(0,40);name.style.cssText='max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.65';
-    const note=document.createElement('small');note.textContent='已選取，發佈時上傳';note.style.opacity='.55';
-    placeholder.append(icon,label,name,note);
+    const note=document.createElement('small');note.textContent='已安全保留，不預覽原圖';note.style.opacity='.6';
+    const hint=document.createElement('small');hint.textContent=iosFiles.length<6?'可再按「相片 / 影片」加入下一個':'已達 6 個上限';hint.style.opacity='.48';
+    placeholder.append(icon,label,note,hint);
     const remove=document.createElement('button');remove.type='button';remove.dataset.iosSafeRemove=String(index);remove.setAttribute('aria-label','移除');remove.textContent='×';
     tile.append(placeholder,remove);box.append(tile);
   });
   box.querySelectorAll('[data-ios-safe-remove]').forEach(button=>button.addEventListener('click',()=>{
     const index=Number(button.dataset.iosSafeRemove);if(!Number.isInteger(index))return;
-    iosFiles.splice(index,1);if(!iosFiles.length&&iosInput)iosInput.value='';renderIosPreview();
+    iosFiles.splice(index,1);
+    if(!iosFiles.length&&iosInput)iosInput.value='';
+    renderIosPreview();
   }));
 }
 function selectIosFiles(input,files){
   if(iosInput&&iosInput!==input)resetIosState(input);else iosInput=input;
+  const incoming=files.slice(0,1);
   let total=totalBytes(),added=0;
-  for(const file of files){
-    if(iosFiles.length>=6)break;
+  for(const file of incoming){
+    if(iosFiles.length>=6){toast('一篇貼文最多 6 個媒體');break}
     const kind=fileKind(file);
     if(!kind){toast('這個檔案格式目前不支援');continue}
     const max=kind==='image'?12*1024*1024:80*1024*1024;
@@ -129,9 +172,10 @@ function selectIosFiles(input,files){
     if(total+file.size>100*1024*1024){toast('這篇貼文的照片和影片合計最多 100 MB');break}
     total+=file.size;iosFiles.push(file);added++;
   }
-  trace('media-select',{action:'post-media',stage:'ios-safe-store',outcome:added?`stored:${added}`:'no-change',source:`total:${iosFiles.length}`});
+  trace('media-safe-held',{action:'post-media',count:iosFiles.length,totalBytes:totalBytes(),outcome:added?'stored':'no-change'});
   renderIosPreview();
-  if(added)toast(iosFiles.length===1?'照片已選取':'照片已選取，發佈前不會解碼原圖');
+  if(files.length>1)toast('iPhone 安全模式一次加入 1 個，可重複加入最多 6 個');
+  else if(added)toast('已選取；不會先載入原圖預覽');
 }
 
 function primaryToken(){return localStorage.getItem('puplan_session_primary_v1')||localStorage.getItem('puplan_session')||''}
@@ -154,14 +198,17 @@ async function storage(){
 function uploadState(text){const box=document.querySelector('#postUploadStatus');if(!box)return;box.classList.remove('hidden');box.textContent=text}
 async function uploadIosFiles(){
   const files=iosFiles.slice();if(!files.length)return[];
-  const prep=await primaryRequest('prepare_media',{items:files.map(file=>({mime:file.type,size:file.size}))});
+  const prep=await primaryRequest('prepare_media',{items:files.map(file=>({mime:mimeFor(file),size:file.size}))});
   const client=await storage(),out=[];
   for(let index=0;index<files.length;index++){
     const file=files[index],upload=prep.uploads?.[index];if(!upload)throw new Error('媒體上傳資訊不完整，請再試一次');
+    const mime=mimeFor(file);
     uploadState(`正在上傳 ${index+1}/${files.length}`);
-    const {error}=await client.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type,cacheControl:'3600'});
+    trace('media-publish-file',{stage:'start',index:index+1,total:files.length,size:Number(file.size||0)});
+    const {error}=await client.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:mime,cacheControl:'3600'});
     if(error)throw new Error(`媒體上傳失敗：${error.message}`);
-    out.push({path:upload.path,mime:file.type,size:file.size,...emptyMeta()});
+    out.push({path:upload.path,mime,size:file.size,...emptyMeta()});
+    trace('media-publish-file',{stage:'complete',index:index+1,total:files.length});
   }
   return out;
 }
@@ -175,7 +222,7 @@ async function publishIosSafe(){
     const media=await uploadIosFiles();
     await primaryRequest('create_post',{body,media,visibility});
     if(input)input.value='';
-    resetIosState(document.querySelector('#postMediaInput'));
+    resetIosState(mediaInput());
     if(iosInput)iosInput.value='';
     document.querySelector('#postUploadStatus')?.classList.add('hidden');
     await window.PUPLAN_COMMUNITY?.reloadFeed?.();
@@ -187,17 +234,35 @@ async function publishIosSafe(){
   }finally{publishing=false;if(button)button.disabled=false}
 }
 
+if(IOS){
+  const preparePicker=event=>{
+    const label=event.target?.closest?.('.media-pick');
+    const input=event.target?.closest?.('#postMediaInput')||label?.querySelector?.('#postMediaInput');
+    if(!input)return;
+    hardenIosInput(input);
+    if(event.type==='pointerdown'||event.type==='touchstart')trace('media-picker-open',{action:'post-media',mode:'single-file-no-preview'});
+  };
+  document.addEventListener('pointerdown',preparePicker,true);
+  document.addEventListener('touchstart',preparePicker,{capture:true,passive:true});
+  document.addEventListener('click',preparePicker,true);
+}
+
 document.addEventListener('change',event=>{
   const input=event.target;
   if(!(input instanceof HTMLInputElement)||input.id!=='postMediaInput')return;
-  const handler=input.onchange,files=[...(input.files||[])];
+  const files=[...(input.files||[])];
   if(!files.length)return;
+  const bytes=files.reduce((sum,file)=>sum+Number(file.size||0),0);
+  const maxBytes=files.reduce((max,file)=>Math.max(max,Number(file.size||0)),0);
+  trace('media-files-received',{action:'post-media',count:files.length,totalBytes:bytes,maxBytes});
   if(IOS){
     event.preventDefault();event.stopImmediatePropagation();
+    hardenIosInput(input);
     selectIosFiles(input,files);
     input.value='';
     return;
   }
+  const handler=input.onchange;
   if(typeof handler!=='function'||!files.some(file=>CONVERTIBLE.has(String(file.type||'').toLowerCase())))return;
   event.preventDefault();event.stopImmediatePropagation();
   input.setAttribute('aria-busy','true');
@@ -214,4 +279,4 @@ document.addEventListener('click',event=>{
   publishIosSafe();
 },true);
 
-window.NOLU_MEDIA_INPUT_GUARD={version:'20260913-media-input2',maxEdge:MAX_EDGE,quality:QUALITY,iosSafeMode:IOS};
+window.NOLU_MEDIA_INPUT_GUARD={version:'20260913-media-input3',maxEdge:MAX_EDGE,quality:QUALITY,iosSafeMode:IOS,iosSingleFilePicker:IOS};
