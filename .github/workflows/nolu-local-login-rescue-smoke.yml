@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Parse rescue and PWA files
         run: |
           set -euo pipefail
@@ -62,10 +62,19 @@ jobs:
       - name: Require current installed shell
         run: |
           set -euo pipefail
-          grep -Fq 'nolu-shell-20260912-gate-stability7' pu-plan/sw.js
-          grep -Fq 'nolu_shell_reload_20260912_gate_stability7' pu-plan/pwa.js
-          grep -Fq '20260912-gate-stability7' pu-plan/index.html
-          grep -Fq "'./auth-trace.js'" pu-plan/sw.js
-          grep -Fq "'./offline-session-rescue.js'" pu-plan/sw.js
-          grep -Fq "'./account-boundary.js'" pu-plan/sw.js
-          grep -Fq "'./media-failback-guard.js'" pu-plan/sw.js
+          node <<'NODE'
+          const fs=require('fs'),assert=require('assert');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const index=fs.readFileSync('pu-plan/index.html','utf8');
+          const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+          assert(generation,'service-worker shell generation missing');
+          assert.equal(pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1],generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          const versions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
+          assert(versions.length>0,'HTML versioned assets missing');
+          assert.deepEqual([...new Set(versions)],[generation],'HTML shell generation drifted');
+          for(const path of ['./auth-trace.js','./offline-session-rescue.js','./account-boundary.js','./media-failback-guard.js']){
+            assert(sw.includes(`'${path}'`),`service worker missing ${path}`);
+          }
+          console.log(`NOLU_LOCAL_RESCUE_SHELL_OK ${generation}`);
+          NODE
