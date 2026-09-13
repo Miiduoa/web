@@ -134,7 +134,8 @@ jobs:
           assert 'publishIosSafe()' in s
           assert "stage:'ios-safe-upload-start'" in s
           assert "stage:'ios-safe-upload-complete'" in s
-          ios_branch=s.split("if(IOS){",1)[1].split("return;",1)[0]
+          change_handler=s.split("document.addEventListener('change'",1)[1]
+          ios_branch=change_handler.split("if(IOS){",1)[1].split("return;",1)[0]
           assert 'stopImmediatePropagation' in ios_branch
           assert 'selectIosFiles' in ios_branch
           assert 'handler.call' not in ios_branch
