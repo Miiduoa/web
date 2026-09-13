@@ -2,7 +2,7 @@ name: nolu public shell live smoke
 
 on:
   push:
-    branches: [main, test/nolu-public-live-20260911]
+    branches: [main]
     paths:
       - 'pu-plan/index.html'
       - 'pu-plan/main.js'
@@ -41,15 +41,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Verify source shell contract
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '20260912-gate-stability7' pu-plan/index.html
-          grep -q "nolu-shell-20260913-auth-quorum8" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260913_auth_quorum8" pu-plan/pwa.js
+          node <<'NODE'
+          const fs=require('fs'),assert=require('assert');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const index=fs.readFileSync('pu-plan/index.html','utf8');
+          const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+          assert(generation,'service-worker shell generation missing');
+          const reload=pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1];
+          assert.equal(reload,generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          const versions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
+          assert(versions.length>0,'HTML versioned assets missing');
+          assert.deepEqual([...new Set(versions)],[generation],'HTML source shell generation drifted');
+          console.log(`SOURCE_SHELL_GENERATION ${generation}`);
+          NODE
           grep -q "20260913-auth-trace2" pu-plan/auth-trace.js
           grep -q "20260913-media-input1" pu-plan/media-input-guard.js
           grep -q "./auth-trace.js" pu-plan/sw.js
@@ -76,28 +87,32 @@ jobs:
           BASE='https://miiduoa.github.io/web'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
+          EXPECTED_GEN=$(sed -n "s/^const CACHE='nolu-shell-\([^']*\)';/\1/p" pu-plan/sw.js | head -n1)
+          test -n "$EXPECTED_GEN"
+          EXPECTED_RELOAD=$(printf '%s' "$EXPECTED_GEN" | tr '-' '_')
           ready=0
           for attempt in $(seq 1 24); do
             ok=1
-            curl -fsS --max-time 15 "$BASE/sw.js?shell=20260913authquorum8" -o "$tmp/sw.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/?shell=20260913authquorum8" -o "$tmp/index.html" || ok=0
-            curl -fsS --max-time 15 "$BASE/auth-trace.js?shell=20260913authquorum8" -o "$tmp/auth-trace.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/media-input-guard.js?shell=20260913authquorum8" -o "$tmp/media-input-guard.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?shell=20260913authquorum8" -o "$tmp/login-patience.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/login-failover-budget.js?shell=20260913authquorum8" -o "$tmp/login-budget.js" || ok=0
-            curl -fsS --max-time 15 "$BASE/pwa.js?shell=20260913authquorum8" -o "$tmp/pwa.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/sw.js?shell=$EXPECTED_GEN" -o "$tmp/sw.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/?shell=$EXPECTED_GEN" -o "$tmp/index.html" || ok=0
+            curl -fsS --max-time 15 "$BASE/auth-trace.js?shell=$EXPECTED_GEN" -o "$tmp/auth-trace.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/media-input-guard.js?shell=$EXPECTED_GEN" -o "$tmp/media-input-guard.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/login-transport-patience.js?shell=$EXPECTED_GEN" -o "$tmp/login-patience.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/login-failover-budget.js?shell=$EXPECTED_GEN" -o "$tmp/login-budget.js" || ok=0
+            curl -fsS --max-time 15 "$BASE/pwa.js?shell=$EXPECTED_GEN" -o "$tmp/pwa.js" || ok=0
+            live_versions=$(grep -oE '\?v=[A-Za-z0-9_-]+' "$tmp/index.html" 2>/dev/null | cut -c4- | sort -u | paste -sd, - || true)
             if [ "$ok" = 1 ] \
-              && grep -q 'nolu-shell-20260913-auth-quorum8' "$tmp/sw.js" \
-              && grep -q '20260912-gate-stability7' "$tmp/index.html" \
+              && grep -Fq "nolu-shell-$EXPECTED_GEN" "$tmp/sw.js" \
+              && [ "$live_versions" = "$EXPECTED_GEN" ] \
               && grep -q '20260913-auth-trace2' "$tmp/auth-trace.js" \
               && grep -q '20260913-media-input1' "$tmp/media-input-guard.js" \
               && grep -q 'deadlineAware:true' "$tmp/login-patience.js" \
               && grep -q 'auth401Quorum:true' "$tmp/login-budget.js" \
-              && grep -q 'nolu_shell_reload_20260913_auth_quorum8' "$tmp/pwa.js"; then
+              && grep -Fq "nolu_shell_reload_$EXPECTED_RELOAD" "$tmp/pwa.js"; then
               ready=1
               break
             fi
-            echo "Pages shell not coherent yet (attempt $attempt/24); waiting..."
+            echo "Pages shell not coherent yet (attempt $attempt/24; expected=$EXPECTED_GEN; live_versions=${live_versions:-none}); waiting..."
             sleep 5
           done
           test "$ready" = 1
@@ -106,23 +121,23 @@ jobs:
           grep -q "object-src 'none'" "$tmp/index.html"
           grep -q "frame-src 'none'" "$tmp/index.html"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?shell=20260913authquorum8" -o "$tmp/main.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/main.js?shell=$EXPECTED_GEN" -o "$tmp/main.js"
           grep -q "import './auth-trace.js'" "$tmp/main.js"
           grep -q "import './media-input-guard.js'" "$tmp/main.js"
           grep -q "import './origin-gateway.js'" "$tmp/main.js"
           grep -q "await import('./login-failover-budget.js')" "$tmp/main.js"
           grep -q "./media-input-guard.js" "$tmp/sw.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?shell=20260913authquorum8" -o "$tmp/origin-gateway.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/origin-gateway.js?shell=$EXPECTED_GEN" -o "$tmp/origin-gateway.js"
           grep -q 'nolu-browser-gateway-v1' "$tmp/origin-gateway.js"
           grep -q "import './media-failback-guard.js'" "$tmp/origin-gateway.js"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/media-failback-guard.js?shell=20260913authquorum8" -o "$tmp/media-failback-guard.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/media-failback-guard.js?shell=$EXPECTED_GEN" -o "$tmp/media-failback-guard.js"
           grep -q 'pu-plan-media-failback-v1' "$tmp/media-failback-guard.js"
           grep -q 'OVERALL_LOGIN_TIMEOUT_MS=14000' "$tmp/login-budget.js"
           grep -q 'AUTH_REVALIDATE_TIMEOUT_MS=5500' "$tmp/login-budget.js"
           grep -q 'auth401Quorum:true' "$tmp/login-budget.js"
           grep -q 'standbyLoginTimeoutMs:6500' "$tmp/login-patience.js"
 
-          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?shell=20260913authquorum8" -o "$tmp/provider-config.js"
+          curl -fsS --retry 4 --retry-delay 2 --max-time 15 "$BASE/provider-config.js?shell=$EXPECTED_GEN" -o "$tmp/provider-config.js"
           grep -q "PROVIDER_MESH_VERSION='20260911-mesh5'" "$tmp/provider-config.js"
           grep -q 'pu-plan-portable-v2' "$tmp/provider-config.js"
           ! grep -q 'pu-plan-portable-v1' "$tmp/provider-config.js"
@@ -134,7 +149,7 @@ jobs:
           grep -q "./media-failback-guard.js" "$tmp/sw.js"
           grep -q "./login-failover-budget.js" "$tmp/sw.js"
           grep -q "outage-mirror-bridge.js" "$tmp/sw.js"
-          echo 'PUBLIC_SHELL_LIVE_OK'
+          echo "PUBLIC_SHELL_LIVE_OK generation=$EXPECTED_GEN"
 
       - name: Verify Netlify mirror public boundary
         shell: bash
