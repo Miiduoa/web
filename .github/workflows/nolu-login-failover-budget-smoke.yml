@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Validate login failover timing and auth quorum contract
         run: |
           node <<'NODE'
@@ -48,7 +48,7 @@ jobs:
             assert(main.indexOf("await import('./resilience.js')") < main.indexOf("await import('./login-failover-budget.js')"));
             assert(main.indexOf("await import('./login-failover-budget.js')") < main.indexOf("await import('./offline-session-rescue.js')"));
             assert(sw.includes("'./login-failover-budget.js'"));
-            assert(sw.includes('nolu-shell-20260913-auth-quorum8'));
+            assert(/const CACHE='nolu-shell-[^']+'/.test(sw),'service-worker shell generation is missing');
 
             assert(patience.includes('hrrmkrayvrgnwcroyttp.supabase.co'));
             assert(patience.includes('ltfurqaspqsvswmebyzw.supabase.co'));
@@ -112,6 +112,21 @@ jobs:
               vm.runInContext(budget,ctx);
               const res=await ctx.window.fetch('https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',headers:{Authorization:'Bearer expired-session'},body:JSON.stringify({action:'bootstrap'})});
               assert.equal(res.status,401,'a session confirmed invalid by bootstrap must still be allowed to log out');
+            }
+            {
+              let calls=0;
+              const ctx=context(async(input,opts)=>{
+                calls++;
+                const url=String(input);
+                const action=JSON.parse(String(opts?.body||'{}')).action;
+                if(url.includes('hrrmkrayvrgnwcroyttp.supabase.co')&&action==='bootstrap')throw new TypeError('primary unavailable');
+                return new Response(JSON.stringify({error:'UNAUTHORIZED'}),{status:401,headers:{'Content-Type':'application/json'}});
+              });
+              vm.runInContext(budget,ctx);
+              const res=await ctx.window.fetch('https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v6',{method:'POST',headers:{Authorization:'Bearer standby-session'},body:JSON.stringify({action:'social'})});
+              assert.equal(res.status,503,'standby 401 must preserve the session while the primary authority is unreachable');
+              assert.equal(await res.clone().json().then(x=>x.error),'AUTH_REVALIDATION_REQUIRED');
+              assert(calls>=2,'standby 401 must attempt primary authority revalidation before logout');
             }
             const publicText=`${patience}\n${budget}`;
             assert(!/(password_hash|recovery_hash|service_role|PRIVATE KEY)/i.test(publicText));
