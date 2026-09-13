@@ -6,13 +6,18 @@ on:
     paths:
       - 'pu-plan/**'
       - '.github/workflows/ui-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/**'
+      - '.github/workflows/ui-smoke.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: nolu-mobile-layout
+  group: nolu-mobile-layout-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +26,8 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install browser test runner
         run: |
           npm --prefix /tmp/nolu-ui init -y >/dev/null 2>&1
