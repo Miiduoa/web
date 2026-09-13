@@ -47,7 +47,9 @@ jobs:
           const index=fs.readFileSync('pu-plan/index.html','utf8');
           const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
           assert(generation,'service-worker shell generation missing');
-          assert.equal(pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1],generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          const pwaGeneration=pwa.match(/const SHELL_GENERATION='([^']+)'/)?.[1];
+          assert.equal(pwaGeneration,generation,'PWA shell generation drifted');
+          assert.match(pwa,/outcome:'no-mid-session-reload'/,'PWA must keep no-mid-session-reload behavior');
           const versions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
           assert(versions.length>0,'HTML versioned assets missing');
           assert.deepEqual([...new Set(versions)],[generation],'HTML shell generation drifted');

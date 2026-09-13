@@ -72,7 +72,8 @@ jobs:
           const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
           assert(generation,'service-worker shell generation missing');
           assert.deepEqual([...new Set(versions)],[generation],'all HTML shell assets must match service-worker generation');
-          assert.equal(pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1],generation.replace(/-/g,'_'),'PWA reload generation drifted from service-worker cache');
+          assert.equal(pwa.match(/const SHELL_GENERATION='([^']+)'/)?.[1],generation,'PWA shell generation drifted from service-worker cache');
+          assert.match(pwa,/outcome:'no-mid-session-reload'/,'PWA must keep the no-mid-session-reload controller policy');
           assert.match(sw,/auth-trace\.js/);
           assert.match(sw,/login-failover-budget\.js/);
           assert.match(sw,/media-failback-guard\.js/);

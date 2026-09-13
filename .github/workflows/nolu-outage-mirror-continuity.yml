@@ -79,8 +79,9 @@ jobs:
           const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
           const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
           assert(generation,'service-worker shell generation missing');
-          const reload=pwa.match(/nolu_shell_reload_([^']+)/)?.[1];
-          assert.equal(reload,generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          const pwaGeneration=pwa.match(/const SHELL_GENERATION='([^']+)'/)?.[1];
+          assert.equal(pwaGeneration,generation,'PWA shell generation drifted');
+          assert.match(pwa,/outcome:'no-mid-session-reload'/,'PWA must not reload an already-open client during worker changes');
           console.log(`OUTAGE_SHELL_GENERATION_OK ${generation}`);
           NODE
       - name: Verify live portable v2 endpoints
