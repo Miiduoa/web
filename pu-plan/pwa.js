@@ -1,4 +1,5 @@
 const $=s=>document.querySelector(s);const asset=name=>new URL(name,import.meta.url).href;let promptEvent=null,lastReminder='';
+const SHELL_GENERATION='20260913-runtime-shell13';
 const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 const ua=navigator.userAgent;const ios=/iPad|iPhone|iPod/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1);const safari=/Safari/.test(ua)&&!/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|GSA/.test(ua);const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
 const mins=t=>{const [h,m]=t.split(':').map(Number);return h*60+m};
