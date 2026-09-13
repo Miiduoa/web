@@ -81,9 +81,9 @@ jobs:
           const swMatch=sw.match(/const CACHE='nolu-shell-([^']+)'/);
           assert(swMatch,'service-worker shell generation is missing');
           const generation=swMatch[1];
-          const reloadMatch=pwa.match(/const key='nolu_shell_reload_([^']+)'/);
-          assert(reloadMatch,'PWA reload generation is missing');
-          assert.equal(reloadMatch[1],generation.replace(/-/g,'_'),'PWA reload generation drifted from service-worker cache');
+          const pwaGeneration=pwa.match(/const SHELL_GENERATION='([^']+)'/)?.[1];
+          assert.equal(pwaGeneration,generation,'PWA shell generation drifted from service-worker cache');
+          assert.match(pwa,/outcome:'no-mid-session-reload'/,'PWA must not reload an already-open client during worker changes');
 
           const assetVersions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
           assert(assetVersions.length>0,'HTML contains no versioned shell assets');
