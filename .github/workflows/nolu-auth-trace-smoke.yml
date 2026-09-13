@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Syntax and shell contract
         run: |
@@ -56,9 +56,19 @@ jobs:
           grep -q "import './media-input-guard.js'" pu-plan/main.js
           grep -q "'./auth-trace.js'" pu-plan/sw.js
           grep -q "'./media-input-guard.js'" pu-plan/sw.js
-          grep -q "nolu-shell-20260913-auth-quorum8" pu-plan/sw.js
-          grep -q "nolu_shell_reload_20260913_auth_quorum8" pu-plan/pwa.js
-          grep -q "20260912-gate-stability7" pu-plan/index.html
+          node <<'NODE'
+          const fs=require('fs'),assert=require('assert');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const index=fs.readFileSync('pu-plan/index.html','utf8');
+          const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+          assert(generation,'service-worker shell generation missing');
+          const reload=pwa.match(/const key='nolu_shell_reload_([^']+)'/)?.[1];
+          assert.equal(reload,generation.replace(/-/g,'_'),'PWA reload generation drifted');
+          const versions=[...index.matchAll(/\?v=([A-Za-z0-9_-]+)/g)].map(m=>m[1]);
+          assert(versions.length>0,'HTML versioned assets missing');
+          assert.deepEqual([...new Set(versions)],[generation],'HTML shell generation drifted');
+          NODE
           grep -q "auth-boundary-reload" pu-plan/account-boundary.js
           grep -q "session-recovery" pu-plan/session-recovery.js
           grep -q "auth-invalidated" pu-plan/cloud.js
