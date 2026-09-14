@@ -41,6 +41,7 @@ jobs:
           grep -q "SHELL_GENERATION='20260914-social-auth16'" pu-plan/pwa.js
           grep -q "SOCIAL_AUTH_UNCERTAIN" pu-plan/social-auth-guard.js
           grep -q "session-preserved" pu-plan/social-auth-guard.js
+          grep -q "recognizesBrowserGateway:true" pu-plan/social-auth-guard.js
           ! grep -q "location.reload" pu-plan/social-auth-guard.js
           ! grep -q "removeItem('puplan_session')" pu-plan/social-auth-guard.js
           node <<'NODE'
@@ -49,7 +50,7 @@ jobs:
           assert(html.indexOf('social-auth-guard.js')<html.indexOf('main.js'),'social auth guard must load before main');
           NODE
 
-      - name: Stale social tier token heals without logout
+      - name: Gateway-routed stale social token heals without logout
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -79,21 +80,32 @@ jobs:
           const context={window,localStorage,location:{href:'https://miiduoa.github.io/pu-plan/'},URL,Headers,Response,TextDecoder,Uint8Array,DOMException,Date,Math,JSON,Number,String,atob};
           vm.runInNewContext(code,context);
           (async()=>{
-            const input='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+            const direct='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+            const gateway='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1?target=pu-plan-social';
             const options={method:'POST',headers:{Authorization:`Bearer ${stale}`,'Content-Type':'application/json'},body:JSON.stringify({action:'prepare_media'})};
-            const healed=await window.fetch(input,options);
-            assert.equal(healed.status,200,'current canonical token should heal stale primary social token');
-            assert.equal(localStorage.getItem('puplan_session_primary_v1'),current,'healed token was not written back');
+
+            // The direct path remains guarded.
+            const healedDirect=await window.fetch(direct,options);
+            assert.equal(healedDirect.status,200,'direct social request should heal stale primary token');
+            assert.equal(localStorage.getItem('puplan_session_primary_v1'),current,'direct path did not heal token');
+
+            // Reset the stale tier token and prove the rewritten browser-gateway path
+            // receives the same protection. This is the production path after
+            // origin-gateway.js rewrites pu-plan-social.
+            localStorage.setItem('puplan_session_primary_v1',stale);
+            const healedGateway=await window.fetch(gateway,options);
+            assert.equal(healedGateway.status,200,'gateway-routed social request should heal stale primary token');
+            assert.equal(localStorage.getItem('puplan_session_primary_v1'),current,'gateway path did not heal token');
             assert(traces.some(x=>x.type==='social-auth-recovered'&&x.status==='session-healed'),'heal trace missing');
 
             mode='all401';
             localStorage.setItem('puplan_session_primary_v1',stale);
-            const preserved=await window.fetch(input,options);
-            assert.equal(preserved.status,503,'all-social-401 with live canonical session must become auth-uncertain');
+            const preserved=await window.fetch(gateway,options);
+            assert.equal(preserved.status,503,'gateway all-401 with live canonical session must become auth-uncertain');
             const body=await preserved.json();
             assert.equal(body.error,'SOCIAL_AUTH_UNCERTAIN');
             assert.equal(localStorage.getItem('puplan_session'),current,'canonical session must never be cleared');
             assert(traces.some(x=>x.type==='social-auth-401'&&x.status==='auth-uncertain'&&x.outcome==='session-preserved'),'preserve trace missing');
-            console.log('NOLU_SOCIAL_AUTH_GUARD_OK');
+            console.log('NOLU_SOCIAL_AUTH_GATEWAY_GUARD_OK');
           })().catch(error=>{console.error(error);process.exit(1)});
           NODE
