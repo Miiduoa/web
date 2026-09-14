@@ -1,3 +1,4 @@
+// Trigger companion account-boundary simulation after the iPhone media-picker grace update.
 const fs=require('fs');
 const vm=require('vm');
 const assert=require('assert');
