@@ -55,12 +55,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
-          expected='20260914-resilience15'
           html=Path('pu-plan/index.html').read_text()
           pwa=Path('pu-plan/pwa.js').read_text()
           sw=Path('pu-plan/sw.js').read_text()
+          pwa_match=re.search(r"const SHELL_GENERATION='([^']+)'",pwa)
+          sw_match=re.search(r"const CACHE='nolu-shell-([^']+)'",sw)
+          assert pwa_match, 'missing PWA shell generation'
+          assert sw_match, 'missing service-worker shell generation'
+          expected=pwa_match.group(1)
+          assert sw_match.group(1)==expected, (sw_match.group(1),expected)
           versions=re.findall(r'\?v=([A-Za-z0-9_-]+)',html)
           assert versions and all(v==expected for v in versions), versions
-          assert f"const SHELL_GENERATION='{expected}'" in pwa
-          assert f"const CACHE='nolu-shell-{expected}'" in sw
           PY
