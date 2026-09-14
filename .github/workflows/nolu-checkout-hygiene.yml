@@ -33,14 +33,41 @@ jobs:
 
           root = Path('.github/workflows')
           files = sorted([*root.glob('*.yml'), *root.glob('*.yaml')])
-          allowed_v6 = {
-              root / 'nolu-internal-rpc-boundary.yml',
-              root / 'nolu-replication-rpc-boundary.yml',
-              root / 'nolu-reporting-view-boundary.yml',
+
+          # Exact pre-existing debt baseline. New legacy checkout usage is blocked.
+          # Remove an entry in the same PR that upgrades the corresponding workflow.
+          legacy_baseline = {
+              root / 'nolu-account-boundary-smoke.yml': 6,
+              root / 'nolu-admin-login-routing-smoke.yml': 6,
+              root / 'nolu-admin-standby-smoke.yml': 6,
+              root / 'nolu-auth-session-hygiene-smoke.yml': 6,
+              root / 'nolu-avatar-security-smoke.yml': 6,
+              root / 'nolu-course-workflow-integrity.yml': 6,
+              root / 'nolu-discovery-xss-smoke.yml': 6,
+              root / 'nolu-failback-loop-guard.yml': 6,
+              root / 'nolu-failback-security-smoke.yml': 6,
+              root / 'nolu-internal-rpc-boundary.yml': 6,
+              root / 'nolu-media-failback-smoke.yml': 4,
+              root / 'nolu-origin-gateway-live.yml': 6,
+              root / 'nolu-owner-domain-child-replay.yml': 6,
+              root / 'nolu-portable-v2-live-smoke.yml': 6,
+              root / 'nolu-replica-v3-live-smoke.yml': 6,
+              root / 'nolu-replication-conflict-backoff.yml': 6,
+              root / 'nolu-replication-rpc-boundary.yml': 6,
+              root / 'nolu-reporting-view-boundary.yml': 6,
+              root / 'nolu-server-hot-standby-smoke.yml': 6,
+              root / 'nolu-session-v4-smoke.yml': 6,
+              root / 'nolu-social-replication-media-integrity.yml': 6,
+              root / 'nolu-standby-authority-dirty-fence.yml': 6,
+              root / 'nolu-strict-regional-credentials.yml': 6,
+              root / 'nolu-tier-session-hygiene.yml': 6,
+              root / 'nolu-v8-standby-smoke.yml': 6,
+              root / 'security-smoke.yml': 6,
+              root / 'ui-schedule-data-smoke.yml': 6,
           }
 
           checkout_re = re.compile(r'\buses:\s*actions/checkout@v(\d+)\b')
-          found_v6 = set()
+          seen_baseline = set()
           blocked = []
           checkout_total = 0
           v7_without_explicit_no_persist = []
@@ -54,11 +81,13 @@ jobs:
                   checkout_total += 1
                   major = int(m.group(1))
                   rel = path.as_posix()
+
                   if major < 7:
-                      if major == 6 and path in allowed_v6:
-                          found_v6.add(path)
-                          print(f'ALLOWED_LEGACY {rel}:{i+1} checkout@v6')
-                          print(f'::notice file={rel},line={i+1}::temporary checkout@v6 allowlist while Primary DB is unavailable')
+                      expected = legacy_baseline.get(path)
+                      if expected == major:
+                          seen_baseline.add(path)
+                          print(f'BASELINED_LEGACY {rel}:{i+1} checkout@v{major}')
+                          print(f'::notice file={rel},line={i+1}::pre-existing checkout@v{major} debt; upgrade to v7 and remove its baseline entry')
                       else:
                           blocked.append((rel, i + 1, major))
 
@@ -74,20 +103,22 @@ jobs:
                       if not re.search(r'^\s*persist-credentials:\s*false\s*$', joined, re.M):
                           v7_without_explicit_no_persist.append((rel, i + 1))
 
-          stale = sorted(p.as_posix() for p in allowed_v6 - found_v6)
+          stale = sorted(p.as_posix() for p in legacy_baseline.keys() - seen_baseline)
           if stale:
-              raise SystemExit(f'stale checkout@v6 allowlist entries must be removed: {stale}')
+              for rel in stale:
+                  print(f'::error file={rel}::legacy checkout baseline is stale; remove this baseline entry in the upgrade PR')
+              raise SystemExit(f'stale legacy checkout baseline entries: {len(stale)}')
 
           for rel, line, major in blocked:
-              print(f'BLOCKED_LEGACY {rel}:{line} checkout@v{major}')
-              print(f'::error file={rel},line={line}::actions/checkout@v{major} is below the repository minimum; use v7')
+              print(f'BLOCKED_NEW_LEGACY {rel}:{line} checkout@v{major}')
+              print(f'::error file={rel},line={line}::new or changed legacy actions/checkout@v{major} is not allowed; use v7')
 
           for rel, line in v7_without_explicit_no_persist:
               print(f'REVIEW_PERSISTED_CREDENTIALS {rel}:{line} checkout@v7')
               print(f'::notice file={rel},line={line}::checkout@v7 still uses default persisted credentials; review whether git writes are required')
 
-          print(f'CHECKOUT_HYGIENE_SUMMARY total={checkout_total} temporary_v6={len(found_v6)} blocked_legacy={len(blocked)} v7_default_credentials={len(v7_without_explicit_no_persist)}')
+          print(f'CHECKOUT_HYGIENE_SUMMARY total={checkout_total} baselined_legacy={len(seen_baseline)} blocked_new_legacy={len(blocked)} v7_default_credentials={len(v7_without_explicit_no_persist)}')
           if blocked:
-              raise SystemExit(f'blocked legacy checkout actions: {len(blocked)}')
+              raise SystemExit(f'blocked new legacy checkout actions: {len(blocked)}')
           print('CHECKOUT_HYGIENE_OK')
           PY
