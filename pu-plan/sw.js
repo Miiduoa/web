@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260914-media-boundary14';
+const CACHE='nolu-shell-20260914-resilience15';
 const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[

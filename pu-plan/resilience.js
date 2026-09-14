@@ -6,7 +6,8 @@ const COMPAT_V6='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-a
 const COMPAT_CORE='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-core-v1';
 const CORE_APIS=[PRIMARY,STANDBY,COMPAT_V6,COMPAT_CORE];
 const nativeFetch=window.fetch.bind(window);
-const VERSION='20260911-ha3';
+const VERSION='20260914-ha4-no-reload';
+const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 const BASE_COOLDOWN=15000;
 const MAX_COOLDOWN=60000;
 const PREFERRED_KEY='nolu_preferred_cloud_v1';
@@ -176,12 +177,27 @@ async function flushPending(api){
   snapshot(uid);const remaining=readPending(uid);return !remaining.profile?.payload&&!remaining.schedule?.courses;
 }
 let recovering=false;
-async function recover(){
+async function recover(source='manual'){
   if(recovering||document.visibilityState==='hidden'||!currentUid())return;recovering=true;
   try{
     let candidates=apiCandidates(PRIMARY,{action:'bootstrap'});if(!candidates.length){const probe=earliestProbe(PRIMARY,'bootstrap');candidates=probe?[probe]:[]}
     for(const api of candidates){
-      try{const {res}=await directJson(api,'bootstrap',{},true,3000);if(api===STANDBY&&res.status===401)continue;if(res.ok){if(await flushPending(api)){if(api===STANDBY)setPreferredCloud('standby');setMode('online',api);sessionStorage.setItem('puplan_api_index','0');location.reload()}return}if(res.status===401&&api!==STANDBY){document.querySelector('#authGate')?.classList.remove('off');return}}catch{}
+      try{
+        const {res}=await directJson(api,'bootstrap',{},true,3000);
+        if(api===STANDBY&&res.status===401)continue;
+        if(res.ok){
+          if(await flushPending(api)){
+            if(api===STANDBY)setPreferredCloud('standby');
+            setMode('online',api);
+            sessionStorage.setItem('puplan_api_index','0');
+            const tier=api===STANDBY?'standby':'primary';
+            trace('resilience-recovered',{source,outcome:'no-reload',tier});
+            document.dispatchEvent(new CustomEvent('nolu:resilience-recovered',{detail:{source,tier,at:now()}}));
+          }
+          return;
+        }
+        if(res.status===401&&api!==STANDBY){document.querySelector('#authGate')?.classList.remove('off');return}
+      }catch{}
     }
     if(currentUid())setMode('offline');
   }finally{recovering=false}
@@ -189,11 +205,12 @@ async function recover(){
 
 (function init(){
   const uid=currentUid();if(uid){snapshot(uid);setTimeout(()=>{if(!window.PUPLAN_CLOUD?.isSignedIn?.())setMode('offline')},50)}
-  addEventListener('online',()=>setTimeout(recover,200));addEventListener('focus',()=>setTimeout(recover,400));
+  addEventListener('online',()=>setTimeout(()=>recover('online'),200));
+  addEventListener('focus',()=>setTimeout(()=>recover('focus'),400));
   document.addEventListener('puplan:courses-changed',e=>{const id=currentUid();if(!id)return;const q=readPending(id);q.schedule={courses:Array.isArray(e.detail)?e.detail.slice(0,80):localCourses(),changedAt:now()};writePending(id,q);snapshot(id);if(state.mode==='offline')setMode('offline')});
   document.addEventListener('puplan:profile-changed',()=>{if(!localStorage.getItem('puplan_session')){localStorage.removeItem(PORTABLE_KEY);localStorage.removeItem(PREFERRED_KEY)}});
-  document.addEventListener('nolu:replica-primary-ready',()=>{setPreferredCloud('primary');setTimeout(recover,80)});
-  setInterval(recover,30000);
+  document.addEventListener('nolu:replica-primary-ready',()=>{setPreferredCloud('primary');setTimeout(()=>recover('replica-primary-ready'),80)});
+  setInterval(()=>recover('interval'),30000);
 })();
 
 window.NOLU_RESILIENCE={state,getMode:()=>state.mode,recover,flushPending,snapshot,currentUid,circuitOpen,apiCandidates,preferredCloud,setPreferredCloud,portableToken,tierSession,PRIMARY,STANDBY,PRIMARY_SESSION_KEY,STANDBY_SESSION_KEY};

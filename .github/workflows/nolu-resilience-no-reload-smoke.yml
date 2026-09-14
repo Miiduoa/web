@@ -1,0 +1,64 @@
+name: nolu resilience no-reload smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-resilience-no-reload-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/resilience.js'
+      - 'pu-plan/pwa.js'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/index.html'
+      - '.github/workflows/nolu-resilience-no-reload-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-mid-session-reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify resilience recovery stays in place
+        run: |
+          set -euo pipefail
+          node --check pu-plan/resilience.js
+          node <<'NODE'
+          const fs=require('fs');
+          const source=fs.readFileSync('pu-plan/resilience.js','utf8');
+          if(!source.includes("const VERSION='20260914-ha4-no-reload'"))throw new Error('new resilience runtime missing');
+          if(/location\.reload\s*\(/.test(source))throw new Error('resilience recovery must never reload the current page');
+          for(const marker of [
+            "recover(source='manual')",
+            "recover('focus')",
+            "recover('online')",
+            "resilience-recovered",
+            "outcome:'no-reload'"
+          ])if(!source.includes(marker))throw new Error(`missing no-reload marker: ${marker}`);
+          NODE
+
+      - name: Verify shell generation is coherent
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          expected='20260914-resilience15'
+          html=Path('pu-plan/index.html').read_text()
+          pwa=Path('pu-plan/pwa.js').read_text()
+          sw=Path('pu-plan/sw.js').read_text()
+          versions=re.findall(r'\?v=([A-Za-z0-9_-]+)',html)
+          assert versions and all(v==expected for v in versions), versions
+          assert f"const SHELL_GENERATION='{expected}'" in pwa
+          assert f"const CACHE='nolu-shell-{expected}'" in sw
+          PY
