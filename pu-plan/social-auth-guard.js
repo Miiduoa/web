@@ -1,5 +1,8 @@
 const SOCIAL_PRIMARY='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
 const SOCIAL_STANDBY='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-social';
+const GATEWAY_SLUG='nolu-browser-gateway-v1';
+const PRIMARY_HOST='hrrmkrayvrgnwcroyttp.supabase.co';
+const STANDBY_HOST='ltfurqaspqsvswmebyzw.supabase.co';
 const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
 const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const PREFERRED_KEY='nolu_preferred_cloud_v1';
@@ -28,6 +31,10 @@ function tierOf(url){
   const target=`${url.origin}${url.pathname}`;
   if(target===SOCIAL_PRIMARY)return'primary';
   if(target===SOCIAL_STANDBY)return'standby';
+  if(url.pathname===`/functions/v1/${GATEWAY_SLUG}`&&url.searchParams.get('target')==='pu-plan-social'){
+    if(url.hostname===PRIMARY_HOST)return'primary';
+    if(url.hostname===STANDBY_HOST)return'standby';
+  }
   return'';
 }
 function addCandidate(list,raw,uid=''){
@@ -50,7 +57,10 @@ function tokenCandidates(tier,options){
   addCandidate(list,bearerToken(options),uid);
   addCandidate(list,regional,uid);
   addCandidate(list,explicit,uid);
-  if(localStorage.getItem(PREFERRED_KEY)===tier)addCandidate(list,current,uid);
+  // The canonical token is always a safe final candidate for the same uid. It may
+  // belong to the other region, in which case the server simply returns 401 and the
+  // request still falls through to the session-preserving uncertain response.
+  addCandidate(list,current,uid);
   return list;
 }
 function withToken(options,token){
@@ -107,7 +117,8 @@ window.fetch=async function noluSocialAuthGuard(input,options={}){
 };
 
 window.NOLU_SOCIAL_AUTH_GUARD={
-  version:'20260914-social-auth1',
+  version:'20260914-social-gateway2',
   preservesCanonicalSession:true,
-  retriesTierTokens:true
+  retriesTierTokens:true,
+  recognizesBrowserGateway:true
 };
