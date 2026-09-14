@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Verify bounded regional login patience
         run: |
           set -euo pipefail
@@ -45,15 +47,21 @@ jobs:
           grep -Fq "delete rest[DEADLINE_FIELD]" pu-plan/login-transport-patience.js
           grep -Fq "remaining=deadline>0?deadline-Date.now():Infinity" pu-plan/login-transport-patience.js
           ! grep -Eq "password_hash|recovery_hash|service_role|PRIVATE KEY" pu-plan/login-transport-patience.js pu-plan/login-failover-budget.js
-          test "$(grep -o '<script' pu-plan/index.html | wc -l)" -eq 1
           grep -Fq "import './login-transport-patience.js';" pu-plan/main.js
           grep -Fq "await import('./login-failover-budget.js');" pu-plan/main.js
           grep -Fq "'./login-transport-patience.js'" pu-plan/sw.js
           grep -Fq "'./login-failover-budget.js'" pu-plan/sw.js
           node <<'NODE'
           const fs=require('node:fs');
+          const html=fs.readFileSync('pu-plan/index.html','utf8');
           const patience=fs.readFileSync('pu-plan/login-transport-patience.js','utf8');
           const budget=fs.readFileSync('pu-plan/login-failover-budget.js','utf8');
+          const scripts=[...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map(m=>m[1]);
+          if(scripts.length!==2)throw Error(`expected social auth guard + main scripts, got ${scripts.length}`);
+          if(!scripts[0].startsWith('social-auth-guard.js?v='))throw Error('social auth guard must load before main');
+          if(!scripts[1].startsWith('main.js?v='))throw Error('main script must load after social auth guard');
+          const version=scripts[0].split('?v=')[1];
+          if(!version||scripts[1].split('?v=')[1]!==version)throw Error('entry scripts must share one shell generation');
           if((patience.match(/baseFetch\(/g)||[]).length<2)throw Error('patience wrapper must delegate ordinary and login traffic');
           if(/setInterval|while\s*\(/.test(patience))throw Error('login patience must not retry or loop');
           if(!budget.includes('OVERALL_LOGIN_TIMEOUT_MS=14000'))throw Error('missing bounded whole-login failover budget');
