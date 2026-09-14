@@ -3,8 +3,13 @@ const GUEST_KEY='puplan_guest';
 const OWNER_KEY='puplan_course_owner';
 const RELOAD_STATE_KEY='nolu_account_boundary_v2';
 const SIGNED_OUT_SETTLE_MS=500;
+const MEDIA_PICKER_SETTLE_MS=5000;
+const MEDIA_PICKER_MAX_MS=120000;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ua=typeof navigator==='object'?String(navigator.userAgent||''):'';
+const IOS=/iPad|iPhone|iPod/.test(ua)||(/Macintosh/.test(ua)&&typeof navigator==='object'&&navigator.maxTouchPoints>1);
 let reloading=false,pendingSignedOut=null;
+let mediaPickerPending=false,mediaPickerGraceUntil=0,mediaPickerGraceTimer=null;
 
 const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 
@@ -50,10 +55,48 @@ function clearReloadStateAfterVerifiedSignIn(next){
   trace('auth-boundary-rearmed',{status:'verified-sign-in',transition:'signed-out->signed-in'});
 }
 
+function mediaPickerTarget(target){
+  if(!IOS)return false;
+  try{return !!target?.closest?.('#postMediaInput,.media-pick')}catch{return false}
+}
+
+function mediaPickerGraceActive(){
+  return IOS&&(mediaPickerPending||Date.now()<mediaPickerGraceUntil);
+}
+
+function armMediaPickerGrace(source='media-picker-open'){
+  if(!IOS)return false;
+  if(mediaPickerGraceTimer){clearTimeout(mediaPickerGraceTimer);mediaPickerGraceTimer=null}
+  mediaPickerPending=true;
+  mediaPickerGraceUntil=Date.now()+MEDIA_PICKER_MAX_MS;
+  mediaPickerGraceTimer=setTimeout(()=>{
+    mediaPickerPending=false;
+    mediaPickerGraceUntil=0;
+    mediaPickerGraceTimer=null;
+    trace('auth-boundary-media-grace',{stage:'expired',mode:'media-picker-grace'});
+  },MEDIA_PICKER_MAX_MS);
+  trace('auth-boundary-media-grace',{stage:'armed',source,mode:'media-picker-grace'});
+  return true;
+}
+
+function settleMediaPickerGrace(source='media-picker-return'){
+  if(!IOS||!mediaPickerGraceActive())return false;
+  if(mediaPickerGraceTimer)clearTimeout(mediaPickerGraceTimer);
+  mediaPickerPending=false;
+  mediaPickerGraceUntil=Date.now()+MEDIA_PICKER_SETTLE_MS;
+  mediaPickerGraceTimer=setTimeout(()=>{
+    mediaPickerGraceUntil=0;
+    mediaPickerGraceTimer=null;
+    trace('auth-boundary-media-grace',{stage:'complete',mode:'media-picker-grace'});
+  },MEDIA_PICKER_SETTLE_MS);
+  trace('auth-boundary-media-grace',{stage:'return',source,mode:'media-picker-grace'});
+  return true;
+}
+
 function cancelPendingSignedOut(outcome='transient-restored'){
   if(!pendingSignedOut)return false;
   clearTimeout(pendingSignedOut.timer);
-  trace('auth-boundary-settle',{reason:pendingSignedOut.reason,transition:'signed-in->signed-out',outcome});
+  trace('auth-boundary-settle',{reason:pendingSignedOut.reason,transition:'signed-in->signed-out',outcome,mode:pendingSignedOut.mode});
   pendingSignedOut=null;
   return true;
 }
@@ -87,19 +130,21 @@ function commitAccountBoundary(reason,previous,next){
 function scheduleSignedOutBoundary(reason,previous){
   if(pendingSignedOut?.from===previous)return false;
   cancelPendingSignedOut('superseded');
-  const pending={from:previous,reason,timer:null};
+  const mediaGrace=mediaPickerGraceActive();
+  const settleMs=mediaGrace?MEDIA_PICKER_SETTLE_MS:SIGNED_OUT_SETTLE_MS;
+  const pending={from:previous,reason,timer:null,mode:mediaGrace?'media-picker-grace':'default'};
   pending.timer=setTimeout(()=>{
     if(pendingSignedOut!==pending)return;
     pendingSignedOut=null;
     const settled=currentIdentity();
     if(settled===previous){
-      trace('auth-boundary-settle',{reason,transition:'signed-in->signed-out',outcome:'transient-restored'});
+      trace('auth-boundary-settle',{reason,transition:'signed-in->signed-out',outcome:'transient-restored',mode:pending.mode});
       return;
     }
     commitAccountBoundary(`${reason}-settled`,previous,settled);
-  },SIGNED_OUT_SETTLE_MS);
+  },settleMs);
   pendingSignedOut=pending;
-  trace('auth-boundary-settle',{reason,transition:'signed-in->signed-out',outcome:'pending'});
+  trace('auth-boundary-settle',{reason,transition:'signed-in->signed-out',outcome:'pending',mode:pending.mode});
   return false;
 }
 
@@ -134,13 +179,28 @@ window.addEventListener('storage',event=>{
   if(event.key===SESSION_KEY||event.key===GUEST_KEY)enforceAccountBoundary('cross-tab-auth');
 });
 
+if(IOS){
+  const begin=event=>{if(mediaPickerTarget(event.target))armMediaPickerGrace(event.type)};
+  document.addEventListener('pointerdown',begin,true);
+  document.addEventListener('touchstart',begin,{capture:true,passive:true});
+  document.addEventListener('click',begin,true);
+  document.addEventListener('change',event=>{if(mediaPickerTarget(event.target))settleMediaPickerGrace('change')},true);
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden'&&mediaPickerGraceActive())armMediaPickerGrace('hidden');
+    else if(document.visibilityState==='visible'&&mediaPickerPending)settleMediaPickerGrace('visible');
+  });
+  window.addEventListener('focus',()=>{if(mediaPickerPending)settleMediaPickerGrace('focus')});
+}
+
 window.NOLU_ACCOUNT_BOUNDARY={
-  version:'20260912-account-boundary5',
+  version:'20260914-account-boundary6',
   sessionKey:SESSION_KEY,
   guestKey:GUEST_KEY,
   ownerKey:OWNER_KEY,
   reloadStateKey:RELOAD_STATE_KEY,
   signedOutSettleMs:SIGNED_OUT_SETTLE_MS,
+  mediaPickerSettleMs:MEDIA_PICKER_SETTLE_MS,
+  mediaPickerGraceActive,
   identity:currentIdentity,
   enforce:enforceAccountBoundary
 };

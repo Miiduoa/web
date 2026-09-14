@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260913-runtime-shell13';
+const CACHE='nolu-shell-20260914-media-boundary14';
 const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
