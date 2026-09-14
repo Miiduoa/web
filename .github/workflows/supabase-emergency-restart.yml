@@ -1,6 +1,10 @@
 name: Supabase emergency restart
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/supabase-emergency-restart.yml'
   workflow_dispatch:
     inputs:
       confirm:
@@ -16,11 +20,43 @@ permissions:
   contents: read
 
 concurrency:
-  group: nolu-supabase-emergency-restart
+  group: nolu-supabase-emergency-restart-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  workflow-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify production restart safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/supabase-emergency-restart.yml').read_text()
+          required=[
+            "if: github.event_name == 'workflow_dispatch'",
+            "if [ \"$CONFIRM\" != 'restart-primary' ]",
+            'public_course_catalog?select=*&limit=0',
+            'puplan_app_users?select=id&limit=1',
+            'https://api.supabase.com/v1/projects/${PROJECT_REF}/restart',
+            'should_restart=false',
+            'should_restart=true',
+            'Anonymous puplan_app_users access is exposed',
+          ]
+          missing=[x for x in required if x not in s]
+          assert not missing, f'missing emergency restart guardrails: {missing}'
+          assert '/pause' not in s and '/restore' not in s, 'restart workflow must not pause or restore production'
+          print('NOLU_EMERGENCY_RESTART_CONTRACT_OK')
+          PY
+
   restart:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
@@ -49,27 +85,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
-          rm -f /tmp/preflight-body
-          rc=0
-          code=$(curl -sS --connect-timeout 5 --max-time 10 -o /tmp/preflight-body -w '%{http_code}' \
-            "$REST" -H "apikey: ${PUBLISHABLE_KEY}") || rc=$?
-          body=$(cat /tmp/preflight-body 2>/dev/null || true)
-          echo "Preflight Data API rc=$rc HTTP=${code:-000}"
+          PUBLIC_REST="https://${PROJECT_REF}.supabase.co/rest/v1/public_course_catalog?select=*&limit=0"
+          SENSITIVE_REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
 
-          if [ "$rc" -eq 0 ] && [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
-            echo 'Data API is already responsive and the anonymous boundary is still closed; restart is unnecessary.'
-            echo 'should_restart=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$rc" -eq 0 ] && [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
-            echo '::error::Anonymous puplan_app_users access is exposed; refusing to mask this security incident with a restart.'
-            echo "$body"
+          rm -f /tmp/public-preflight-body
+          public_rc=0
+          public_code=$(curl -sS --connect-timeout 5 --max-time 10 -o /tmp/public-preflight-body -w '%{http_code}' \
+            "$PUBLIC_REST" -H "apikey: ${PUBLISHABLE_KEY}") || public_rc=$?
+          public_body=$(cat /tmp/public-preflight-body 2>/dev/null || true)
+          echo "Public health preflight rc=$public_rc HTTP=${public_code:-000}"
+
+          if [ "$public_rc" -eq 0 ] && [ "$public_code" -ge 200 ] && [ "$public_code" -lt 300 ] \
+            && ! grep -Eqi 'PGRST002|Gateway Timeout|Could not query the database for the schema cache' /tmp/public-preflight-body 2>/dev/null; then
+            rm -f /tmp/sensitive-preflight-body
+            sensitive_rc=0
+            sensitive_code=$(curl -sS --connect-timeout 5 --max-time 10 -o /tmp/sensitive-preflight-body -w '%{http_code}' \
+              "$SENSITIVE_REST" -H "apikey: ${PUBLISHABLE_KEY}") || sensitive_rc=$?
+            sensitive_body=$(cat /tmp/sensitive-preflight-body 2>/dev/null || true)
+            echo "Sensitive boundary preflight rc=$sensitive_rc HTTP=${sensitive_code:-000}"
+
+            if [ "$sensitive_rc" -eq 0 ] && [ "$sensitive_code" -ge 200 ] && [ "$sensitive_code" -lt 300 ]; then
+              echo '::error::Anonymous puplan_app_users access is exposed; refusing to mask this security incident with a restart.'
+              echo "$sensitive_body"
+              exit 1
+            fi
+            if [ "$sensitive_rc" -eq 0 ] && [ "$sensitive_code" -ge 400 ] && [ "$sensitive_code" -lt 500 ]; then
+              echo 'Public Data API is healthy and anonymous sensitive-table access remains blocked; restart is unnecessary.'
+              echo 'should_restart=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo '::error::Public Data API is healthy but the sensitive-table boundary probe is unavailable or server-failing; refusing an automatic restart for a partial/ambiguous incident.'
+            echo "$sensitive_body"
             exit 1
           fi
 
-          echo 'Data API remains unavailable or server-failing; restart is warranted.'
-          echo 'should_restart=true' >> "$GITHUB_OUTPUT"
+          if [ "$public_rc" -ne 0 ] || { [ "$public_code" -ge 500 ] && [ "$public_code" -lt 600 ]; }; then
+            echo 'Data API health path remains transport-unreachable or server-failing; restart is warranted.'
+            echo "$public_body"
+            echo 'should_restart=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error::Public health endpoint returned HTTP ${public_code:-000}; this looks like an auth/configuration/client-boundary problem that a database restart should not mask."
+          echo "$public_body"
+          exit 1
 
       - name: Restart project through Supabase Management API
         if: steps.preflight.outputs.should_restart == 'true'
@@ -95,25 +155,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
-          for i in $(seq 1 36); do
-            rm -f /tmp/body
-            rc=0
-            code=$(curl -sS --connect-timeout 5 --max-time 8 -o /tmp/body -w '%{http_code}' \
-              "$REST" -H "apikey: ${PUBLISHABLE_KEY}") || rc=$?
-            body=$(cat /tmp/body 2>/dev/null || true)
-            echo "Data API probe $i rc=$rc HTTP=${code:-000}"
+          PUBLIC_REST="https://${PROJECT_REF}.supabase.co/rest/v1/public_course_catalog?select=*&limit=0"
+          SENSITIVE_REST="https://${PROJECT_REF}.supabase.co/rest/v1/puplan_app_users?select=id&limit=1"
 
-            if [ "$rc" -eq 0 ] && [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
-              echo 'Data API is responsive and anonymous direct access remains blocked.'
-              exit 0
+          for i in $(seq 1 36); do
+            rm -f /tmp/public-body /tmp/sensitive-body
+            public_rc=0
+            public_code=$(curl -sS --connect-timeout 5 --max-time 8 -o /tmp/public-body -w '%{http_code}' \
+              "$PUBLIC_REST" -H "apikey: ${PUBLISHABLE_KEY}") || public_rc=$?
+            public_body=$(cat /tmp/public-body 2>/dev/null || true)
+            echo "Public Data API probe $i rc=$public_rc HTTP=${public_code:-000}"
+
+            if [ "$public_rc" -eq 0 ] && [ "$public_code" -ge 200 ] && [ "$public_code" -lt 300 ] \
+              && ! grep -Eqi 'PGRST002|Gateway Timeout|Could not query the database for the schema cache' /tmp/public-body 2>/dev/null; then
+              sensitive_rc=0
+              sensitive_code=$(curl -sS --connect-timeout 5 --max-time 8 -o /tmp/sensitive-body -w '%{http_code}' \
+                "$SENSITIVE_REST" -H "apikey: ${PUBLISHABLE_KEY}") || sensitive_rc=$?
+              sensitive_body=$(cat /tmp/sensitive-body 2>/dev/null || true)
+              echo "Sensitive boundary probe $i rc=$sensitive_rc HTTP=${sensitive_code:-000}"
+
+              if [ "$sensitive_rc" -eq 0 ] && [ "$sensitive_code" -ge 200 ] && [ "$sensitive_code" -lt 300 ]; then
+                echo '::error::Data API recovered but anonymous puplan_app_users access is exposed.'
+                echo "$sensitive_body"
+                exit 1
+              fi
+              if [ "$sensitive_rc" -eq 0 ] && [ "$sensitive_code" -ge 400 ] && [ "$sensitive_code" -lt 500 ]; then
+                echo 'Data API health path recovered and anonymous sensitive-table access remains blocked.'
+                exit 0
+              fi
             fi
-            if [ "$rc" -eq 0 ] && [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
-              echo '::error::Data API recovered but anonymous puplan_app_users access is exposed.'
-              echo "$body"
-              exit 1
+
+            if [ "$public_rc" -eq 0 ] && [ "$public_code" -ge 200 ] && [ "$public_code" -lt 300 ]; then
+              echo "$public_body"
             fi
             sleep 8
           done
-          echo '::error::Data API did not become responsive within the restart validation window.'
+          echo '::error::Data API did not become healthy with the anonymous boundary intact within the restart validation window.'
           exit 1
