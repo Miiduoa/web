@@ -35,10 +35,10 @@ jobs:
         run: |
           set -euo pipefail
           node --check pu-plan/social-auth-guard.js
-          grep -q "social-auth-guard.js?v=20260914-social-auth16" pu-plan/index.html
+          grep -q "social-auth-guard.js?v=20260914-social-gateway17" pu-plan/index.html
           grep -q "'./social-auth-guard.js'" pu-plan/sw.js
-          grep -q "nolu-shell-20260914-social-auth16" pu-plan/sw.js
-          grep -q "SHELL_GENERATION='20260914-social-auth16'" pu-plan/pwa.js
+          grep -q "nolu-shell-20260914-social-gateway17" pu-plan/sw.js
+          grep -q "SHELL_GENERATION='20260914-social-gateway17'" pu-plan/pwa.js
           grep -q "SOCIAL_AUTH_UNCERTAIN" pu-plan/social-auth-guard.js
           grep -q "session-preserved" pu-plan/social-auth-guard.js
           grep -q "recognizesBrowserGateway:true" pu-plan/social-auth-guard.js
@@ -84,14 +84,10 @@ jobs:
             const gateway='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/nolu-browser-gateway-v1?target=pu-plan-social';
             const options={method:'POST',headers:{Authorization:`Bearer ${stale}`,'Content-Type':'application/json'},body:JSON.stringify({action:'prepare_media'})};
 
-            // The direct path remains guarded.
             const healedDirect=await window.fetch(direct,options);
             assert.equal(healedDirect.status,200,'direct social request should heal stale primary token');
             assert.equal(localStorage.getItem('puplan_session_primary_v1'),current,'direct path did not heal token');
 
-            // Reset the stale tier token and prove the rewritten browser-gateway path
-            // receives the same protection. This is the production path after
-            // origin-gateway.js rewrites pu-plan-social.
             localStorage.setItem('puplan_session_primary_v1',stale);
             const healedGateway=await window.fetch(gateway,options);
             assert.equal(healedGateway.status,200,'gateway-routed social request should heal stale primary token');
