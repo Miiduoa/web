@@ -88,19 +88,28 @@ jobs:
           const adminUrl='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
           const opts=action=>({method:'POST',body:JSON.stringify({action})});
           (async()=>{
-            const read=await context.window.fetch(adminUrl,opts('overview'));
-            if(!read.ok)throw new Error('standby read fallback failed');
-            if(calls.length!==2||!calls[0].url.includes('hrrmkray')||!calls[1].url.includes('ltfurq'))throw new Error('read did not use Mumbai then Tokyo');
-            if(!calls[0].auth.includes('PRIMARY_TOKEN')||!calls[1].auth.includes('STANDBY_TOKEN'))throw new Error('regional tokens were not isolated');
-            calls.length=0;
-            const write=await context.window.fetch(adminUrl,opts('disable_user'));
-            if(write.status!==503||calls.length!==1||!calls[0].url.includes('hrrmkray'))throw new Error('write was not kept primary-only');
-            for(const status of [401,403]){
-              primaryStatus=status;calls.length=0;
-              const guarded=await context.window.fetch(adminUrl,opts('overview'));
-              if(guarded.status!==status||calls.length!==1)throw new Error(`auth ${status} incorrectly failed over`);
-            }
-            console.log('ADMIN_STANDBY_CLIENT_OK');
+            primaryStatus=503;
+            let read=await context.window.fetch(adminUrl,opts('overview'));
+            if(!read.ok||(await read.json()).cloud_tier!=='standby')throw new Error('503 read did not fail over');
+            if(calls.length!==2||!calls[0].auth.includes('PRIMARY_TOKEN')||!calls[1].auth.includes('STANDBY_TOKEN'))throw new Error('regional tokens wrong');
+
+            // Explicit authorization rejection is authoritative. A stale Tokyo
+            // admin role/session must never turn a Mumbai 401/403 into access.
+            calls.length=0;primaryStatus=403;
+            read=await context.window.fetch(adminUrl,opts('overview'));
+            if(read.status!==403)throw new Error('primary 403 was downgraded');
+            if(calls.length!==1||!calls[0].url.includes('hrrmkray'))throw new Error('403 leaked to standby');
+
+            calls.length=0;primaryStatus=401;
+            read=await context.window.fetch(adminUrl,opts('overview'));
+            if(read.status!==401)throw new Error('primary 401 was downgraded');
+            if(calls.length!==1)throw new Error('401 leaked to standby');
+
+            calls.length=0;primaryStatus=503;
+            const write=await context.window.fetch(adminUrl,opts('moderate_post'));
+            if(write.status!==503)throw new Error('write should remain primary-only');
+            if(calls.length!==1||!calls[0].url.includes('hrrmkray'))throw new Error('write leaked to standby');
+            console.log('ADMIN_STANDBY_FAILOVER_OK');
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
