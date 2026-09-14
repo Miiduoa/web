@@ -70,11 +70,11 @@ jobs:
           const token=uid=>`${Buffer.from(JSON.stringify({v:4,uid})).toString('base64url')}.sig`;
 
           class Target {
-            constructor(){this.handlers=new Map();this.documentElement={setAttribute(){}}}
+            constructor(){this.handlers=new Map();this.documentElement={setAttribute(){}};this.visibilityState='visible'}
             addEventListener(type,fn){const a=this.handlers.get(type)||[];a.push(fn);this.handlers.set(type,a)}
             emit(type,event={}){for(const fn of this.handlers.get(type)||[])fn(event)}
           }
-          function runtime(initialToken='',{session=new Map(),signed=false,profileId=''}={}){
+          function runtime(initialToken='',{session=new Map(),signed=false,profileId='',ios=false}={}){
             const data=new Map();
             if(initialToken)data.set('puplan_session',initialToken);
             let reloads=0,timerSeq=0;
@@ -82,22 +82,25 @@ jobs:
             const document=new Target(),window=new Target();
             window.PUPLAN_CLOUD={isSignedIn:()=>signed,getProfile:()=>profileId?{id:profileId}:null};
             window.NOLU_AUTH_TRACE={record(){}};
+            const navigator=ios?{userAgent:'iPhone',maxTouchPoints:5}:{userAgent:'Node',maxTouchPoints:0};
             const localStorage={getItem:k=>data.has(k)?data.get(k):null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)};
             const sessionStorage={getItem:k=>session.has(k)?session.get(k):null,setItem:(k,v)=>session.set(k,String(v)),removeItem:k=>session.delete(k)};
             const setTimeout=(fn,ms)=>{const id=++timerSeq;timers.set(id,{fn,ms});return id};
             const clearTimeout=id=>timers.delete(id);
             const flushTimers=()=>{const pending=[...timers.values()];timers.clear();for(const item of pending)item.fn()};
-            const context=vm.createContext({document,window,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON,atob,escape,decodeURIComponent,setTimeout,clearTimeout});
+            const timerDurations=()=>[...timers.values()].map(item=>item.ms);
+            const context=vm.createContext({document,window,navigator,localStorage,sessionStorage,location:{reload:()=>reloads++},Date,JSON,atob,escape,decodeURIComponent,setTimeout,clearTimeout});
             vm.runInContext(code,context,{filename:'account-boundary.js'});
-            return {document,window,localStorage,sessionStorage,reloads:()=>reloads,flushTimers,guard:window.NOLU_ACCOUNT_BOUNDARY};
+            return {document,window,localStorage,sessionStorage,reloads:()=>reloads,flushTimers,timerDurations,guard:window.NOLU_ACCOUNT_BOUNDARY};
           }
 
           let r=runtime('',{signed:true,profileId:A});
           r.localStorage.setItem('puplan_session',token(A));
           r.document.emit('puplan:profile-changed');
           if(r.reloads()!==0)throw new Error('first verified sign-in must not reload');
-          if(r.guard?.version!=='20260912-account-boundary5')throw new Error('guard version missing');
+          if(r.guard?.version!=='20260914-account-boundary6')throw new Error('guard version missing');
           if(r.guard?.signedOutSettleMs!==500)throw new Error('signed-out settle window missing');
+          if(r.guard?.mediaPickerSettleMs!==5000)throw new Error('media-picker settle window missing');
 
           r=runtime(token(A));
           r.localStorage.setItem('puplan_session',token(B));
@@ -116,7 +119,7 @@ jobs:
           if(r.reloads()!==1)throw new Error('cross-tab session switch must hard reload');
 
           // Posting/media failover can briefly replace the canonical credential.
-          // A -> empty -> A inside the settle window must never reload the page.
+          // A -> empty -> A inside the normal settle window must never reload.
           r=runtime(token(A));
           r.localStorage.removeItem('puplan_session');
           r.window.emit('storage',{key:'puplan_session'});
@@ -125,6 +128,28 @@ jobs:
           r.window.emit('storage',{key:'puplan_session'});
           r.flushTimers();
           if(r.reloads()!==0)throw new Error('restored same-account session still caused reload');
+
+          // Native iPhone Photos temporarily backgrounds the PWA. While that picker
+          // is active, only A -> empty receives a longer bounded grace window.
+          const pickerTarget={closest:selector=>selector.includes('#postMediaInput')?{}:null};
+          r=runtime(token(A),{ios:true});
+          r.document.emit('pointerdown',{target:pickerTarget});
+          if(!r.guard.mediaPickerGraceActive())throw new Error('iPhone media-picker grace did not arm');
+          r.localStorage.removeItem('puplan_session');
+          r.window.emit('storage',{key:'puplan_session'});
+          if(r.reloads()!==0)throw new Error('media picker transient gap reloaded immediately');
+          if(!r.timerDurations().includes(5000))throw new Error('media picker did not use extended 5s settle window');
+          r.localStorage.setItem('puplan_session',token(A));
+          r.window.emit('storage',{key:'puplan_session'});
+          r.flushTimers();
+          if(r.reloads()!==0)throw new Error('restored media-picker session still caused reload');
+
+          // Security boundary stays strict: A -> B must reload even while Photos is open.
+          r=runtime(token(A),{ios:true});
+          r.document.emit('pointerdown',{target:pickerTarget});
+          r.localStorage.setItem('puplan_session',token(B));
+          r.document.emit('puplan:profile-changed');
+          if(r.reloads()!==1)throw new Error('media grace weakened A -> B account isolation');
 
           const sharedSession=new Map();
           r=runtime(token(A),{session:sharedSession});
