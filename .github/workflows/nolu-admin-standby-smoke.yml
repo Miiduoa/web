@@ -86,7 +86,7 @@ jobs:
           context.window.window=context.window;context.window.localStorage=context.localStorage;context.window.location=context.location;context.window.URL=URL;context.window.Headers=HeadersX;context.window.Response=Response;
           vm.createContext(context);vm.runInContext(code,context);
           const adminUrl='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-admin';
-          const opts=action=>({method:'POST',body:JSON.stringify({action})});
+          const opts=action=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
           (async()=>{
             primaryStatus=503;
             let read=await context.window.fetch(adminUrl,opts('overview'));
