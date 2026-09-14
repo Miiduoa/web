@@ -1,0 +1,99 @@
+name: nolu social auth guard smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pu-plan/social-auth-guard.js'
+      - 'pu-plan/index.html'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - '.github/workflows/nolu-social-auth-guard-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/social-auth-guard.js'
+      - 'pu-plan/index.html'
+      - 'pu-plan/sw.js'
+      - 'pu-plan/pwa.js'
+      - '.github/workflows/nolu-social-auth-guard-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  social-auth-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Syntax and shell contract
+        run: |
+          set -euo pipefail
+          node --check pu-plan/social-auth-guard.js
+          grep -q "social-auth-guard.js?v=20260914-social-auth16" pu-plan/index.html
+          grep -q "'./social-auth-guard.js'" pu-plan/sw.js
+          grep -q "nolu-shell-20260914-social-auth16" pu-plan/sw.js
+          grep -q "SHELL_GENERATION='20260914-social-auth16'" pu-plan/pwa.js
+          grep -q "SOCIAL_AUTH_UNCERTAIN" pu-plan/social-auth-guard.js
+          grep -q "session-preserved" pu-plan/social-auth-guard.js
+          ! grep -q "location.reload" pu-plan/social-auth-guard.js
+          ! grep -q "removeItem('puplan_session')" pu-plan/social-auth-guard.js
+          node <<'NODE'
+          const fs=require('fs'),assert=require('assert');
+          const html=fs.readFileSync('pu-plan/index.html','utf8');
+          assert(html.indexOf('social-auth-guard.js')<html.indexOf('main.js'),'social auth guard must load before main');
+          NODE
+
+      - name: Stale social tier token heals without logout
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const code=fs.readFileSync('pu-plan/social-auth-guard.js','utf8');
+          const uid='11111111-1111-4111-8111-111111111111';
+          const token=(label)=>{
+            const payload={v:4,uid,iat:Math.floor(Date.now()/1000)-60,exp:Math.floor(Date.now()/1000)+3600,cv:label};
+            return Buffer.from(JSON.stringify(payload)).toString('base64url')+'.'+Buffer.from(label).toString('base64url');
+          };
+          const stale=token('stale'),current=token('current');
+          const map=new Map([
+            ['puplan_session',current],
+            ['puplan_session_primary_v1',stale],
+            ['nolu_preferred_cloud_v1','primary']
+          ]);
+          const localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};
+          const traces=[];let mode='heal';
+          const window={
+            NOLU_AUTH_TRACE:{record:(type,details)=>traces.push({type,...details})},
+            fetch:async(_input,options)=>{
+              const auth=new Headers(options?.headers||{}).get('Authorization')||'';
+              if(mode==='heal'&&auth===`Bearer ${current}`)return new Response(JSON.stringify({ok:true}),{status:200,headers:{'Content-Type':'application/json'}});
+              return new Response(JSON.stringify({error:'UNAUTHORIZED',message:'登入狀態無效，請重新登入'}),{status:401,headers:{'Content-Type':'application/json'}});
+            }
+          };
+          const context={window,localStorage,location:{href:'https://miiduoa.github.io/pu-plan/'},URL,Headers,Response,TextDecoder,Uint8Array,DOMException,Date,Math,JSON,Number,String,atob};
+          vm.runInNewContext(code,context);
+          (async()=>{
+            const input='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-social';
+            const options={method:'POST',headers:{Authorization:`Bearer ${stale}`,'Content-Type':'application/json'},body:JSON.stringify({action:'prepare_media'})};
+            const healed=await window.fetch(input,options);
+            assert.equal(healed.status,200,'current canonical token should heal stale primary social token');
+            assert.equal(localStorage.getItem('puplan_session_primary_v1'),current,'healed token was not written back');
+            assert(traces.some(x=>x.type==='social-auth-recovered'&&x.status==='session-healed'),'heal trace missing');
+
+            mode='all401';
+            localStorage.setItem('puplan_session_primary_v1',stale);
+            const preserved=await window.fetch(input,options);
+            assert.equal(preserved.status,503,'all-social-401 with live canonical session must become auth-uncertain');
+            const body=await preserved.json();
+            assert.equal(body.error,'SOCIAL_AUTH_UNCERTAIN');
+            assert.equal(localStorage.getItem('puplan_session'),current,'canonical session must never be cleared');
+            assert(traces.some(x=>x.type==='social-auth-401'&&x.status==='auth-uncertain'&&x.outcome==='session-preserved'),'preserve trace missing');
+            console.log('NOLU_SOCIAL_AUTH_GUARD_OK');
+          })().catch(error=>{console.error(error);process.exit(1)});
+          NODE
