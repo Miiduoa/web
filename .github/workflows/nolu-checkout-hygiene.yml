@@ -38,7 +38,6 @@ jobs:
           # Remove an entry in the same PR that upgrades the corresponding workflow.
           legacy_baseline = {
               root / 'nolu-account-boundary-smoke.yml': 6,
-              root / 'nolu-admin-login-routing-smoke.yml': 6,
               root / 'nolu-admin-standby-smoke.yml': 6,
               root / 'nolu-avatar-security-smoke.yml': 6,
               root / 'nolu-course-workflow-integrity.yml': 6,
@@ -52,11 +51,9 @@ jobs:
               root / 'nolu-replication-rpc-boundary.yml': 6,
               root / 'nolu-reporting-view-boundary.yml': 6,
               root / 'nolu-server-hot-standby-smoke.yml': 6,
-              root / 'nolu-session-v4-smoke.yml': 6,
               root / 'nolu-social-replication-media-integrity.yml': 6,
               root / 'nolu-standby-authority-dirty-fence.yml': 6,
               root / 'nolu-strict-regional-credentials.yml': 6,
-              root / 'nolu-tier-session-hygiene.yml': 6,
               root / 'nolu-v8-standby-smoke.yml': 6,
               root / 'security-smoke.yml': 6,
               root / 'ui-schedule-data-smoke.yml': 6,
