@@ -1,0 +1,90 @@
+name: nolu checkout hygiene
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkout-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Audit checkout action versions and credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.github/workflows')
+          files = sorted([*root.glob('*.yml'), *root.glob('*.yaml')])
+          allowed_v6 = {
+              root / 'nolu-internal-rpc-boundary.yml',
+              root / 'nolu-replication-rpc-boundary.yml',
+              root / 'nolu-reporting-view-boundary.yml',
+          }
+
+          checkout_re = re.compile(r'\buses:\s*actions/checkout@v(\d+)\b')
+          found_v6 = set()
+          blocked = []
+          checkout_total = 0
+          v7_without_explicit_no_persist = []
+
+          for path in files:
+              lines = path.read_text(encoding='utf-8').splitlines()
+              for i, line in enumerate(lines):
+                  m = checkout_re.search(line)
+                  if not m:
+                      continue
+                  checkout_total += 1
+                  major = int(m.group(1))
+                  rel = path.as_posix()
+                  if major < 7:
+                      if major == 6 and path in allowed_v6:
+                          found_v6.add(path)
+                          print(f'::notice file={rel},line={i+1}::temporary checkout@v6 allowlist while Primary DB is unavailable')
+                      else:
+                          blocked.append((rel, i + 1, major))
+
+                  if major == 7:
+                      # Inspect only this step, stopping at the next sibling list item.
+                      indent = len(line) - len(line.lstrip())
+                      segment = []
+                      for later in lines[i + 1:i + 18]:
+                          later_indent = len(later) - len(later.lstrip())
+                          if later.lstrip().startswith('- ') and later_indent <= indent:
+                              break
+                          segment.append(later)
+                      joined = '\n'.join(segment)
+                      if not re.search(r'^\s*persist-credentials:\s*false\s*$', joined, re.M):
+                          v7_without_explicit_no_persist.append((rel, i + 1))
+
+          stale = sorted(p.as_posix() for p in allowed_v6 - found_v6)
+          if stale:
+              raise SystemExit(f'stale checkout@v6 allowlist entries must be removed: {stale}')
+
+          for rel, line, major in blocked:
+              print(f'::error file={rel},line={line}::actions/checkout@v{major} is below the repository minimum; use v7')
+          if blocked:
+              raise SystemExit(f'blocked legacy checkout actions: {len(blocked)}')
+
+          for rel, line in v7_without_explicit_no_persist:
+              print(f'::notice file={rel},line={line}::checkout@v7 still uses default persisted credentials; review whether git writes are required')
+
+          print(f'CHECKOUT_HYGIENE_OK total={checkout_total} temporary_v6={len(found_v6)} v7_default_credentials={len(v7_without_explicit_no_persist)}')
+          PY
