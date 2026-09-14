@@ -37,8 +37,6 @@ jobs:
           # Exact pre-existing debt baseline. New legacy checkout usage is blocked.
           # Remove an entry in the same PR that upgrades the corresponding workflow.
           legacy_baseline = {
-              root / 'nolu-admin-standby-smoke.yml': 6,
-              root / 'nolu-avatar-security-smoke.yml': 6,
               root / 'nolu-course-workflow-integrity.yml': 6,
               root / 'nolu-failback-security-smoke.yml': 6,
               root / 'nolu-internal-rpc-boundary.yml': 6,
@@ -47,7 +45,6 @@ jobs:
               root / 'nolu-replica-v3-live-smoke.yml': 6,
               root / 'nolu-replication-rpc-boundary.yml': 6,
               root / 'nolu-reporting-view-boundary.yml': 6,
-              root / 'nolu-strict-regional-credentials.yml': 6,
               root / 'security-smoke.yml': 6,
               root / 'ui-schedule-data-smoke.yml': 6,
           }
