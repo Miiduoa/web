@@ -57,12 +57,12 @@ jobs:
                   if major < 7:
                       if major == 6 and path in allowed_v6:
                           found_v6.add(path)
+                          print(f'ALLOWED_LEGACY {rel}:{i+1} checkout@v6')
                           print(f'::notice file={rel},line={i+1}::temporary checkout@v6 allowlist while Primary DB is unavailable')
                       else:
                           blocked.append((rel, i + 1, major))
 
                   if major == 7:
-                      # Inspect only this step, stopping at the next sibling list item.
                       indent = len(line) - len(line.lstrip())
                       segment = []
                       for later in lines[i + 1:i + 18]:
@@ -79,12 +79,15 @@ jobs:
               raise SystemExit(f'stale checkout@v6 allowlist entries must be removed: {stale}')
 
           for rel, line, major in blocked:
+              print(f'BLOCKED_LEGACY {rel}:{line} checkout@v{major}')
               print(f'::error file={rel},line={line}::actions/checkout@v{major} is below the repository minimum; use v7')
-          if blocked:
-              raise SystemExit(f'blocked legacy checkout actions: {len(blocked)}')
 
           for rel, line in v7_without_explicit_no_persist:
+              print(f'REVIEW_PERSISTED_CREDENTIALS {rel}:{line} checkout@v7')
               print(f'::notice file={rel},line={line}::checkout@v7 still uses default persisted credentials; review whether git writes are required')
 
-          print(f'CHECKOUT_HYGIENE_OK total={checkout_total} temporary_v6={len(found_v6)} v7_default_credentials={len(v7_without_explicit_no_persist)}')
+          print(f'CHECKOUT_HYGIENE_SUMMARY total={checkout_total} temporary_v6={len(found_v6)} blocked_legacy={len(blocked)} v7_default_credentials={len(v7_without_explicit_no_persist)}')
+          if blocked:
+              raise SystemExit(f'blocked legacy checkout actions: {len(blocked)}')
+          print('CHECKOUT_HYGIENE_OK')
           PY
