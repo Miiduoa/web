@@ -39,7 +39,6 @@ jobs:
           legacy_baseline = {
               root / 'nolu-course-workflow-integrity.yml': 6,
               root / 'nolu-internal-rpc-boundary.yml': 6,
-              root / 'nolu-origin-gateway-live.yml': 6,
               root / 'nolu-replica-v3-live-smoke.yml': 6,
               root / 'nolu-replication-rpc-boundary.yml': 6,
               root / 'nolu-reporting-view-boundary.yml': 6,
