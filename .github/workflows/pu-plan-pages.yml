@@ -34,6 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           while IFS= read -r file; do node --experimental-default-type=module --check "$file"; done <<'FILES'
+          pu-plan/social-auth-guard.js
           pu-plan/main.js
           pu-plan/app.js
           pu-plan/core/state.js
@@ -85,7 +86,7 @@ jobs:
           jwks=json.loads((root/'nolu-mesh-jwks.json').read_text(encoding='utf-8'))
 
           required_files=[
-              'main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js','nolu-mesh-jwks.json',
+              'social-auth-guard.js','main.js','app.js','nolu-icon.svg','manifest.webmanifest','sw.js','nolu-mesh-jwks.json',
               'avatar-guard.js','durable-store.js','durable-bridge.js','transport-bridge.js','resilience.js','offline-session-rescue.js',
               'cloud-replication.js','provider-config.js','provider-mesh.js','provider-status.js',
               'core/state.js',
@@ -99,8 +100,9 @@ jobs:
           assert not missing, f'missing production files: {missing}'
 
           assert '<div id="app"></div>' in index, 'index must only mount the app shell'
-          assert re.search(r'''src=["'](?:\./)?main\.js(?:\?[^"']*)?["']''',index), 'main.js entrypoint missing'
-          assert index.count('<script')==1, 'production must have exactly one script entrypoint'
+          scripts=re.findall(r'''<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>''',index,flags=re.I)
+          script_paths=[s.split('?',1)[0].split('#',1)[0].lstrip('./') for s in scripts]
+          assert script_paths==['social-auth-guard.js','main.js'], f'index.html must load social-auth-guard.js then main.js, got {scripts}'
           for css in ['styles/base.css','styles/auth.css','styles/layout.css','styles/schedule.css','styles/assistant.css','styles/dialogs.css']:
               assert css in index, f'index missing {css}'
 
