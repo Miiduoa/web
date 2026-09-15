@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20260914-social-gateway17';
+const CACHE='nolu-shell-20260915-auth-issuer18';
 const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
