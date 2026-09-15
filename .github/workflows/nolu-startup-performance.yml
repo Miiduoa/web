@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Playwright
         run: |
           npm --prefix /tmp/nolu-startup init -y >/dev/null 2>&1
