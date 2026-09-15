@@ -33,6 +33,8 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Verify failback, replay, media and ACL invariants
         shell: bash
         run: |
