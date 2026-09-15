@@ -38,10 +38,8 @@ jobs:
           # Remove an entry in the same PR that upgrades the corresponding workflow.
           legacy_baseline = {
               root / 'nolu-course-workflow-integrity.yml': 6,
-              root / 'nolu-failback-security-smoke.yml': 6,
               root / 'nolu-internal-rpc-boundary.yml': 6,
               root / 'nolu-origin-gateway-live.yml': 6,
-              root / 'nolu-portable-v2-live-smoke.yml': 6,
               root / 'nolu-replica-v3-live-smoke.yml': 6,
               root / 'nolu-replication-rpc-boundary.yml': 6,
               root / 'nolu-reporting-view-boundary.yml': 6,
