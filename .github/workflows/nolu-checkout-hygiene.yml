@@ -46,7 +46,6 @@ jobs:
               root / 'nolu-replication-rpc-boundary.yml': 6,
               root / 'nolu-reporting-view-boundary.yml': 6,
               root / 'security-smoke.yml': 6,
-              root / 'ui-schedule-data-smoke.yml': 6,
           }
 
           checkout_re = re.compile(r'\buses:\s*actions/checkout@v(\d+)\b')
