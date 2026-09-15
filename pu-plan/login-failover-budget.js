@@ -6,6 +6,9 @@
   ]);
   const PRIMARY_HOST='hrrmkrayvrgnwcroyttp.supabase.co';
   const PRIMARY_API='https://hrrmkrayvrgnwcroyttp.supabase.co/functions/v1/pu-plan-api-v8';
+  const STANDBY_API='https://ltfurqaspqsvswmebyzw.supabase.co/functions/v1/pu-plan-api-v8';
+  const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
+  const STANDBY_SESSION_KEY='puplan_session_standby_v1';
   const LOGIN_PATH=/\/functions\/v1\/(?:nolu-browser-gateway-v1|pu-plan-api|pu-plan-api-v8|pu-plan-api-v6|pu-plan-core-v1)$/;
   const OVERALL_LOGIN_TIMEOUT_MS=14000;
   const AUTH_REVALIDATE_TIMEOUT_MS=5500;
@@ -23,6 +26,7 @@
   function authHeaderOf(options){
     try{return new Headers(options?.headers||{}).get('Authorization')||''}catch{return''}
   }
+  function bearerOf(authorization){return String(authorization||'').startsWith('Bearer ')?String(authorization).slice(7):''}
   function trace(type,details={}){window.NOLU_AUTH_TRACE?.record?.(type,details)}
   function reopenPrimaryCircuit(){
     const resilience=window.NOLU_RESILIENCE;
@@ -49,33 +53,58 @@
     });
   }
 
+  function issuerCandidates(authorization){
+    const token=bearerOf(authorization);
+    if(!token)return[];
+    const primary=localStorage.getItem(PRIMARY_SESSION_KEY)||'';
+    const standby=localStorage.getItem(STANDBY_SESSION_KEY)||'';
+    if(token===primary&&token!==standby)return[PRIMARY_API];
+    if(token===standby&&token!==primary)return[STANDBY_API];
+    const preferred=localStorage.getItem(PREFERRED_CLOUD_KEY)==='standby';
+    return preferred?[STANDBY_API,PRIMARY_API]:[PRIMARY_API,STANDBY_API];
+  }
+
+  async function probeEndpoint(api,authorization){
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),AUTH_REVALIDATE_TIMEOUT_MS);
+    try{
+      const res=await baseFetch(api,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':authorization},
+        body:JSON.stringify({action:'bootstrap'}),
+        signal:ctrl.signal,
+        cache:'no-store'
+      });
+      if(res.status===401)return {status:'invalid',httpStatus:401,api};
+      if(!res.ok)return {status:'uncertain',httpStatus:Number(res.status)||0,api};
+      try{
+        const data=await res.clone().json();
+        if(data?.offline===true||!data?.profile?.id)return {status:'uncertain',httpStatus:200,api};
+      }catch{return {status:'uncertain',httpStatus:200,api}}
+      return {status:'valid',httpStatus:200,api};
+    }catch(error){
+      return {status:'uncertain',httpStatus:0,outcome:error?.name==='AbortError'?'timeout':'unreachable',api};
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
   async function probeSession(authorization){
     if(!authorization)return {status:'uncertain'};
     if(revalidation?.authorization===authorization)return revalidation.promise;
 
     const promise=(async()=>{
-      const ctrl=new AbortController();
-      const timer=setTimeout(()=>ctrl.abort(),AUTH_REVALIDATE_TIMEOUT_MS);
-      try{
-        const res=await baseFetch(PRIMARY_API,{
-          method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':authorization},
-          body:JSON.stringify({action:'bootstrap'}),
-          signal:ctrl.signal,
-          cache:'no-store'
-        });
-        if(res.status===401)return {status:'invalid',httpStatus:401};
-        if(!res.ok)return {status:'uncertain',httpStatus:Number(res.status)||0};
-        try{
-          const data=await res.clone().json();
-          if(data?.offline===true||!data?.profile?.id)return {status:'uncertain',httpStatus:200};
-        }catch{return {status:'uncertain',httpStatus:200}}
-        return {status:'valid',httpStatus:200};
-      }catch(error){
-        return {status:'uncertain',httpStatus:0,outcome:error?.name==='AbortError'?'timeout':'unreachable'};
-      }finally{
-        clearTimeout(timer);
-      }
+      const candidates=issuerCandidates(authorization);
+      if(!candidates.length)return {status:'uncertain'};
+      const results=await Promise.all(candidates.map(api=>probeEndpoint(api,authorization)));
+      const valid=results.find(result=>result.status==='valid');
+      if(valid)return {status:'valid',httpStatus:200,issuer:valid.api===STANDBY_API?'standby':'primary'};
+      // A session is only proven invalid when every plausible issuer explicitly
+      // rejects it. One 401 plus a timeout/5xx is an availability disagreement,
+      // not proof that the user's credential should be destroyed locally.
+      if(results.length&&results.every(result=>result.status==='invalid'))return {status:'invalid',httpStatus:401};
+      const strongest=results.find(result=>result.httpStatus)||results[0]||{};
+      return {status:'uncertain',httpStatus:Number(strongest.httpStatus)||0,outcome:strongest.outcome||''};
     })();
 
     revalidation={authorization,promise};
@@ -140,10 +169,11 @@
   };
 
   window.NOLU_LOGIN_FAILOVER_BUDGET={
-    version:'20260913-login-auth-quorum3',
+    version:'20260915-login-auth-quorum4',
     overallLoginTimeoutMs:OVERALL_LOGIN_TIMEOUT_MS,
     authRevalidateTimeoutMs:AUTH_REVALIDATE_TIMEOUT_MS,
     deadlineField:DEADLINE_FIELD,
-    auth401Quorum:true
+    auth401Quorum:true,
+    issuerAware401Revalidation:true
   };
 })();
