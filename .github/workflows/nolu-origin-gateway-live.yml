@@ -1,6 +1,13 @@
 name: nolu origin gateway live
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pu-plan/origin-gateway.js'
+      - 'pu-plan/main.js'
+      - 'supabase/functions/nolu-browser-gateway-v1/index.ts'
+      - '.github/workflows/nolu-origin-gateway-live.yml'
   push:
     branches: [main]
     paths:
@@ -18,7 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Verify browser router contract
         shell: bash
