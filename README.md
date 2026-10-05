@@ -128,6 +128,22 @@ pu-plan/sw.js
 - account / profile
 - offline PWA path
 
+## Local preview
+
+Nolu 的前端主入口在 `pu-plan/`。只看靜態 PWA shell 時，可以從 repo 根目錄啟動簡單 HTTP server：
+
+```bash
+python3 -m http.server 8080
+```
+
+再開啟：
+
+```text
+http://localhost:8080/pu-plan/
+```
+
+這只能驗證靜態介面、Service Worker 與不依賴後端的流程。完整登入、Supabase、regional API、replication、Netlify Functions 等路徑仍需要對應環境設定與部署端點。
+
 ## What this repo does not claim
 
 - standby 不會自動反向覆蓋 primary。
