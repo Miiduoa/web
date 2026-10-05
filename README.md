@@ -1,5 +1,7 @@
 # Nolu｜Resilient Student Planner PWA
 
+[![durable sync](https://github.com/Miiduoa/web/actions/workflows/nolu-durable-sync-smoke.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-durable-sync-smoke.yml) [![secret scan](https://github.com/Miiduoa/web/actions/workflows/nolu-history-secret-scan.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-history-secret-scan.yml) [![checkout hygiene](https://github.com/Miiduoa/web/actions/workflows/nolu-checkout-hygiene.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-checkout-hygiene.yml)
+
 Nolu 是一個以學生課程、行程與社交協作為核心的 Progressive Web App。
 
 這個 repo 的核心不是畫面，而是它怎麼處理 **登入、離線、跨區故障、資料隔離與恢復**。
@@ -84,6 +86,7 @@ standby region
 
 目前自動化驗證涵蓋：
 
+- checkout / credential hygiene
 - auth / authorization boundary
 - guest privacy
 - hot standby
