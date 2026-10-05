@@ -80,13 +80,9 @@ standby region
 
 ## Verification surface
 
-這個 repo 目前有：
+這個 repo 不把「workflow 數量」當成品質指標。比較重要的是每個測試到底在驗證哪個 failure mode。
 
-- **82** 個 GitHub Actions workflow files
-- **19** 個 Supabase migration files
-- **25** 個 Supabase Edge Function files
-
-workflow 不只是 build/deploy，還包含：
+目前自動化驗證涵蓋：
 
 - auth / authorization boundary
 - guest privacy
