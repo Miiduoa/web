@@ -6,6 +6,40 @@ Nolu 是一個以學生課程、行程與社交協作為核心的 Progressive We
 
 這個 repo 的核心不是畫面，而是它怎麼處理 **登入、離線、跨區故障、資料隔離與恢復**。
 
+## 先看這三件事
+
+1. **主要 region 掛掉時，不直接清空資料或無限 reload。**
+2. **guest / account 切換時，會清掉不該跨身份保留的 cache 與 session。**
+3. **跨區資料不是「雙邊都能亂寫」；目前 core data 採 primary → standby 的單向 authority。**
+
+如果只想快速審查這個 repo，可先看：
+
+| 問題 | 證據 |
+|---|---|
+| standby 怎麼同步 | [NOLU_HOT_STANDBY](docs/NOLU_HOT_STANDBY.md) |
+| browser 失敗時怎麼恢復 | `pu-plan/resilience.js` |
+| guest 邊界怎麼清資料 | `pu-plan/guest-privacy.js` |
+| provider quorum / recovery | `pu-plan/provider-mesh.js` |
+| failure mode 是否有測 | [GitHub workflows](.github/workflows/) |
+
+### Failure path
+
+```mermaid
+flowchart LR
+  A[Browser / PWA] --> B{Primary healthy?}
+  B -->|yes| C[Primary API]
+  B -->|no| D[Resilience path]
+  D --> E[Standby candidate]
+  D --> F[Offline snapshot]
+  C --> G[Durable outbox]
+  G --> H[Signed replication]
+  H --> I[Standby region]
+```
+
+這張圖刻意只畫目前 repo 已有的 authority 與 recovery path，不把尚未完整納入 replication 的 social / feed / chat 畫進去。
+
+
+
 ## Architecture focus
 
 目前 production path 以 Supabase 為主要資料層，並設計 primary / standby 區域。
