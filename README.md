@@ -16,6 +16,7 @@ Nolu 是一個以學生課程、行程與社交協作為核心的 Progressive We
 
 | 問題 | 證據 |
 |---|---|
+| 第一次進 repo 從哪裡看 | [REVIEW_GUIDE](docs/REVIEW_GUIDE.md) |
 | standby 怎麼同步 | [NOLU_HOT_STANDBY](docs/NOLU_HOT_STANDBY.md) |
 | browser 失敗時怎麼恢復 | `pu-plan/resilience.js` |
 | guest 邊界怎麼清資料 | `pu-plan/guest-privacy.js` |
