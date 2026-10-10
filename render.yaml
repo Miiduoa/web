@@ -1,0 +1,29 @@
+# Deployment contract for Nolu only; do not attach another project's service.
+# Existing restored service: srv-db4uuc3bc2fs73dn8u6g (My Workspace).
+# This manifest is a reproducible configuration, not proof of a Blueprint sync.
+services:
+  - type: web
+    name: nolu-render-mirror
+    runtime: node
+    plan: free
+    region: singapore
+    repo: https://github.com/Miiduoa/web
+    branch: main
+    autoDeployTrigger: commit
+    buildCommand: cd services/nolu-render-mirror && npm install --omit=dev
+    startCommand: node services/nolu-render-mirror/server.mjs
+    # Intentionally retain Render's TCP liveness probe while storage is absent.
+    # /health is DATABASE READINESS: it must keep returning 503 when unconfigured.
+    # Do not point an HTTP deployment probe at /health until storage is ready.
+    # DATABASE_URL is bound securely in Render, never committed in this file.
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: NOLU_PROVIDER_ID
+        value: render
+      - key: NOLU_STORAGE_LABEL
+        value: render-postgres
+      - key: NOLU_JWKS_URL
+        value: https://miiduoa.github.io/web/nolu-mesh-jwks.json
