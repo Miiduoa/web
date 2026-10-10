@@ -1,0 +1,63 @@
+name: nolu Render storage isolation (isolated PostgreSQL)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/nolu-render-mirror/**'
+      - 'render.yaml'
+      - '.github/workflows/nolu-render-storage-isolation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/nolu-render-mirror/**'
+      - 'render.yaml'
+      - '.github/workflows/nolu-render-storage-isolation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nolu_ci
+          POSTGRES_PASSWORD: nolu_ci_fixture_only
+          POSTGRES_DB: nolu_mirror_ci
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nolu_ci -d nolu_mirror_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install mirror dependencies without lifecycle scripts
+        run: npm install --prefix services/nolu-render-mirror --omit=dev --ignore-scripts
+      - name: Verify authenticated ownership and security against real PostgreSQL
+        env:
+          # Disposable loopback-only database; never a production credential.
+          NOLU_TEST_DATABASE_URL: postgres://nolu_ci:nolu_ci_fixture_only@127.0.0.1:5432/nolu_mirror_ci?sslmode=disable
+        run: node --test services/nolu-render-mirror/test/isolation.test.mjs
+      - name: Record verification scope
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Render storage test scope'
+            echo 'This job starts the unchanged mirror server with a disposable local PostgreSQL database and ephemeral ES256 identities.'
+            echo 'It verifies authentication, CORS, per-user reads and writes, owner mismatch rejection, digest validation and revision conflicts.'
+            echo 'It does NOT certify that the public Render service has DATABASE_URL configured or that production storage is ready.'
+            echo 'The separate nolu Render mirror live smoke workflow remains required for the public endpoint.'
+          } >> "$GITHUB_STEP_SUMMARY"
