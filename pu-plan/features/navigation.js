@@ -3,24 +3,123 @@ import {renderFriends} from './friends.js';
 import {renderShare} from './share.js';
 import {renderSmartOverview} from './analysis.js';
 
+const titles={schedule:'我的課表',friends:'找人',ai:'安排',settings:'我的',community:'動態',admin:'網站管理'};
+let current='',restoring=false,scrollFrame=0;
+
+function remember(view,y=0,replace=false){
+  try{
+    const state={...history.state,noluView:view,noluScroll:y};
+    history[replace?'replaceState':'pushState'](state,'',location.href);
+  }catch{/* Navigation still works when browser history is unavailable. */}
+}
+
+// Community and administration mount later. Reconcile their shell state without
+// installing privileged UI or changing the server-side authorization boundary.
+function reconcile(){
+  const view=$('.view.on')?.id;
+  if(!view){if(current==='admin')changeView('schedule');return}
+  // A view may have been mounted while another screen was selected. Always
+  // reconcile focusability, even when the primary destination hasn't changed.
+  $$('.view').forEach(el=>{el.inert=el.id!==view;el.setAttribute('aria-hidden',String(el.id!==view))});
+  if(!Object.hasOwn(titles,view)||view===current)return;
+  const hadView=!!current;current=view;
+  $$('[data-view]').forEach(el=>el.classList.toggle('on',el.dataset.view===view));
+  $$('[data-community-open]').forEach(el=>el.classList.toggle('on',view==='community'));
+  $$('[data-admin-open],[data-admin-mobile]').forEach(el=>el.classList.toggle('on',view==='admin'));
+  if($('#title'))$('#title').textContent=titles[view];
+  for(const id of ['add','mobileAdd','importSchedule','shareTop']){
+    const el=$('#'+id);if(el){el.hidden=view!=='schedule';el.style.visibility=''}
+  }
+  if(!restoring){
+    remember(view,hadView?0:window.scrollY,!hadView);
+    if(hadView){
+      window.scrollTo({top:0,behavior:'instant'});
+      const title=$('#title');if(title){title.tabIndex=-1;title.focus({preventScroll:true})}
+    }
+  }
+  document.dispatchEvent(new CustomEvent('puplan:view-changed',{detail:{view}}));
+}
+
+function adminEntry(){
+  // Only reuse an entry already supplied by the admin module after sign-in.
+  // History and arbitrary view names must never call install() or create one.
+  if(!window.PUPLAN_CLOUD?.isSignedIn?.()||!$('#admin'))return null;
+  return $('[data-admin-open],[data-admin-mobile],#openAdminPanel');
+}
+
 export function changeView(view){
-  $$('.view').forEach(x=>x.classList.toggle('on',x.id===view));
-  $$('[data-view]').forEach(x=>x.classList.toggle('on',x.dataset.view===view));
-  $$('[data-community-open]').forEach(x=>x.classList.remove('on'));
-  const titles={schedule:'我的課表',friends:'找人',ai:'安排',settings:'我的'};
-  if($('#title'))$('#title').textContent=titles[view]||'';
-  const schedule=view==='schedule';
-  if($('#add')){$('#add').hidden=!schedule;$('#add').style.visibility=''}
-  if($('#mobileAdd'))$('#mobileAdd').hidden=!schedule;
-  if($('#importSchedule'))$('#importSchedule').hidden=!schedule;
-  if($('#shareTop'))$('#shareTop').hidden=!schedule;
+  if(!Object.hasOwn(titles,view))return false;
+  if(view==='admin'){
+    const button=adminEntry();if(!button)return false;
+    button.click();reconcile();return $('.view.on')?.id==='admin';
+  }
+  if(view==='community'){
+    const button=$('[data-community-open]');if(!button)return false;
+    button.click();reconcile();return true;
+  }
+  if(!$('#'+view)?.classList.contains('view'))return false;
+  if($('.view.on')?.id===view){reconcile();return true}
+  $$('.view').forEach(el=>el.classList.toggle('on',el.id===view));
   if(view==='friends')renderFriends();
   if(view==='settings')renderShare();
   if(view==='ai')renderSmartOverview();
+  reconcile();return true;
+}
+
+function restore(state){
+  const dialog=$('dialog[open]');
+  if(dialog){
+    if(!dialog.dispatchEvent(new Event('cancel',{cancelable:true}))){remember(current,window.scrollY);return}
+    dialog.close();
+  }
+  const view=Object.hasOwn(titles,state?.noluView)?state.noluView:'schedule';
+  restoring=true;
+  try{
+    if(view==='admin'){
+      if(!changeView('admin')){changeView('schedule');remember('schedule',0,true)}
+    }else if(view==='community'){
+      $('[data-community-open]')?.click();reconcile();
+    }else{
+      // Retain the existing cloud/social navigation listeners.
+      const button=$(`[data-view="${view}"]`);
+      if(button)button.click();else changeView('schedule');
+    }
+    const y=Number.isFinite(state?.noluScroll)?Math.max(0,state.noluScroll):0;
+    window.scrollTo({top:y,behavior:'instant'});
+  }finally{restoring=false}
 }
 
 export function initNavigation(){
+  const initial=history.state;
   $$('[data-view]').forEach(b=>b.onclick=()=>changeView(b.dataset.view));
   $$('[data-close]').forEach(b=>b.onclick=()=>$('#'+b.dataset.close)?.close());
   changeView('schedule');
+  const main=$('.main');
+  if(main)new MutationObserver(reconcile).observe(main,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+  window.addEventListener('popstate',event=>restore(event.state));
+  window.addEventListener('scroll',()=>{
+    if(restoring||scrollFrame)return;
+    scrollFrame=requestAnimationFrame(()=>{scrollFrame=0;if(current&&!restoring)remember(current,window.scrollY,true)});
+  },{passive:true});
+  if('scrollRestoration'in history)history.scrollRestoration='manual';
+  // Selecting the current primary tab must not reset a half-written feed.
+  document.addEventListener('click',event=>{
+    const button=event.target.closest?.('[data-view],[data-community-open]');
+    if(!button||!button.closest('.nav,.bottom'))return;
+    const view=button.dataset.view||(button.hasAttribute('data-community-open')?'community':'');
+    if(view===current&&!restoring){event.preventDefault();event.stopImmediatePropagation()}
+  },true);
+  if(initial?.noluView&&initial.noluView!=='schedule'){
+    const attempt=()=>{
+      if(!Object.hasOwn(titles,initial.noluView))return true;
+      if(initial.noluView==='community'&&!$('[data-community-open]'))return false;
+      if(initial.noluView==='admin'&&!adminEntry())return false;
+      restore(initial);remember(current,window.scrollY,true);return true;
+    };
+    if(!attempt()){
+      const observer=new MutationObserver(()=>{if(attempt())observer.disconnect()});
+      observer.observe(main,{childList:true,subtree:true});
+      setTimeout(()=>observer.disconnect(),15000);
+    }
+  }
 }

@@ -1,5 +1,6 @@
 import {$,$$,DAYS,PERIODS,courses,scheduleMeta,write,uid,esc,time,toast,getSelectedDay,setSelectedDay} from '../core/state.js';
 import {nextClass,dateLabel} from '../core/planning.js';
+import {scheduleGroups} from '../core/schedule-layout.js';
 
 function renderStats(){
   const all=courses(),scheduled=all.filter(c=>c.day>=1&&c.day<=5),now=new Date(),today=scheduled.filter(c=>c.day===now.getDay()),occupied=new Set();
@@ -21,9 +22,58 @@ function bindCourses(root){
   });
 }
 
-function renderTabs(){const e=$('#tabs');if(!e)return;e.innerHTML=DAYS.map((d,i)=>`<button class="${getSelectedDay()===i+1?'on':''}" data-day="${i+1}">${d[1]}</button>`).join('');e.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{setSelectedDay(+b.dataset.day);renderTabs();renderMobile();renderHumanWeek()})}
+function renderTabs(){
+  const root=$('#tabs');if(!root)return;
+  root.setAttribute('role','group');root.setAttribute('aria-label','選擇星期');
+  root.innerHTML=DAYS.map((d,i)=>`<button type="button" class="${getSelectedDay()===i+1?'on':''}" data-day="${i+1}" aria-pressed="${getSelectedDay()===i+1}">${d[1]}</button>`).join('');
+  const select=day=>{setSelectedDay(day);renderTabs();renderMobile();renderHumanWeek();$(`#tabs [data-day="${day}"]`)?.focus({preventScroll:true})};
+  root.querySelectorAll('[data-day]').forEach(button=>{
+    button.onclick=()=>select(+button.dataset.day);
+    button.onkeydown=event=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();
+      const next=event.key==='Home'?1:event.key==='End'?5:((+button.dataset.day-1+(event.key==='ArrowRight'?1:4))%5)+1;
+      select(next);
+    };
+  });
+}
 
-export function renderGrid(target='#grid',data=courses(),editable=true){const root=$(target);if(!root)return;let h='<div class="cell head" style="grid-column:1;grid-row:1"><b>節次</b><small>時間</small></div>';DAYS.forEach((d,i)=>h+=`<div class="cell head" style="grid-column:${i+2};grid-row:1"><b>${d[1]}</b><small>本週</small></div>`);PERIODS.forEach((p,i)=>{h+=`<div class="cell time" style="grid-column:1;grid-row:${i+2}"><b>${i+1}</b><small aria-label="${p[0]} 至 ${p[1]}"><span>${p[0]}</span><span>– ${p[1]}</span></small></div>`;DAYS.forEach((_,j)=>h+='<div class="cell" style="grid-column:'+(j+2)+';grid-row:'+(i+2)+'"></div>')});data.filter(c=>c.day>=1&&c.day<=5).forEach(c=>h+=`<div class="course-slot" style="grid-column:${c.day+1};grid-row:${c.start+1}/span ${c.end-c.start+1}"><article class="course ${c.color||'violet'}" data-course="${esc(c.id)}"><b>${esc(c.name)}</b><small>${esc(c.teacher||'未填老師')}<br>${esc(c.room||'未填教室')}<br>${time(c)}</small></article></div>`);root.innerHTML=h;if(editable)bindCourses(root)}
+function showConflicts(id){
+  const groups=scheduleGroups(courses()).filter(g=>g.courses.length>1&&(!id||g.courses[0].id===id));
+  if(!groups.length)return toast('課表已更新，目前沒有這組重疊課程。');
+  let dialog=$('#scheduleConflictDialog');
+  if(!dialog){dialog=document.createElement('dialog');dialog.id='scheduleConflictDialog';dialog.setAttribute('aria-labelledby','conflictTitle');document.body.append(dialog)}
+  dialog.innerHTML=`<div class="modal-head"><h2 id="conflictTitle">確認重疊的課程</h2><button type="button" class="x" aria-label="關閉">×</button></div><p class="editor-hint">課程都已保留。點選其中一門，調整星期或節次。</p>${groups.map(g=>`<section class="conflict-group"><h3>${DAYS[g.day-1][1]}・第 ${g.start}–${g.end} 節</h3>${g.courses.map(c=>`<button type="button" class="conflict-course" data-edit-conflict="${esc(c.id)}"><b>${esc(c.name)}</b><span>${time(c)}${c.room?' · '+esc(c.room):''}</span><small>編輯課程 →</small></button>`).join('')}</section>`).join('')}`;
+  dialog.querySelector('.x').onclick=()=>dialog.close();
+  dialog.querySelectorAll('[data-edit-conflict]').forEach(button=>button.onclick=()=>{dialog.close();openCourse(button.dataset.editConflict)});
+  dialog.showModal();
+}
+
+export function renderGrid(target='#grid',data=courses(),editable=true){
+  const root=$(target);if(!root)return;
+  let html='<div class="cell head" style="grid-column:1;grid-row:1"><b>節次</b><small>時間</small></div>';
+  DAYS.forEach((d,i)=>html+=`<div class="cell head" style="grid-column:${i+2};grid-row:1"><b>${d[1]}</b><small>每週課表</small></div>`);
+  PERIODS.forEach((p,i)=>{
+    html+=`<div class="cell time" style="grid-column:1;grid-row:${i+2}"><b>${i+1}</b><small aria-label="${p[0]} 至 ${p[1]}"><span>${p[0]}</span><span>– ${p[1]}</span></small></div>`;
+    DAYS.forEach((_,j)=>html+=`<div class="cell" style="grid-column:${j+2};grid-row:${i+2}"></div>`);
+  });
+  for(const group of scheduleGroups(data)){
+    const {day,start,end,courses:items}=group;
+    const content=items.length===1||!editable?items.map(c=>`<article class="course ${c.color||'violet'}" data-course="${esc(c.id)}"><b>${esc(c.name)}</b><small>${esc(c.teacher||'未填老師')}<br>${esc(c.room||'未填教室')}<br>${time(c)}</small></article>`).join(''):
+      `<button type="button" class="grid-conflict" data-conflict="${esc(items[0].id)}" aria-label="${DAYS[day-1][1]}，${items.length} 門課重疊，查看並調整"><b>${items.length} 門課重疊</b><span>${items.map(c=>esc(c.name)).join(' / ')}</span><small>查看與調整 →</small></button>`;
+    html+=`<div class="course-slot${items.length>1?' has-conflict':''}" style="grid-column:${day+1};grid-row:${start+1}/span ${end-start+1}">${content}</div>`;
+  }
+  root.innerHTML=html;
+  if(editable){bindCourses(root);root.querySelectorAll('[data-conflict]').forEach(b=>b.onclick=()=>showConflicts(b.dataset.conflict))}
+}
+
+function renderWarnings(){
+  const box=$('#scheduleWarnings');if(!box)return;
+  const count=scheduleGroups(courses()).filter(g=>g.courses.length>1).length;
+  box.hidden=!count;
+  box.innerHTML=count?`<span>有 ${count} 組上課時間重疊，所有課程都已保留。</span><button type="button" class="btn">檢查衝堂</button>`:'';
+  if(count)box.querySelector('button').onclick=()=>showConflicts();
+}
 
 function renderHumanWeek(){const root=$('#humanWeek');if(!root)return;const all=courses().filter(c=>c.day>=1&&c.day<=5),today=new Date().getDay(),selected=getSelectedDay();
 if(!all.length){
@@ -47,7 +97,7 @@ function syncScheduleVisibility(){
   const human=$('#humanWeek'),classicRoot=$('#classicSchedule'),tabs=$('#tabs'),table=$('.table-wrap'),mobile=$('#mobile');
   if(human)human.style.display=classic?'none':'grid';
   if(classicRoot)classicRoot.style.display=classic?'block':'none';
-  if(tabs)tabs.style.display=(dayMode||(classic&&window.innerWidth<=680))?'flex':'none';
+  if(tabs)tabs.style.display=dayMode?'flex':'none';
   if(classic){
     if(table)table.style.display=dayMode?'none':'block';
     if(mobile)mobile.style.display=dayMode?'grid':'none';
@@ -61,7 +111,7 @@ export function applyScheduleMode(mode=localStorage.getItem('puplan_schedule_mod
 
 export function applyPresentation(mode=localStorage.getItem('puplan_schedule_presentation')||'human'){const next=mode==='classic'?'classic':'human';document.body.classList.toggle('schedule-presentation-classic',next==='classic');document.body.classList.toggle('schedule-presentation-human',next==='human');$$('[data-presentation]').forEach(b=>{b.classList.toggle('on',b.dataset.presentation===next);b.setAttribute('aria-pressed',String(b.dataset.presentation===next))});localStorage.setItem('puplan_schedule_presentation',next);syncScheduleVisibility()}
 
-export function renderSchedule(){renderStats();renderTabs();renderGrid();renderHumanWeek();renderMobile();clearLegacyMobileWeek();renderFloatingCourses();renderScheduleMeta();applyScheduleMode();applyPresentation();syncScheduleVisibility()}
+export function renderSchedule(){renderStats();renderTabs();renderGrid();renderHumanWeek();renderMobile();clearLegacyMobileWeek();renderWarnings();checkUndo();renderFloatingCourses();renderScheduleMeta();applyScheduleMode();applyPresentation();syncScheduleVisibility()}
 
 function clearCourseError(){const el=$('#courseError');el.hidden=true;el.textContent='';$('#courseName').removeAttribute('aria-invalid')}
 function courseError(message,field){const el=$('#courseError');el.textContent=message;el.hidden=false;if(field){field.setAttribute('aria-invalid','true');field.focus()}return false}
@@ -75,7 +125,7 @@ function persistCourses(next){
   document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:courses()}));return true;
 }
 
-export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;$('#courseDialog').showModal()}
+export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;if(id&&!c)return toast('這門課已被移除或更新，請重新選擇。');$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;$('#courseDialog').showModal()}
 
 export function initSchedule(){
   $('#day').innerHTML='<option value="0">未排定 / 依公告</option>'+DAYS.map((d,i)=>`<option value="${i+1}">${d[1]}</option>`).join('');
@@ -99,13 +149,46 @@ export function initSchedule(){
     $('#courseDialog').close();toast(`${index<0?'課程已新增':'課程已更新'}，已儲存在此裝置`);
   };
   $('#deleteCourse').onclick=()=>{
-    const id=$('#courseId').value,c=courses().find(x=>x.id===id);
-    if(c&&confirm(`刪除「${c.name}」？`)&&persistCourses(courses().filter(x=>x.id!==id))){$('#courseDialog').close();toast('課程已刪除')}
+    const before=courses(),id=$('#courseId').value,course=before.find(x=>x.id===id),scope=undoScope();
+    if(!course||!confirm(`刪除「${course.name}」？`))return;
+    const after=before.filter(x=>x.id!==id);
+    if(!persistCourses(after))return;
+    $('#courseDialog').close();offerUndo(before,after,scope,course.name);
   };
+  $('#jumpToday')?.addEventListener('click',()=>{
+    const day=new Date().getDay();setSelectedDay(day>=1&&day<=5?day:1);
+    applyScheduleMode('day');renderTabs();renderHumanWeek();renderMobile();
+    $('#tabs .on')?.focus({preventScroll:true});
+  });
+  if($('#jumpToday'))$('#jumpToday').textContent=[0,6].includes(new Date().getDay())?'看週一':'看今天';
   document.addEventListener('puplan:courses-changed',renderSchedule);
   $$('[data-schedule-mode]').forEach(b=>b.onclick=()=>applyScheduleMode(b.dataset.scheduleMode));
   $$('[data-presentation]').forEach(b=>b.onclick=()=>applyPresentation(b.dataset.presentation));
   $('#add').onclick=$('#mobileAdd').onclick=()=>openCourse();
   $('#importSchedule')?.addEventListener('click',()=>{$('#importDialog')?.showModal();document.dispatchEvent(new CustomEvent('puplan:import-opened'))});
   window.addEventListener('resize',syncScheduleVisibility,{passive:true});
+}
+
+// Undo only the exact deletion we just made. Never replace a newer remote edit,
+// another semester or another account with an old in-memory schedule.
+let undoState=null,undoTimer=0;
+function undoScope(){return JSON.stringify([localStorage.getItem('puplan_course_owner'),localStorage.getItem('puplan_guest'),scheduleMeta()])}
+function clearUndo(){undoState=null;clearTimeout(undoTimer);if($('#courseUndo'))$('#courseUndo').hidden=true}
+function checkUndo(){if(undoState&&(Date.now()>undoState.until||undoScope()!==undoState.scope||JSON.stringify(courses())!==undoState.after))clearUndo()}
+function offerUndo(before,after,scope,name){
+  clearUndo();
+  if(undoScope()!==scope||JSON.stringify(courses())!==JSON.stringify(after))return toast('課程已刪除，課表同時有其他更新，請以最新內容為準。');
+  undoState={before,after:JSON.stringify(after),scope,until:Date.now()+30000};
+  let box=$('#courseUndo');
+  if(!box){box=document.createElement('aside');box.id='courseUndo';box.className='course-undo';box.setAttribute('aria-label','復原刪除');$('.main').append(box)}
+  box.innerHTML='<div role="status"><b></b><small>30 秒內可復原；離開或重新整理後不保留。</small></div><button type="button" class="btn" id="undoDelete">復原刪除</button><button type="button" class="x" aria-label="關閉復原提示">×</button>';
+  box.querySelector('b').textContent=`已刪除「${name}」`;box.hidden=false;
+  box.querySelector('.x').onclick=clearUndo;
+  $('#undoDelete').onclick=()=>{
+    const pending=undoState;checkUndo();
+    if(!pending||!undoState)return toast('課表已有變更或超過復原時間，沒有覆蓋目前資料。');
+    try{write('puplan_courses',pending.before)}catch{box.querySelector('small').textContent='儲存空間不足，尚未復原。請勿清除網站資料，可再試一次。';return}
+    clearUndo();document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:courses()}));toast('課程已復原');
+  };
+  undoTimer=setTimeout(clearUndo,30000);$('#undoDelete').focus({preventScroll:true});
 }
