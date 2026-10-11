@@ -56,7 +56,7 @@ with sync_playwright() as p:
         page.locator('#day').select_option('1')
         page.locator('#start').select_option('8')
         assert page.locator('#end').input_value()=='8'
-        assert page.locator('#end option[value="7"]').is_disabled()
+        assert page.locator('#end option[value="7"]').evaluate('(option) => option.disabled')
         page.locator('#start').select_option('1')
         page.locator('#end').select_option('2')
         page.locator('#teacher').fill('測試老師')

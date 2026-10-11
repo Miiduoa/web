@@ -35,10 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check pu-plan/social-auth-guard.js
-          grep -q "social-auth-guard.js?v=20260914-social-gateway17" pu-plan/index.html
           grep -q "'./social-auth-guard.js'" pu-plan/sw.js
-          grep -q "nolu-shell-20260914-social-gateway17" pu-plan/sw.js
-          grep -q "SHELL_GENERATION='20260914-social-gateway17'" pu-plan/pwa.js
           grep -q "SOCIAL_AUTH_UNCERTAIN" pu-plan/social-auth-guard.js
           grep -q "session-preserved" pu-plan/social-auth-guard.js
           grep -q "recognizesBrowserGateway:true" pu-plan/social-auth-guard.js
@@ -47,6 +44,12 @@ jobs:
           node <<'NODE'
           const fs=require('fs'),assert=require('assert');
           const html=fs.readFileSync('pu-plan/index.html','utf8');
+          const sw=fs.readFileSync('pu-plan/sw.js','utf8');
+          const pwa=fs.readFileSync('pu-plan/pwa.js','utf8');
+          const generation=sw.match(/const CACHE='nolu-shell-([^']+)'/)?.[1];
+          assert(generation,'service worker must declare its release generation');
+          assert(html.includes(`social-auth-guard.js?v=${generation}`),'social guard must match the active shell generation');
+          assert(pwa.includes(`SHELL_GENERATION='${generation}'`),'PWA and worker generations must agree');
           assert(html.indexOf('social-auth-guard.js')<html.indexOf('main.js'),'social auth guard must load before main');
           NODE
 
