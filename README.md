@@ -74,3 +74,9 @@ Browser / PWA → regional session → primary API
 - 各 provider 的 authority 不同；多個 provider 不代表可以互相任意覆寫資料。
 - Browser fallback 不能取代資料庫備份。
 - 本機靜態預覽不包含完整登入及跨區服務，workflow 也只驗證各自定義的情境。
+
+## 提交與檢查
+
+文件與程式變更皆透過 pull request 合併至 `main`。主分支的 [提交來源檢查](.github/workflows/nolu-main-push-provenance.yml) 會核對該次提交是否對應已合併的 PR，保留可追溯的審查紀錄。
+
+查看驗證結果時，請對照 PR 的 head commit 與合併後的 commit；分支檢查、主分支來源檢查和各功能的 smoke tests 分別回答不同問題。文件修改未觸發某項功能測試時，不代表該功能已在這次提交重新驗證。
