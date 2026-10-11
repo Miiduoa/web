@@ -13,3 +13,11 @@
   .ai-messages{min-width:0;padding:14px}
   .bubble{max-width:88%;font-size:13px}
 }
+
+.planner-fields{display:grid;gap:14px;margin-top:16px}
+.planner-fields>label:not(.planner-check){display:grid;gap:7px;font-size:13px;font-weight:650}
+.planner-check{display:flex;align-items:center;gap:8px;font-size:13px;line-height:1.5;min-height:36px}
+.planner-check input{width:18px;height:18px;flex:none;accent-color:var(--ink)}
+.ai-note,.smart-result{font-size:13px;line-height:1.7}.ai-head small{font-size:12px}.quick{min-height:44px}
+.ai-side .panel h3{margin:0 0 12px}.ai-side .panel{border-radius:20px}.ai-compose{position:static}
+@media(max-width:680px){.ai-chat{min-height:400px}.ai-messages{min-height:240px;max-height:450px}.bubble{font-size:14px}.ai-layout{gap:16px}.ai-side{grid-row:1}.ai-side .panel:nth-child(2),.ai-side .panel:nth-child(3){display:none}}

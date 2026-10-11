@@ -1,180 +1,116 @@
-const $=s=>document.querySelector(s);
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+import {availableWindows, allocatePlan, clock, dateLabel, nextClass, parseDuration, resolveDay} from '../core/planning.js';
 
-async function waitForApp(){
-  for(let i=0;i<100;i++){
-    if(window.PUPLAN_APP&&$('#aiInput')&&$('#aiSend'))return window.PUPLAN_APP;
-    await sleep(40);
-  }
-  throw new Error('安排功能暫時無法開啟');
+const app = window.PUPLAN_APP;
+if (!app) throw new Error('安排功能暫時無法開啟');
+const $ = s => document.querySelector(s);
+const memory = {day: null, courseId: '', plan: null};
+const history = [];
+const courses = () => app.courses().filter(c => c.day >= 1 && c.day <= 5);
+const dayName = d => app.DAYS[d - 1]?.[1] || '';
+const label = b => `${dateLabel(b.date)} ${clock(b.start)}–${clock(b.end)}`;
+const clean = s => String(s || '').replace(/[\s，,。.!！?？：:「」『』()（）]/g, '').toLowerCase();
+
+function resolveCourse(text) {
+  const q = clean(text);
+  let found = courses().find(c => clean(c.name).length >= 2 && q.includes(clean(c.name)));
+  if (!found && /那堂|那門|這堂|這門|剛剛那|它/.test(text)) found = courses().find(c => c.id === memory.courseId);
+  if (found) memory.courseId = found.id;
+  return found;
 }
 
-const app=await waitForApp();
-const DAYS=app.DAYS;
-const PERIODS=app.PERIODS;
-const memory={day:null,courseId:'',plan:null,advanced:false};
-const history=[];
-
-const dayName=d=>DAYS[d-1]?.[1]||'';
-const startTime=p=>PERIODS[p-1]?.[0]||'';
-const endTime=p=>PERIODS[p-1]?.[1]||'';
-const toMin=t=>{const [h,m]=String(t||'0:0').split(':').map(Number);return h*60+m};
-const clean=s=>String(s||'').replace(/[\s，,。.!！?？：:「」『』()（）]/g,'').toLowerCase();
-const courses=()=>app.courses().filter(c=>Number(c.day)>=1&&Number(c.day)<=5&&Number(c.start)>=1&&Number(c.end)>=Number(c.start));
-
-function resolveDay(text){
-  const q=String(text);
-  const m=q.match(/(?:星期|週|禮拜)\s*([一二三四五1-5])/);
-  if(m){const map={一:1,二:2,三:3,四:4,五:5};return map[m[1]]||Number(m[1])}
-  const today=new Date().getDay();
-  if(q.includes('今天')&&today>=1&&today<=5)return today;
-  if(q.includes('明天')&&today+1>=1&&today+1<=5)return today+1;
-  if(/那天|那一天|那星期|那週|那呢/.test(q))return memory.day;
-  return null;
+function plan(text) {
+  if (!courses().length) return '先新增或匯入課程，才能依照課表找空檔。沒有排課資料，不代表整天都有空。';
+  const requested = resolveDay(text, new Date(), memory.day);
+  if (requested.error) return requested.error;
+  const duration = parseDuration(text), course = resolveCourse(text);
+  const subject = course?.name || memory.plan?.subject || '讀書／作業';
+  const options = {...requested, thisWeek: /這週|本週/.test(text)};
+  if (/晚上|傍晚/.test(text)) options.earliest = 18 * 60;
+  if (/不要太晚|別太晚|早點/.test(text)) options.latest = 20 * 60 + 45;
+  const split = /分段|拆開|分兩/.test(text);
+  const {picks, remaining} = allocatePlan(availableWindows(courses(), options), duration, split);
+  memory.plan = {subject, duration}; memory.day = requested.day || memory.day;
+  if (!picks.length) return `找不到符合條件、連續 ${duration} 分鐘的時段。可以改用「分段安排」，或換一天。`;
+  const lines = picks.map((b, i) => `${i + 1}. ${label(b)}｜${subject}，${b.end - b.start} 分鐘`);
+  return `建議時段（共 ${duration - remaining} 分鐘）：\n${lines.join('\n')}${remaining ? `\n還差 ${remaining} 分鐘，尚未排滿。` : ''}\n這是依目前課表計算的建議，未建立行程，也未發出邀約；請另外確認私人行程與學校公告。`;
 }
 
-function resolveCourse(text){
-  const q=clean(text),all=courses();
-  let found=all.find(c=>{const n=clean(c.name);return n.length>=2&&q.includes(n)});
-  if(!found)found=all.find(c=>{const n=clean(c.name);return n.length>=4&&q.includes(n.slice(0,4))});
-  if(!found&&/那堂|那門|這堂|這門|剛剛那|它/.test(text)&&memory.courseId)found=all.find(c=>c.id===memory.courseId);
-  if(found){memory.courseId=found.id;memory.day=found.day}
-  return found||null;
-}
-
-function nextClass(){
-  const now=new Date(),day=now.getDay(),minute=now.getHours()*60+now.getMinutes();
-  if(day>=1&&day<=5){
-    for(const c of courses().filter(x=>x.day===day).sort((a,b)=>a.start-b.start)){
-      const s=toMin(startTime(c.start)),e=toMin(endTime(c.end));
-      if(minute>=s&&minute<e)return{kind:'now',course:c,minutes:e-minute};
-      if(minute<s)return{kind:'next',course:c,minutes:s-minute};
+function reply(text) {
+  const q = String(text || '').trim();
+  if (!q) return '';
+  if (q.length > 500) return '請把問題縮短到 500 字以內。';
+  try {
+    if (memory.plan && /^(?:改到|改成|換到|分兩段|分段|不要太晚)/.test(q)) return plan(`${memory.plan.subject} ${q}${/小時|分鐘|節/.test(q)?'':` ${memory.plan.duration}分鐘`}`);
+    const requested = resolveDay(q, new Date(), memory.day), course = resolveCourse(q);
+    if (requested.error) return requested.error;
+    const day = requested.day;
+    if (day) memory.day = day;
+    if (/下一堂|下一節|等等上|現在上|正在上/.test(q)) {
+      const n = nextClass(courses());
+      if (!n) return '目前沒有可查詢的已排定課程。請先新增或匯入課表。';
+      memory.courseId = n.course.id; memory.day = n.course.day;
+      return n.kind === 'now'
+        ? `現在是「${n.course.name}」，約 ${n.minutes} 分鐘後下課${n.course.room ? `，在 ${n.course.room}` : ''}。`
+        : `下一堂是 ${dateLabel(n.date)} 的「${n.course.name}」，${app.PERIODS[n.course.start - 1][0]} 開始${n.course.room ? `，在 ${n.course.room}` : ''}。`;
     }
-  }
-  for(let plus=1;plus<=7;plus++){
-    const d=((day+plus-1)%7)+1;if(d>5)continue;
-    const c=courses().filter(x=>x.day===d).sort((a,b)=>a.start-b.start)[0];
-    if(c)return{kind:'future',course:c};
-  }
-  return null;
-}
-
-function freeBlocks(day=null,minPeriods=1){
-  const out=[];
-  for(let d=day||1;d<=(day||5);d++){
-    const busy=new Set();
-    courses().filter(c=>c.day===d).forEach(c=>{for(let p=c.start;p<=c.end;p++)busy.add(p)});
-    let start=null;
-    for(let p=1;p<=13;p++){
-      if(!busy.has(p)&&start===null)start=p;
-      if((busy.has(p)||p===13)&&start!==null){
-        const end=busy.has(p)?p-1:p;
-        if(end-start+1>=minPeriods)out.push({day:d,start,end});
-        start=null;
-      }
+    if (course && /老師|誰教|教授|授課/.test(q)) return course.teacher ? `「${course.name}」的老師是 ${course.teacher}。` : `「${course.name}」尚未填寫授課老師。`;
+    if (course && /教室|哪裡|在哪|地點/.test(q)) return course.room ? `「${course.name}」在 ${course.room}。` : `「${course.name}」尚未填寫教室。`;
+    if (course && /幾點|時間|第幾節|什麼時候/.test(q)) return `「${course.name}」是${dayName(course.day)}，${app.time(course)}。`;
+    if (day && /有什麼課|有哪些課|上什麼|幾堂|課表|課程|那呢|呢/.test(q)) {
+      const list = courses().filter(c => c.day === day).sort((a, b) => a.start - b.start);
+      return list.length ? `${dayName(day)}有 ${list.length} 門課：\n${list.map((c, i) => `${i + 1}. ${app.time(c)}｜${c.name}${c.room ? `｜${c.room}` : ''}`).join('\n')}` : `目前課表中，${dayName(day)}沒有排課。`;
     }
-  }
-  return out;
-}
-
-function commonFree(friend,day=null){
-  if(!friend)return[];
-  const mine=courses(),theirs=Array.isArray(friend.courses)?friend.courses:[];
-  const out=[];
-  for(let d=day||1;d<=(day||5);d++){
-    const busy=new Set();
-    [...mine,...theirs].filter(c=>Number(c.day)===d).forEach(c=>{for(let p=Number(c.start);p<=Number(c.end);p++)busy.add(p)});
-    let start=null;
-    for(let p=1;p<=13;p++){
-      if(!busy.has(p)&&start===null)start=p;
-      if((busy.has(p)||p===13)&&start!==null){const end=busy.has(p)?p-1:p;if(end-start+1>=2)out.push({day:d,start,end});start=null}
+    if (/最忙|最累|哪天.*忙|哪天.*累/.test(q)) {
+      if (!courses().length) return '課表還是空的，暫時無法比較哪一天最忙。';
+      const load = app.DAYS.map((_, i) => {
+        const list = courses().filter(c => c.day === i + 1), slots = new Set();
+        list.forEach(c => {for (let p = c.start; p <= c.end; p++) slots.add(p)});
+        return {day: i + 1, count: list.length, periods: slots.size};
+      }).sort((a, b) => b.periods - a.periods || b.count - a.count)[0];
+      return `依目前課表，${dayName(load.day)}最滿：${load.count} 門課，占用 ${load.periods} 節（衝堂不重複計算）。`;
     }
-  }
-  return out;
+    if (/共同空堂|共同空檔|跟.*(?:好友|朋友).*空|一起有空/.test(q)) {
+      const selected = app.getSelectedFriend?.();
+      const friend = typeof selected === 'string' ? app.friends().find(f => f.id === selected) : selected;
+      if (!friend) return '先到「找人」選一位朋友，再比較雙方課表。';
+      if (!courses().length || !friend.courses?.length) return '目前有一方沒有排課資料，不能把缺少資料當成共同有空。';
+      const windows = availableWindows([...courses(), ...friend.courses], requested).filter(b => b.end - b.start >= 100).slice(0, 5);
+      return windows.length ? `你和 ${friend.name} 的共同課表空檔：\n${windows.map((b, i) => `${i + 1}. ${label(b)}`).join('\n')}\n僅依雙方目前的課表判斷，尚未發出邀約。` : '未來七天沒有找到 100 分鐘以上的共同課表空檔。';
+    }
+    if (/安排|規劃|(?:\d+|兩|一|二|三|半)\s*(?:個)?\s*(?:小時|分鐘|節)/.test(q)) return plan(q);
+    if (/空堂|空檔|有空|自由時間/.test(q)) {
+      if (!courses().length) return '請先新增或匯入課表，才能判斷課表空檔。';
+      const windows = availableWindows(courses(), {...requested, thisWeek: /這週|本週/.test(q)}).filter(b => b.end - b.start >= 100).slice(0, 5);
+      return windows.length ? `接下來的課表空檔：\n${windows.map((b, i) => `${i + 1}. ${label(b)}`).join('\n')}\n未包含私人行程，請自行確認。` : '指定範圍內沒有找到 100 分鐘以上的課表空檔。';
+    }
+    return '目前支援查課程、找空堂及安排讀書時段。可以問「星期三有什麼課」或「晚上安排兩小時讀書，不要太晚」。';
+  } catch (error) { return error.message || '這次條件無法計算，請改用明確的星期與分鐘數。'; }
 }
 
-function parseDuration(text){
-  let m=String(text).match(/(\d+(?:\.\d+)?)\s*小時/);if(m)return Math.max(30,Math.round(Number(m[1])*60));
-  m=String(text).match(/(\d+)\s*分鐘/);if(m)return Math.max(20,Number(m[1]));
-  m=String(text).match(/(\d+)\s*節/);if(m)return Math.max(1,Number(m[1]))*50;
-  return 100;
+function bubble(role, text) {
+  const box = $('#aiMessages');
+  const div = document.createElement('div'); div.className = `bubble ${role}`; div.textContent = text;
+  box.append(div);
+  while (box.children.length > 60) box.firstElementChild.remove();
+  box.scrollTop = box.scrollHeight;
 }
-
-function blockMinutes(b){return Math.max(50,toMin(endTime(b.end))-toMin(startTime(b.start)))}
-function blockLabel(b){return`${dayName(b.day)} ${startTime(b.start)}–${endTime(b.end)}`}
-
-function plan(text){
-  const day=resolveDay(text),duration=parseDuration(text),course=resolveCourse(text);
-  const subject=course?.name||((String(text).match(/(?:準備|複習|讀|寫|做)\s*([^，。,.！？!?]{2,16})/)||[])[1]||memory.plan?.subject||'要完成的事').trim();
-  const evening=/晚上|傍晚/.test(text),avoidLate=/不要太晚|別太晚|早點/.test(text),split=/分段|拆開|分兩/.test(text);
-  let blocks=freeBlocks(day,1);
-  if(evening)blocks=blocks.filter(b=>toMin(startTime(b.start))>=17*60);
-  if(avoidLate)blocks=blocks.filter(b=>toMin(endTime(b.end))<=20*60+45);
-  blocks.sort((a,b)=>split?(a.day-b.day||a.start-b.start):(blockMinutes(b)-blockMinutes(a)||a.day-b.day));
-  if(!blocks.length)return'目前課表裡找不到符合這些條件的空檔。可以換一天或把時間限制放寬一點。';
-  let remain=duration;const picks=[];
-  for(const b of blocks){if(remain<=0)break;const use=Math.min(remain,blockMinutes(b));picks.push({...b,use});remain-=use;if(!split&&picks.length>=3)break}
-  memory.plan={day,subject,duration,evening,avoidLate,split};memory.day=day||memory.day;
-  const lines=picks.map((b,i)=>`${i+1}. ${blockLabel(b)}｜${subject}，約 ${b.use} 分鐘`);
-  return`我會先這樣排：\n${lines.join('\n')}${remain>0?`\n還差約 ${remain} 分鐘，可以再補一段課後時間。`:''}`;
+function send(value) {
+  const input = $('#aiInput'), text = typeof value === 'string' ? value.trim() : input.value.trim();
+  if (!text) return;
+  if (text.length > 500) return app.toast('請把問題縮短到 500 字以內');
+  input.value = ''; bubble('me', text);
+  const answer = reply(text); bubble('ai', answer);
+  history.push({role: 'user', text}, {role: 'assistant', text: answer});
+  if (history.length > 60) history.splice(0, history.length - 60);
 }
-
-function reply(text){
-  const q=String(text||'').trim();if(!q)return'';
-  if(memory.plan&&/改到|改成|換到|分兩段|分段|不要太晚/.test(q))return plan(`${memory.plan.subject} ${memory.plan.duration}分鐘 ${q}`);
-  const day=resolveDay(q),course=resolveCourse(q);if(day)memory.day=day;
-  if(/下一堂|下一節|等等上|現在上|正在上/.test(q)){
-    const n=nextClass();if(!n)return'目前找不到下一堂課。';memory.courseId=n.course.id;memory.day=n.course.day;
-    if(n.kind==='now')return`現在是「${n.course.name}」，約 ${n.minutes} 分鐘後下課${n.course.room?`，在 ${n.course.room}`:''}。`;
-    if(n.kind==='next')return`下一堂是「${n.course.name}」，約 ${n.minutes} 分鐘後開始${n.course.room?`，在 ${n.course.room}`:''}。`;
-    return`下一堂是${dayName(n.course.day)}的「${n.course.name}」，${startTime(n.course.start)} 開始${n.course.room?`，在 ${n.course.room}`:''}。`;
-  }
-  if(course&&/老師|誰教|教授|授課/.test(q))return`「${course.name}」的老師是 ${course.teacher||'課表沒有填老師'}。`;
-  if(course&&/教室|哪裡|在哪|地點/.test(q))return course.room?`「${course.name}」在 ${course.room}。`:`「${course.name}」目前沒有填教室。`;
-  if(course&&/幾點|時間|第幾節|什麼時候/.test(q))return`「${course.name}」是${dayName(course.day)}第 ${course.start}${course.end>course.start?`–${course.end}`:''} 節，${startTime(course.start)}–${endTime(course.end)}。`;
-  if(day&&/(有什麼課|有哪些課|上什麼|幾堂|課表|課程|那呢|呢)/.test(q)){
-    const list=courses().filter(c=>c.day===day).sort((a,b)=>a.start-b.start);
-    if(!list.length)return`${dayName(day)}沒有排課。`;
-    return`${dayName(day)}有 ${list.length} 門課：\n${list.map((c,i)=>`${i+1}. ${startTime(c.start)}–${endTime(c.end)}｜${c.name}${c.room?`｜${c.room}`:''}`).join('\n')}`;
-  }
-  if(/最忙|最累|哪天.*忙|哪天.*累/.test(q)){
-    const load=DAYS.map((_,i)=>{const list=courses().filter(c=>c.day===i+1);return{day:i+1,count:list.length,periods:list.reduce((n,c)=>n+c.end-c.start+1,0)}}).sort((a,b)=>b.periods-a.periods||b.count-a.count)[0];
-    return`${dayName(load.day)}課最多，共 ${load.count} 門、${load.periods} 節。`;
-  }
-  if(/共同空堂|跟.*(?:好友|朋友).*空|一起有空/.test(q)){
-    const friend=app.getSelectedFriend?.();if(!friend)return'先到好友頁選一位朋友，我才能比較你們兩個的課表。';
-    const blocks=commonFree(friend,day).slice(0,5);if(!blocks.length)return'目前沒有找到至少兩節連續的共同空堂。';
-    return`你們比較好約的時間：\n${blocks.map((b,i)=>`${i+1}. ${blockLabel(b)}`).join('\n')}`;
-  }
-  if(/空堂|空檔|有空|自由時間/.test(q)){
-    const blocks=freeBlocks(day,2).sort((a,b)=>blockMinutes(b)-blockMinutes(a)).slice(0,5);if(!blocks.length)return'目前沒有找到兩節以上的連續空堂。';
-    return`${day?dayName(day):'這週'}比較長的空檔：\n${blocks.map((b,i)=>`${i+1}. ${blockLabel(b)}`).join('\n')}`;
-  }
-  if(/安排|規劃|排.*(?:讀書|作業|複習|準備)|\d+\s*(?:小時|分鐘|節)/.test(q))return plan(q);
-  if(course)return`你問的是「${course.name}」嗎？我可以接著查老師、教室、時間，或幫你安排這門課的準備時間。`;
-  if(memory.day)return`我還記得我們剛剛在看${dayName(memory.day)}。你可以接著問那天的課、空堂，或叫我排一段讀書時間。`;
-  return'我可以直接讀你的課表。試著問「星期三有什麼課」、「下一堂在哪」，或「星期五幫我排兩小時讀書」。';
-}
-
-function bubble(role,text){
-  const box=$('#aiMessages');if(!box)return;
-  const div=document.createElement('div');div.className=`bubble ${role}`;div.textContent=text;box.append(div);box.scrollTop=box.scrollHeight;
-}
-
-async function send(){
-  const input=$('#aiInput'),text=input?.value.trim();if(!text)return;
-  input.value='';bubble('me',text);history.push({role:'user',text});
-  const answer=reply(text);history.push({role:'assistant',text:answer});bubble('ai',answer);
-}
-
-$('#aiSend').onclick=send;
-$('#aiInput').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}};
-$('#aiLaunch').onclick=()=>{
-  memory.advanced=!memory.advanced;
-  $('#aiModeLabel').textContent=memory.advanced?'進階安排':'一般模式';
-  $('#aiStatus').textContent=memory.advanced?'進階安排已開啟':'可直接使用';
-  $('#aiLaunch').textContent=memory.advanced?'回到一般模式':'進階安排';
-  app.toast(memory.advanced?'進階安排已開啟，可以一次給我多個條件':'已回到一般模式');
+$('#aiSend').onclick = () => send();
+$('#aiInput').onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {e.preventDefault(); send()}
 };
-
-window.NOLU_PLANNER={ask:reply,history};
+const prompts = {stress: '哪天最忙？', free: '找長空堂', study: '安排兩小時讀書', friend: '跟好友找共同空堂'};
+document.querySelectorAll('[data-smart]').forEach(button => button.onclick = () => send(prompts[button.dataset.smart]));
+$('#plannerApply').onclick = () => {
+  const day = $('#plannerDay').value, length = $('#plannerDuration').value;
+  send(`${day ? `星期${day} ` : ''}安排 ${length} 分鐘讀書${$('#plannerEvening').checked ? '，晚上' : ''}${$('#plannerSplit').checked ? '，分段安排' : ''}`);
+};
+window.NOLU_PLANNER = {ask: reply, history};

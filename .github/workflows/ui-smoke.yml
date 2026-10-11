@@ -90,7 +90,7 @@ jobs:
             await screenshot(page,`friends-${label}`);
 
             await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('ai'));await page.waitForTimeout(40);await overflow(page,label,'assistant');
-            const chat=await within(page,'.ai-chat',`${label} assistant`),side=await within(page,'.ai-side',`${label} assistant`);assert(side.y>=chat.bottom-2,`${label}: assistant still in desktop columns`);assert(await page.locator('#ai .section-head h2').evaluate(e=>getComputedStyle(e).display)==='none',`${label}: duplicate assistant title visible`);
+            const chat=await within(page,'.ai-chat',`${label} assistant`),side=await within(page,'.ai-side',`${label} assistant`);assert(chat.y>=side.bottom-2,`${label}: mobile planning controls must stack before results`);await within(page,'#plannerApply',`${label} planner apply`);assert(await page.locator('#ai .section-head h2').evaluate(e=>getComputedStyle(e).display)==='none',`${label}: duplicate assistant title visible`);
             await screenshot(page,`assistant-${label}`);
 
             await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('settings'));await page.waitForTimeout(40);await overflow(page,label,'settings');
