@@ -51,7 +51,9 @@ with sync_playwright() as p:
         pg.on('pageerror', lambda error: errors.append(str(error)))
         pg.on('dialog', lambda dialog: dialog.accept())
         pg.goto(URL + suffix)
-        pg.wait_for_function("!!window.PUPLAN_APP && !!window.PUPLAN_CLOUD && !!document.querySelector('[data-community-open]') && !!document.querySelector('#classPulse')")
+        expect(pg.locator('#classPulse')).to_be_attached(timeout=15000)
+        expect(pg.locator('.bottom [data-community-open]')).to_be_attached(timeout=15000)
+        assert pg.evaluate('!!window.PUPLAN_APP && !!window.PUPLAN_CLOUD')
         pg.wait_for_timeout(300)
 
     def seed(pg, courses=COURSES):
