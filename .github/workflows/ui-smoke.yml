@@ -33,6 +33,7 @@ jobs:
           npm --prefix /tmp/nolu-ui init -y >/dev/null 2>&1
           npm --prefix /tmp/nolu-ui install playwright >/dev/null 2>&1
           cd /tmp/nolu-ui && npx playwright install --with-deps chromium >/dev/null
+          sudo apt-get install -y fonts-noto-cjk >/dev/null
       - name: Start local site
         run: |
           python3 -m http.server 4173 --directory pu-plan > /tmp/nolu-http.log 2>&1 &
@@ -78,6 +79,13 @@ jobs:
             await page.evaluate(()=>window.PUPLAN_APP?.changeView?.('schedule'));
             await overflow(page,label,'schedule');
             const topTitle=await within(page,'#title',`${label} schedule`),actions=await within(page,'.actions',`${label} schedule`);assert(!intersects(topTitle,actions),`${label}: top bar title overlaps actions`);
+            // Empty schedules intentionally show the first-step actions, not three zero counters.
+            assert(!await page.locator('.hero-side').isVisible(),`${label}: empty statistics should be hidden`);
+            await within(page,'.schedule-empty',`${label} empty schedule`);
+            await screenshot(page,`schedule-empty-${label}`);
+            // Retain the original populated-statistics layout assertion with a real fixture.
+            await page.evaluate(()=>window.PUPLAN_APP.setCoursesFromUser([{id:'layout-course',name:'手機版面測試',day:1,start:1,end:2,color:'blue'}]));
+            await overflow(page,label,'populated schedule');
             const hero=await within(page,'.hero-main',`${label} schedule`),stats=await within(page,'.hero-side',`${label} schedule`);assert(stats.y>=hero.bottom-2,`${label}: schedule still in desktop columns`);
             assert(await page.locator('#mobileAdd').isVisible(),`${label}: schedule add button missing`);
             await screenshot(page,`schedule-${label}`);

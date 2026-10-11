@@ -113,6 +113,9 @@ export function initExperience() {
   function syncEmpty() { document.body.classList.toggle('schedule-is-empty', courses().length === 0); }
   document.addEventListener('puplan:courses-changed', syncEmpty);
   document.addEventListener('puplan:profile-changed', syncEmpty); syncEmpty();
+  // Remote renders intentionally do not dispatch a user-edit event.
+  const count = $('#count');
+  if (count) new MutationObserver(syncEmpty).observe(count, {childList:true, characterData:true, subtree:true});
   installBackup();
 }
 

@@ -73,7 +73,14 @@ with sync_playwright() as p:
         expect(page.locator('#backupStatus')).to_contain_text('沒有重複新增')
         assert page.evaluate('PUPLAN_APP.courses().length')==2
         passed('backup download contains only timetable data; restore rejects corruption and deduplicates')
-        page.locator('.bottom [data-view="schedule"]').click();page.locator('#importSchedule').click()
+        page.locator('.bottom [data-view="schedule"]').click()
+        saved_courses = page.evaluate('PUPLAN_APP.courses()')
+        page.evaluate('PUPLAN_APP.setRemoteCourses([])')
+        expect(page.locator('.hero-side')).not_to_be_visible()
+        page.evaluate('(courses)=>PUPLAN_APP.setRemoteCourses(courses)', saved_courses)
+        expect(page.locator('.hero-side')).to_be_visible()
+        passed('remote schedule renders update the empty state without a user-edit event')
+        page.locator('#importSchedule').click()
         assert page.locator('input[name="importMode"][value="merge"]').is_checked()
         # Synthetic grid and controlled OCR results: no external model, uploads or personal data.
         data=page.evaluate("""() => {const c=document.createElement('canvas');c.width=1700;c.height=1450;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,c.width,c.height);x.strokeStyle='black';x.lineWidth=3;for(let i=0;i<9;i++){x.beginPath();x.moveTo(20+i*200,100);x.lineTo(20+i*200,1300);x.stroke()}for(let i=0;i<16;i++){x.beginPath();x.moveTo(20,100+i*80);x.lineTo(1620,100+i*80);x.stroke()}window.__ocrResolvers=[];window.Tesseract={OEM:{LSTM_ONLY:1},PSM:{SPARSE_TEXT:11},createWorker:async()=>({setParameters:async()=>{},recognize:()=>new Promise(resolve=>window.__ocrResolvers.push(()=>resolve({data:{text:'測試課表',blocks:[{paragraphs:[{lines:[{text:'匯入的新課 / 林老師',confidence:90,bbox:{x0:240,y0:190,x1:380,y1:220}}]}]}]}})))})};return c.toDataURL('image/png').split(',')[1]}""")
@@ -90,6 +97,8 @@ with sync_playwright() as p:
             time.sleep(.05)
         assert page.evaluate('__ocrResolvers.length')==2
         page.evaluate('__ocrResolvers[1]()');expect(page.locator('#importResults')).to_be_visible()
+        page.wait_for_timeout(300)
+        assert page.evaluate('__ocrResolvers.length')==2, 'a settled image must not start a duplicate OCR job'
         passed('changing images during OCR starts the newest job instead of leaving import stuck')
         page.locator('input[name="importMode"][value="replace"]').check()
         decide(page);page.locator('#confirmImport').click();assert page.evaluate('PUPLAN_APP.courses().length')==2
