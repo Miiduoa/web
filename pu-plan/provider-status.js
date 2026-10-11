@@ -10,6 +10,13 @@ function ensureCard(){
 }
 function render(){
   const card=ensureCard();if(!card)return;
+  if(!window.PUPLAN_CLOUD?.isSignedIn?.()){
+    delete card.dataset.reconcileRequired;
+    $('#providerMeshSummary').textContent='訪客模式：課表只保存在這個瀏覽器。';
+    $('#providerMeshState').textContent='未登入，沒有啟用跨裝置同步。';
+    $('#providerMeshHint').textContent='清除網站資料、使用其他瀏覽器或更換裝置，都不會自動帶入這份課表。請先保留課表副本。';
+    return;
+  }
   const replication=window.NOLU_REPLICATION?.state;
   if(replication?.manualReconcileRequired===true){
     card.dataset.reconcileRequired='1';
@@ -39,6 +46,7 @@ function render(){
       :'還需要至少一個通過實際讀寫驗證的獨立雲端。Render、Netlify、Railway 等候選在驗證完成前都不會被算成正式備援。';
 }
 
+document.addEventListener('puplan:profile-changed',render);
 document.addEventListener('nolu:provider-mesh',render);
 document.addEventListener('nolu:provider-recovered',render);
 document.addEventListener('nolu:replica-manual-reconcile-required',render);
