@@ -3,6 +3,7 @@ import functools
 import http.server
 import json
 import threading
+import time
 import traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
@@ -16,6 +17,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(ROOT)))
 threading.Thread(target=server.serve_forever,daemon=True).start()
 URL=f'http://127.0.0.1:{server.server_port}/pu-plan/'
+def wait_ready(page):
+    # DevTools evaluation avoids a page-level eval and keeps the real CSP intact.
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline:
+        if page.evaluate('Boolean(window.NOLU_PLANNER)'): return
+        time.sleep(.1)
+    raise AssertionError('Planner did not initialize within 12 seconds')
+
 def passed(name):
     checks.append(name)
     print('PASS',name,flush=True)
@@ -32,7 +41,7 @@ with sync_playwright() as p:
     page.clock.set_fixed_time('2026-10-12T07:00:00+08:00')
     try:
         page.goto(URL)
-        page.wait_for_function('!!window.NOLU_PLANNER')
+        wait_ready(page)
         expect(page.locator('#authGate')).not_to_be_visible()
         expect(page.locator('.schedule-empty')).to_be_visible()
         assert '先新增' in page.evaluate("NOLU_PLANNER.ask('安排兩小時')")
@@ -56,7 +65,7 @@ with sync_playwright() as p:
         expect(page.locator('#courseDialog')).not_to_be_visible()
         expect(page.locator('#count')).to_have_text('1')
         passed('period constraints, save feedback and course counter')
-        page.reload();page.wait_for_function('!!window.NOLU_PLANNER')
+        page.reload();wait_ready(page)
         expect(page.locator('#count')).to_have_text('1')
         expect(page.locator('#humanWeek')).to_contain_text('資料庫系統')
         passed('guest course persists after a fresh load')
@@ -100,7 +109,7 @@ with sync_playwright() as p:
         passed('friend ID resolves to the actual profile and busy timetable')
         answer=page.evaluate("NOLU_PLANNER.ask('星期一晚上安排兩小時，不要太晚')")
         assert '18:00–20:00' in answer and '120 分鐘' in answer,answer
-        assert '週末' in page.evaluate("NOLU_PLANNER.ask('星期六幫我安排兩小時')")
+        assert '星期一到星期五' in page.evaluate("NOLU_PLANNER.ask('星期六幫我安排兩小時')")
         passed('Chinese duration, exact evening slots and weekend boundaries')
         page.locator('.nav [data-view="ai"]').click()
         page.locator('#aiInput').fill('星期三有什麼課')
