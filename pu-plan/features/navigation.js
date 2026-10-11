@@ -3,7 +3,7 @@ import {renderFriends} from './friends.js';
 import {renderShare} from './share.js';
 import {renderSmartOverview} from './analysis.js';
 
-const titles={schedule:'我的課表',friends:'找人',ai:'安排',settings:'我的',community:'動態'};
+const titles={schedule:'我的課表',friends:'找人',ai:'安排',settings:'我的',community:'動態',admin:'網站管理'};
 let current='',restoring=false,scrollFrame=0;
 
 function remember(view,y=0,replace=false){
@@ -13,15 +13,19 @@ function remember(view,y=0,replace=false){
   }catch{/* Navigation still works when browser history is unavailable. */}
 }
 
-// Community mounts later and owns its feed. Reconcile the shared shell rather
-// than maintaining a second set of header, focus and browser-history rules.
+// Community and administration mount later. Reconcile their shell state without
+// installing privileged UI or changing the server-side authorization boundary.
 function reconcile(){
   const view=$('.view.on')?.id;
+  if(!view){if(current==='admin')changeView('schedule');return}
+  // A view may have been mounted while another screen was selected. Always
+  // reconcile focusability, even when the primary destination hasn't changed.
+  $$('.view').forEach(el=>{el.inert=el.id!==view;el.setAttribute('aria-hidden',String(el.id!==view))});
   if(!Object.hasOwn(titles,view)||view===current)return;
   const hadView=!!current;current=view;
-  $$('.view').forEach(el=>{el.inert=el.id!==view;el.setAttribute('aria-hidden',String(el.id!==view))});
   $$('[data-view]').forEach(el=>el.classList.toggle('on',el.dataset.view===view));
   $$('[data-community-open]').forEach(el=>el.classList.toggle('on',view==='community'));
+  $$('[data-admin-open],[data-admin-mobile]').forEach(el=>el.classList.toggle('on',view==='admin'));
   if($('#title'))$('#title').textContent=titles[view];
   for(const id of ['add','mobileAdd','importSchedule','shareTop']){
     const el=$('#'+id);if(el){el.hidden=view!=='schedule';el.style.visibility=''}
@@ -36,8 +40,19 @@ function reconcile(){
   document.dispatchEvent(new CustomEvent('puplan:view-changed',{detail:{view}}));
 }
 
+function adminEntry(){
+  // Only reuse an entry already supplied by the admin module after sign-in.
+  // History and arbitrary view names must never call install() or create one.
+  if(!window.PUPLAN_CLOUD?.isSignedIn?.()||!$('#admin'))return null;
+  return $('[data-admin-open],[data-admin-mobile],#openAdminPanel');
+}
+
 export function changeView(view){
   if(!Object.hasOwn(titles,view))return false;
+  if(view==='admin'){
+    const button=adminEntry();if(!button)return false;
+    button.click();reconcile();return $('.view.on')?.id==='admin';
+  }
   if(view==='community'){
     const button=$('[data-community-open]');if(!button)return false;
     button.click();reconcile();return true;
@@ -60,7 +75,9 @@ function restore(state){
   const view=Object.hasOwn(titles,state?.noluView)?state.noluView:'schedule';
   restoring=true;
   try{
-    if(view==='community'){
+    if(view==='admin'){
+      if(!changeView('admin')){changeView('schedule');remember('schedule',0,true)}
+    }else if(view==='community'){
       $('[data-community-open]')?.click();reconcile();
     }else{
       // Retain the existing cloud/social navigation listeners.
@@ -96,6 +113,7 @@ export function initNavigation(){
     const attempt=()=>{
       if(!Object.hasOwn(titles,initial.noluView))return true;
       if(initial.noluView==='community'&&!$('[data-community-open]'))return false;
+      if(initial.noluView==='admin'&&!adminEntry())return false;
       restore(initial);remember(current,window.scrollY,true);return true;
     };
     if(!attempt()){
