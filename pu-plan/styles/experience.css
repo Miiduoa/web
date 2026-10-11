@@ -1,6 +1,6 @@
 /* Quiet surfaces, clear hierarchy, and controls sized for real daily use. */
 :root{--paper:#f5f5f1;--surface:#fffefa;--ink:#202620;--muted:#62685f;--line:rgba(32,38,32,.12);--lime:#e1edb5}
-body{line-height:1.5;-webkit-font-smoothing:antialiased}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang TC","Noto Sans CJK TC","Noto Sans TC","Microsoft JhengHei",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
 button,a,input,select,textarea{touch-action:manipulation}
 button{transition:background-color .14s,border-color .14s}
 .btn{min-height:44px;border-radius:12px;font-size:14px;font-weight:650;padding-inline:16px}
@@ -22,6 +22,8 @@ button{transition:background-color .14s,border-color .14s}
 #schedule .hero-main p{font-size:14px;line-height:1.8;max-width:570px;color:var(--muted)}
 #schedule .quote{font-size:12px;color:var(--muted);margin-top:8px}
 #schedule .hero-side{border:1px solid var(--line);background:var(--surface);border-radius:18px;box-shadow:none}
+#schedule .stat small{font-size:12px}
+#classPulse small,#classPulse span{font-size:12px;line-height:1.7}
 #schedule .stat b{font-variant-numeric:tabular-nums;font-size:28px}
 .schedule-is-empty #schedule .hero{grid-template-columns:minmax(0,1fr)}
 .schedule-is-empty #schedule .hero-side,.schedule-is-empty #schedule .quote,.schedule-is-empty #classPulse{display:none!important}
@@ -76,7 +78,8 @@ button{transition:background-color .14s,border-color .14s}
 .auth-copy p{font-size:16px;line-height:1.9;font-weight:500}
 .auth-form label{line-height:1.6}
 .auth-form label small{font-size:12px;line-height:1.7;color:var(--muted)}
-.auth-tabs button.on{background:#283d30}
+.auth-tabs button{transition:none}
+.auth-tabs button.on{background:#283d30;color:#fff}
 .guest{min-height:46px!important;font-size:14px!important}
 .skip-link{position:fixed;top:-100px;left:16px;z-index:3000;padding:12px 18px;background:#283d30;color:white;border-radius:10px}
 .skip-link:focus{top:12px}

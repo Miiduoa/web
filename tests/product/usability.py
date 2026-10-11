@@ -90,6 +90,8 @@ with sync_playwright() as p:
             time.sleep(.05)
         assert page.evaluate('__ocrResolvers.length')==2
         page.evaluate('__ocrResolvers[1]()');expect(page.locator('#importResults')).to_be_visible()
+        page.wait_for_timeout(300)
+        assert page.evaluate('__ocrResolvers.length')==2, 'a settled image must not start a duplicate OCR job'
         passed('changing images during OCR starts the newest job instead of leaving import stuck')
         page.locator('input[name="importMode"][value="replace"]').check()
         decide(page);page.locator('#confirmImport').click();assert page.evaluate('PUPLAN_APP.courses().length')==2
