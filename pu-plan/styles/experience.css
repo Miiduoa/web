@@ -1,0 +1,124 @@
+/* Quiet surfaces, clear hierarchy, and controls sized for real daily use. */
+:root{--paper:#f5f5f1;--surface:#fffefa;--ink:#202620;--muted:#62685f;--line:rgba(32,38,32,.12);--lime:#e1edb5}
+body{line-height:1.5;-webkit-font-smoothing:antialiased}
+button,a,input,select,textarea{touch-action:manipulation}
+button{transition:background-color .14s,border-color .14s}
+.btn{min-height:44px;border-radius:12px;font-size:14px;font-weight:650;padding-inline:16px}
+.btn.primary{background:#283d30;border-color:#283d30}
+.btn.primary:hover{background:#1c2f23;border-color:#1c2f23}
+.field{border:1px solid #dedfd6;background:#f8f8f4;border-radius:12px;min-height:46px}
+.field:focus{outline:2px solid #496a53;outline-offset:2px;background:#fffefa}
+.main{padding-inline:32px}
+.topbar{margin-inline:-32px;padding:22px 32px 18px;background:rgba(245,245,241,.96);border-bottom:1px solid var(--line)}
+.topbar h1{font-size:27px;font-weight:750;letter-spacing:-.035em}
+.sidebar{background:#efefe9;padding:28px 16px 18px}
+.brand{padding-bottom:32px}.brand span{font-size:11px;margin-top:6px}
+.nav{gap:7px}.nav button{display:flex;align-items:center;gap:12px;min-height:48px;font-size:15px;border-radius:12px}
+.nav button.on,.nav button[data-community-open].on{background:#283d30}
+.nav-icon{display:inline-block;width:21px;height:21px;flex:0 0 21px;vertical-align:middle;pointer-events:none}
+#schedule .hero{margin-block:12px 22px;gap:20px}
+#schedule .hero-main{background:transparent;border:0!important;padding:10px 0;box-shadow:none!important}
+#schedule .hero-main h2{font-size:clamp(24px,2.4vw,34px);line-height:1.35;letter-spacing:-.035em}
+#schedule .hero-main p{font-size:14px;line-height:1.8;max-width:570px;color:var(--muted)}
+#schedule .quote{font-size:12px;color:var(--muted);margin-top:8px}
+#schedule .hero-side{border:1px solid var(--line);background:var(--surface);border-radius:18px;box-shadow:none}
+#schedule .stat b{font-variant-numeric:tabular-nums;font-size:28px}
+.schedule-is-empty #schedule .hero{grid-template-columns:minmax(0,1fr)}
+.schedule-is-empty #schedule .hero-side,.schedule-is-empty #schedule .quote,.schedule-is-empty #classPulse{display:none!important}
+#schedule .schedule-empty{border-radius:20px;padding:32px;max-width:100%;background:var(--surface)}
+#schedule .schedule-empty h3{font-size:23px;line-height:1.4}
+#schedule .schedule-empty p{font-size:14px}
+#schedule .schedule-empty small{font-size:12px}
+#schedule .schedule-toolbar{gap:12px;flex-wrap:wrap;margin-block:10px 18px}
+.view-switch,.presentation-switch{border-radius:12px!important;background:#e9ece4!important;padding:4px!important;gap:3px}
+.view-switch button,.presentation-switch button{min-height:40px;padding:8px 16px;border-radius:9px!important;font-size:13px}
+#schedule #humanWeek{gap:16px}
+#schedule #humanWeek .human-day{border-radius:16px!important}
+#schedule #humanWeek .human-day>header{background:#f0f2eb!important;padding:13px 15px}
+#schedule #humanWeek .human-day.today>header{background:#e7efd9!important}
+#schedule #humanWeek .human-course{border-radius:12px!important;min-height:88px;transition:border-color .14s}
+#schedule #humanWeek .human-course:hover{border-color:#71816b!important}
+#schedule #humanWeek .human-course-time{background:#f6f6ef;font-variant-numeric:tabular-nums}
+#schedule #humanWeek .human-course-main>b{font-weight:700;line-height:1.5}
+#schedule #humanWeek .human-course.violet{border-left:4px solid #aaa0bf!important}
+#schedule #humanWeek .human-course.blue{border-left:4px solid #7f9da9!important}
+#schedule #humanWeek .human-course.mint{border-left:4px solid #82a285!important}
+#schedule #humanWeek .human-course.orange{border-left:4px solid #b99a70!important}
+#schedule #humanWeek .human-course.pink{border-left:4px solid #bc94a2!important}
+#schedule #humanWeek .human-course.lime{border-left:4px solid #95a766!important}
+#schedule #humanWeek .human-free{background:#fafbf6!important;border-radius:10px!important;min-height:56px;font-size:13px}
+#courseDialog{width:min(560px,calc(100vw - 28px));max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain}
+#courseDialog form{padding:26px}
+#courseDialog .form-grid label{display:grid;gap:7px;font-size:13px;font-weight:650}
+#courseDialog .modal-head{margin-bottom:10px}
+#courseDialog .modal-head h2{font-size:23px;line-height:1.3}
+.editor-hint{color:var(--muted);font-size:13px;line-height:1.7;margin:0 0 22px}
+#courseDialog .modal-actions{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+#deleteCourse{margin-right:auto}
+.import-options{display:grid;gap:12px;background:#f5f6ef;padding:16px}
+.import-options label{display:flex;align-items:flex-start;gap:8px;font-size:14px;line-height:1.6;cursor:pointer}
+.import-options input{width:19px;height:19px;flex:0 0 19px;accent-color:#283d30}
+.import-inline-notice[data-kind="error"]{border:1px solid #d6aaa1!important;background:#fff2ed!important;color:#802c22}
+.import-inline-notice{line-height:1.7}
+.setting-card{padding:24px;border-radius:18px}.setting-card p{font-size:13px;line-height:1.8}
+.setting-card h2,.setting-card h3{font-size:19px}
+.settings{gap:16px;max-width:780px}
+.backup-card{border-top:3px solid #71845d}
+.backup-status{margin-top:14px!important;margin-bottom:0!important;overflow-wrap:anywhere}
+.backup-status:empty{display:none}
+.password-control{display:flex;position:relative;min-width:0}
+.password-control .field{padding-right:68px;width:100%}
+.password-toggle{position:absolute;right:3px;top:3px;bottom:3px;min-width:58px;border:0;border-radius:9px;background:transparent;font-size:13px;font-weight:650;color:#3f5843}
+.password-toggle:hover{background:#e9eee2}
+.auth-is-open{overflow:hidden}
+.auth-poster{background:#e9ecdf}
+.auth-copy h1{line-height:1.12;letter-spacing:-.055em}
+.auth-copy p{font-size:16px;line-height:1.9;font-weight:500}
+.auth-form label{line-height:1.6}
+.auth-form label small{font-size:12px;line-height:1.7;color:var(--muted)}
+.auth-tabs button.on{background:#283d30}
+.guest{min-height:46px!important;font-size:14px!important}
+.skip-link{position:fixed;top:-100px;left:16px;z-index:3000;padding:12px 18px;background:#283d30;color:white;border-radius:10px}
+.skip-link:focus{top:12px}
+.toast{border-radius:14px;font-size:14px;line-height:1.6;padding:12px 18px;max-width:min(560px,calc(100vw - 28px))}
+@media(max-width:940px){
+  .main{padding:0 20px calc(140px + env(safe-area-inset-bottom))}
+  .topbar{margin-inline:-20px;padding:16px 20px 14px}
+  .bottom{min-height:72px;padding:6px;border-radius:20px;gap:3px;background:rgba(255,254,250,.98)}
+  .bottom button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:58px;font-size:12px;line-height:1.2;border-radius:13px;padding:7px 2px}
+  .bottom button.on,.bottom button[data-community-open].on{background:#283d30;color:#fff}
+  .bottom .nav-icon{width:20px;height:20px;flex-basis:20px}
+  .mobile-fab{bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;border-radius:16px;background:#283d30;color:white}
+  .toast{bottom:calc(96px + env(safe-area-inset-bottom))}
+}
+@media(max-width:680px){
+  .main{padding-inline:16px}
+  .topbar{margin-inline:-16px;padding:12px 16px;gap:10px}
+  .topbar h1{font-size:22px}
+  .topbar .actions{gap:6px}
+  .topbar .actions .btn{font-size:13px;padding-inline:12px;border-radius:11px}
+  .topbar .semester-chip{border-radius:11px!important}
+  .topbar .account-chip{border-radius:12px;padding:5px!important}
+  #schedule .hero{margin:6px 0 12px}
+  #schedule .hero-main{padding:10px 0}
+  #schedule .hero-main h2{font-size:24px;line-height:1.4}
+  #schedule .hero-main p{font-size:13px}
+  #schedule .schedule-empty{padding:24px 20px}
+  #schedule .schedule-empty h3{font-size:21px}
+  #schedule .schedule-empty .row{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+  #schedule .schedule-empty .btn{width:100%;min-height:48px}
+  .view-switch button,.presentation-switch button{min-height:44px;padding-inline:13px}
+  #schedule #humanWeek .human-course{grid-template-columns:108px minmax(0,1fr)}
+  #schedule #humanWeek .human-course-main p{font-size:13px}
+  #courseDialog form{padding:22px 18px}
+  #courseDialog .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 10px}
+  #courseDialog .full{grid-column:1/-1}
+  #courseDialog .field{font-size:16px;padding:11px 8px}
+  #courseDialog .modal-actions .btn{min-height:46px;padding-inline:15px}
+  .setting-card{padding:20px}
+  .auth-poster{min-height:0}
+  .auth-copy h1{font-size:36px}
+  .auth-copy p{font-size:14px;margin-top:12px}
+  .auth-card{padding:24px 22px 32px}
+}
+@media(prefers-reduced-motion:reduce){button,#schedule #humanWeek .human-course{transition:none}}

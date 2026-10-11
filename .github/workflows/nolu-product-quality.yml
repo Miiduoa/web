@@ -26,7 +26,7 @@ jobs:
       - name: Check JavaScript syntax
         run: find pu-plan -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Run planning and input boundary tests
-        run: TZ=Asia/Taipei node --test tests/product/planning.test.mjs
+        run: TZ=Asia/Taipei node --test tests/product/*.test.mjs
       - name: Run account isolation regression
         run: node .github/tests/guest-privacy.cjs
       - name: Install browser test runner
@@ -35,7 +35,9 @@ jobs:
           python -m playwright install --with-deps chromium
           sudo apt-get install -y fonts-noto-cjk
       - name: Exercise isolated guest workflows
-        run: python tests/product/browser.py
+        run: |
+          python tests/product/browser.py
+          python tests/product/usability.py
       - name: Preserve screenshots and test results
         if: always()
         uses: actions/upload-artifact@v4

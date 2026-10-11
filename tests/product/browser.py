@@ -98,6 +98,8 @@ with sync_playwright() as p:
         expect(page.locator('#courseName')).to_have_value('不能假裝儲存成功')
         assert page.evaluate('PUPLAN_APP.courses().length')==1
         page.evaluate('() => {Storage.prototype.setItem=window.originalSetItem}')
+        # Closing a preserved draft now requires an explicit discard decision.
+        page.once('dialog',lambda dialog:dialog.accept())
         page.locator('#courseDialog [data-close]').first.click()
         passed('quota failure preserves draft and never reports success')
         page.evaluate("""() => {PUPLAN_APP.setFriends([{id:'test-friend',name:'測試同學',username:'classmate',courses:[{id:'friend-course',name:'測試課',day:1,start:3,end:5}]}]);PUPLAN_APP.setSelectedFriend('test-friend')}""")
