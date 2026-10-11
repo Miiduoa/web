@@ -1,201 +1,76 @@
-# Nolu｜Resilient Student Planner PWA
+# Nolu｜Student Planner PWA
 
 [![durable sync](https://github.com/Miiduoa/web/actions/workflows/nolu-durable-sync-smoke.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-durable-sync-smoke.yml) [![secret scan](https://github.com/Miiduoa/web/actions/workflows/nolu-history-secret-scan.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-history-secret-scan.yml) [![checkout hygiene](https://github.com/Miiduoa/web/actions/workflows/nolu-checkout-hygiene.yml/badge.svg)](https://github.com/Miiduoa/web/actions/workflows/nolu-checkout-hygiene.yml)
 
-Nolu 是一個以學生課程、行程與社交協作為核心的 Progressive Web App。
+學生課表、學期規劃與社交協作 PWA。除了前端功能，這個 repo 也包含登入與帳號隔離、離線復原，以及以 Supabase 為資料層的 primary／standby 同步流程。
 
-這個 repo 的核心不是畫面，而是它怎麼處理 **登入、離線、跨區故障、資料隔離與恢復**。
+[程式導覽](docs/REVIEW_GUIDE.md) · [跨區同步設計](docs/NOLU_HOT_STANDBY.md) · [自動化驗證](.github/workflows/)
 
-## 先看這三件事
+## 本機預覽
 
-1. **主要 region 掛掉時，不直接清空資料或無限 reload。**
-2. **guest / account 切換時，會清掉不該跨身份保留的 cache 與 session。**
-3. **跨區資料不是「雙邊都能亂寫」；目前 core data 採 primary → standby 的單向 authority。**
-
-如果只想快速審查這個 repo，可先看：
-
-| 問題 | 證據 |
-|---|---|
-| 第一次進 repo 從哪裡看 | [REVIEW_GUIDE](docs/REVIEW_GUIDE.md) |
-| standby 怎麼同步 | [NOLU_HOT_STANDBY](docs/NOLU_HOT_STANDBY.md) |
-| browser 失敗時怎麼恢復 | `pu-plan/resilience.js` |
-| guest 邊界怎麼清資料 | `pu-plan/guest-privacy.js` |
-| provider quorum / recovery | `pu-plan/provider-mesh.js` |
-| failure mode 是否有測 | [GitHub workflows](.github/workflows/) |
-
-### Failure path
-
-```mermaid
-flowchart LR
-  A[Browser / PWA] --> B{Primary healthy?}
-  B -->|yes| C[Primary API]
-  B -->|no| D[Resilience path]
-  D --> E[Standby candidate]
-  D --> F[Offline snapshot]
-  C --> G[Durable outbox]
-  G --> H[Signed replication]
-  H --> I[Standby region]
-```
-
-這張圖刻意只畫目前 repo 已有的 authority 與 recovery path，不把尚未完整納入 replication 的 social / feed / chat 畫進去。
-
-
-
-## Architecture focus
-
-目前 production path 以 Supabase 為主要資料層，並設計 primary / standby 區域。
-
-核心流程可簡化成：
-
-```text
-browser / installed PWA
-        ↓
-regional session
-        ↓
-primary API
-        ↓
-durable outbox
-        ↓
-signed replication
-        ↓
-standby region
-```
-
-當 primary 不可用時，browser runtime 會走 resilience / recovery 邏輯，而不是直接把使用者資料清掉或無限 reload。
-
-## Implemented reliability boundaries
-
-### Hot standby
-
-`docs/NOLU_HOT_STANDBY.md` 描述目前的 server-side replication path：
-
-- primary → standby 單向 authority
-- per-user monotonic revision
-- durable outbox
-- retry / acknowledgement sweep
-- Ed25519 cross-region message signing
-- replay protection
-- stale revision rejection
-- region-local sessions
-
-目前 scope 明確限制在 account / profile verifier、schedule 與 semester core data；social / feed / chat 沒有假裝已被同一條 replication path 完整覆蓋。
-
-### Browser resilience
-
-`pu-plan/resilience.js` 處理：
-
-- primary / standby API candidates
-- circuit-breaker cooldown
-- offline fallback
-- pending mutation queue
-- session-aware recovery
-- no-reload recovery path
-
-### Guest privacy
-
-`pu-plan/guest-privacy.js` 會在 guest / account boundary 切換時清理：
-
-- renderable account cache
-- profile cache
-- regional sessions
-- portable session
-- resilience snapshots / pending mutations
-- assistant session state
-
-它的目的不是只做登出按鈕，而是避免前一個帳號的資料殘留到 guest 或下一個帳號。
-
-### Provider mesh
-
-`pu-plan/provider-mesh.js` 對外部 mirror provider 做：
-
-- portable session
-- snapshot digest
-- provider acknowledgement
-- read quorum
-- recovery candidate filtering
-- local revision / session fingerprint validation
-
-## Verification surface
-
-這個 repo 不把「workflow 數量」當成品質指標。比較重要的是每個測試到底在驗證哪個 failure mode。
-
-目前自動化驗證涵蓋：
-
-- checkout / credential hygiene
-- auth / authorization boundary
-- guest privacy
-- hot standby
-- replication
-- failover / failback
-- session hygiene
-- media URL security
-- supply-chain checks
-- resilience race / no-reload recovery
-
-代表性檔案：
-
-```text
-.github/workflows/
-  nolu-api-authz-boundary-smoke.yml
-  nolu-guest-privacy-unit.yml
-  nolu-hot-standby-smoke.yml
-  nolu-replication-conflict-backoff.yml
-  nolu-resilience-race-smoke.yml
-  nolu-supply-chain-security.yml
-```
-
-## Front-end
-
-PWA 入口：
-
-```text
-pu-plan/index.html
-pu-plan/main.js
-pu-plan/features/
-pu-plan/styles/
-pu-plan/sw.js
-```
-
-主要功能包含：
-
-- 課表
-- semester
-- planner
-- friends / community
-- discover
-- account / profile
-- offline PWA path
-
-## Local preview
-
-Nolu 的前端主入口在 `pu-plan/`。只看靜態 PWA shell 時，可以從 repo 根目錄啟動簡單 HTTP server：
+在 repo 根目錄啟動 HTTP server：
 
 ```bash
 python3 -m http.server 8080
 ```
 
-再開啟：
+開啟 <http://localhost:8080/pu-plan/>。
+
+這個方式可預覽靜態 PWA shell、Service Worker 與不依賴後端的流程。完整登入、Supabase、regional API、replication 及 Netlify Functions 需要相應的環境設定與部署端點。
+
+## 程式入口
+
+- [`pu-plan/index.html`](pu-plan/index.html)、[`main.js`](pu-plan/main.js)：前端入口
+- [`pu-plan/features/`](pu-plan/features/)：課表、學期、planner、friends／community、discover、account／profile 等功能
+- [`pu-plan/styles/`](pu-plan/styles/)、[`sw.js`](pu-plan/sw.js)：樣式與 Service Worker
+- [`pu-plan/resilience.js`](pu-plan/resilience.js)：API 候選、離線快照、待送出操作及恢復流程
+- [`pu-plan/guest-privacy.js`](pu-plan/guest-privacy.js)：guest／account 切換時的資料清理
+- [`pu-plan/provider-mesh.js`](pu-plan/provider-mesh.js)：provider acknowledgement、read quorum 與恢復候選檢查
+
+## 資料同步與恢復
 
 ```text
-http://localhost:8080/pu-plan/
+Browser / PWA → regional session → primary API
+                                      ↓
+                                 durable outbox
+                                      ↓
+                               signed replication
+                                      ↓
+                                 standby region
 ```
 
-這只能驗證靜態介面、Service Worker 與不依賴後端的流程。完整登入、Supabase、regional API、replication、Netlify Functions 等路徑仍需要對應環境設定與部署端點。
+### 跨區同步
 
-## What this repo does not claim
+目前 core data 採 **primary → standby 單向 authority**。每位使用者的 revision 單調遞增，透過 durable outbox、重試及 acknowledgement sweep 處理同步；跨區訊息使用 Ed25519 簽章，並檢查 replay 與 stale revision。
 
-- standby 不會自動反向覆蓋 primary。
-- social / feed / chat 並沒有全部納入目前的 core-data replication。
-- 多 provider 不等於所有 provider 都具有相同 authority。
-- browser fallback 不是資料庫 backup 的替代品。
-- workflow 數量本身不是品質指標；真正要看的是每個 contract 驗證哪個 failure mode。
+同步範圍為 account／profile verifier、schedule 與 semester。Regional sessions 保留在各區；密碼不會複寫，server-to-server 僅傳既有 verifier 欄位。完整安全條件與部署說明見 [NOLU_HOT_STANDBY](docs/NOLU_HOT_STANDBY.md)。
 
-## Why I keep this project
+### 瀏覽器恢復
 
-一般學生作品常停在「前端 + API + database」。
+`resilience.js` 管理 primary／standby API candidates、circuit-breaker cooldown、offline snapshot 與 pending mutation queue。恢復流程依 session 狀態判斷，包含不 reload 的復原路徑。
 
-Nolu 比較想回答的是：
+`provider-mesh.js` 檢查 portable session、snapshot digest、provider acknowledgement、read quorum、local revision 與 session fingerprint，再篩選可用的 recovery candidate。
 
-> 如果登入服務、主要 region、網路或 browser session 出問題，使用者的資料與身份邊界還能不能維持正確？
+### 帳號隔離
 
-所以這個 repo 的重點是 resilience、privacy、replication 與 recovery contract，而不是再堆一個 dashboard。
+`guest-privacy.js` 在 guest／account 邊界切換時清理 account／profile cache、regional／portable session、resilience snapshot、pending mutation 與 assistant session，避免前一個帳號的資料殘留。
+
+## 驗證入口
+
+可先從以下幾個具體情境閱讀測試：
+
+- **guest 與跨帳號快取隔離**：[unit workflow](.github/workflows/nolu-guest-privacy-unit.yml) 與 [測試程式](.github/tests/guest-privacy.cjs)
+- **舊回應不得刪除較新的離線修改**：[resilience race smoke](.github/workflows/nolu-resilience-race-smoke.yml)
+- **API 授權邊界**：[authz boundary smoke](.github/workflows/nolu-api-authz-boundary-smoke.yml)
+- **standby 與同步衝突**：[hot standby smoke](.github/workflows/nolu-hot-standby-smoke.yml)、[conflict／backoff](.github/workflows/nolu-replication-conflict-backoff.yml)
+- **供應鏈檢查**：[supply-chain security](.github/workflows/nolu-supply-chain-security.yml)
+
+其他 workflows 涵蓋 checkout／credential hygiene、failover／failback、session hygiene、media URL security 及 no-reload recovery。各項執行結果請看 [GitHub Actions](https://github.com/Miiduoa/web/actions)。
+
+## 目前邊界
+
+- Standby 不會自動反向覆蓋 primary。
+- Social／feed／chat 尚未全部納入上述 core-data replication。
+- 各 provider 的 authority 不同；多個 provider 不代表可以互相任意覆寫資料。
+- Browser fallback 不能取代資料庫備份。
+- 本機靜態預覽不包含完整登入及跨區服務，workflow 也只驗證各自定義的情境。
