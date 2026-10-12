@@ -9,6 +9,7 @@ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const app=window.PUPLAN_APP;
 const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 let token=localStorage.getItem('puplan_session')||'', profile=null;
+let authEpoch=0,activeAuth=null;
 let preferredApi=Math.max(0,Math.min(APIS.length-1,Number(sessionStorage.getItem('puplan_api_index')||0)||0));
 let socialData={relationships:[],profiles:[],friends:[],meetups:[]}, searchTimer=null, syncTimer=null, socialLoading=null, socialLoaded=false, socialSummary={};
 
@@ -18,7 +19,7 @@ const normalizeUsername=v=>String(v||'').trim().replace(/^@/,'').toLowerCase();
 const avatarOf=p=>cleanAvatar(p?.avatar_data||p?.avatar||'');
 const avatarHTML=(p,cls='avatar')=>{const avatar=avatarOf(p),safeClass=String(cls||'avatar').replace(/[^A-Za-z0-9_-]/g,'')||'avatar';return avatar?`<div class="${safeClass}"><img src="${avatar}" alt=""></div>`:`<div class="${safeClass}">${esc(initial(p?.display_name||p?.name))}</div>`};
 const setAuthStatus=(msg='',bad=false)=>{const e=$('#authStatus');if(e){e.textContent=msg;e.style.color=bad?'#9b2133':'#226b43'}};
-function showGate(tab='register'){localStorage.removeItem('puplan_guest');$('#authGate')?.classList.remove('off');switchTab(tab)}
+function showGate(tab='register'){$('#authGate')?.classList.remove('off');switchTab(tab)}
 function hideGate(){$('#authGate')?.classList.add('off')}
 function switchTab(tab){$$('[data-auth-tab]').forEach(b=>b.classList.toggle('on',b.dataset.authTab===tab));$('#registerForm')?.classList.toggle('hidden',tab!=='register');$('#loginForm')?.classList.toggle('hidden',tab!=='login');setAuthStatus('')}
 
@@ -89,7 +90,7 @@ function clearCredentialCopies(){
   for(const key of CREDENTIAL_KEYS)localStorage.removeItem(key);
   localStorage.removeItem(PREFERRED_CLOUD_KEY);
 }
-function clearSession(toast=true,reason='clear-session'){trace('auth-session-cleared',{reason});token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};clearCredentialCopies();const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
+function clearSession(toast=true,reason='clear-session'){cancelAuthentication();trace('auth-session-cleared',{reason});token='';profile=null;socialLoaded=false;socialLoading=null;socialSummary={};socialData={relationships:[],profiles:[],friends:[],meetups:[]};clearCredentialCopies();const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.(legacy);renderRequests();updateAccountUI();emitSocial();if(toast)app?.toast?.('已登出')}
 function invalidateSession(action='unknown'){trace('auth-invalidated',{reason:'http-401',action,httpStatus:401});clearSession(false,'http-401');purgeAccountCache();showGate('login')}
 function emitSocial(){document.dispatchEvent(new CustomEvent('puplan:social-changed',{detail:socialData}))}
 function applySocial(social){socialData=social||{relationships:[],profiles:[],friends:[],meetups:[]};if(!socialData.meetups)socialData.meetups=[];const cloud=Array.isArray(socialData.friends)?socialData.friends:[];const legacy=(app?.friends?.()||[]).filter(f=>!f.cloud);app?.setFriends?.([...cloud,...legacy]);renderRequests();emitSocial()}
@@ -113,10 +114,10 @@ async function bootstrap(){
 async function login(email,password){
   trace('auth-login-start',{stage:'password'});
   try{
-    const data=await api('login',{email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-login-success',{status:'verified'});return data
+    const epoch=authEpoch;const data=await api('login',{email,password},false);assertCurrentAuthentication(epoch);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-login-success',{status:'verified'});return data
   }catch(e){trace('auth-login-failure',{httpStatus:Number(e?.status)||0,connectivity:e?.connectivity===true,outcome:e?.connectivity?'connectivity':'rejected'});throw e}
 }
-async function signup(display_name,username,email,password){const data=await api('signup',{display_name,username,email,password},false);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-signup-success',{status:'verified'});return data}
+async function signup(display_name,username,email,password){const epoch=authEpoch;const data=await api('signup',{display_name,username,email,password},false);assertCurrentAuthentication(epoch);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-signup-success',{status:'verified'});return data}
 async function logout(){trace('auth-logout',{reason:'user'});clearSession(true,'logout');purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
 async function updateProfile(display_name,username,opts={}){
   username=normalizeUsername(username);if(!display_name?.trim())return app?.toast?.('請輸入顯示名稱');if(!/^[a-z0-9_.]{2,24}$/.test(username))return app?.toast?.('@帳號需 2–24 字，只能英文、數字、底線、句點');
@@ -154,9 +155,56 @@ async function respondMeetup(meetup_id,decision){try{const data=await api('respo
 async function cancelMeetup(meetup_id){try{const data=await api('cancel_meetup',{meetup_id});applySocial(data.social);socialLoaded=true;app?.toast?.('邀約已取消');return true}catch(e){app?.toast?.(e.message);return false}}
 
 $$('[data-auth-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.authTab));
-$('#guestMode')?.addEventListener('click',()=>{trace('auth-guest-mode',{reason:'user'});clearSession(false,'guest-mode');purgeAccountCache();localStorage.setItem('puplan_guest','1');hideGate();app?.toast?.('目前使用訪客模式')});
-$('#registerForm')?.addEventListener('submit',async e=>{e.preventDefault();const display_name=$('#regName').value.trim(),username=normalizeUsername($('#regUsername').value),email=$('#regEmail').value.trim(),password=$('#regPassword').value;if(!/^[a-z0-9_.]{2,24}$/.test(username))return setAuthStatus('@帳號需 2–24 字，只能英文、數字、底線、句點',true);if(password.length<8)return setAuthStatus('密碼至少 8 個字元',true);setAuthStatus('建立帳號中…');try{await signup(display_name,username,email,password);setAuthStatus('註冊完成');app?.toast?.('帳號建立完成')}catch(err){setAuthStatus(err.message,true)}});
-$('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault();setAuthStatus('登入中…');try{await login($('#loginEmail').value.trim(),$('#loginPassword').value);setAuthStatus('');app?.toast?.('登入成功')}catch(err){setAuthStatus(err.message,true)}});
+$('#guestMode')?.addEventListener('click',()=>{
+  const resume=!token&&!profile&&window.NOLU_GUEST_PRIVACY?.canResumeGuest?.()===true;
+  trace('auth-guest-mode',{reason:resume?'resume-guest':'user'});
+  clearSession(false,'guest-mode');
+  if(!resume)purgeAccountCache();
+  localStorage.setItem('puplan_guest','1');hideGate();
+  app?.toast?.(resume?'已返回課表，內容保留在此裝置':'目前使用訪客模式');
+});
+function assertCurrentAuthentication(epoch){
+  if(epoch!==authEpoch)throw cloudError('已取消這次登入',{code:'AUTH_CANCELLED'});
+}
+function releaseAuthentication(task){
+  if(!task)return;
+  for(const control of task.controls)control.element.disabled=control.disabled;
+  task.form.removeAttribute('aria-busy');task.button.textContent=task.label;
+  if(activeAuth===task)activeAuth=null;
+}
+function cancelAuthentication(){
+  authEpoch++;releaseAuthentication(activeAuth);
+}
+async function submitAuthentication(form,kind){
+  if(activeAuth)return;
+  const registering=kind==='register';
+  const name=$('#regName').value.trim(),username=normalizeUsername($('#regUsername').value);
+  if(registering&&!name)return setAuthStatus('請填寫顯示名稱，不能只填空白。',true);
+  if(registering&&!/^[a-z0-9_.]{2,24}$/.test(username))return setAuthStatus('@帳號需 2–24 字，只能英文、數字、底線、句點',true);
+  const email=$(registering?'#regEmail':'#loginEmail').value.trim();
+  const password=$(registering?'#regPassword':'#loginPassword').value;
+  if(registering&&password.length<8)return setAuthStatus('密碼至少 8 個字元',true);
+  const guestCount=window.NOLU_GUEST_PRIVACY?.canResumeGuest?.()?app?.courses?.().length||0:0;
+  if(guestCount&&!confirm(`繼續${registering?'建立帳號':'登入'}？\n成功後會顯示帳號的課表，目前 ${guestCount} 門訪客課程不會自動合併。還沒備份的話，請先取消並選「下載這份課表」。`))return;
+  const button=form.querySelector('.auth-submit');
+  const task={form,button,label:button.textContent,epoch:++authEpoch,controls:[]};
+  task.controls=$$('[data-auth-tab],#registerForm input,#loginForm input,.auth-submit,.password-toggle').map(element=>({element,disabled:element.disabled}));
+  task.controls.forEach(control=>control.element.disabled=true);
+  activeAuth=task;form.setAttribute('aria-busy','true');
+  button.textContent=registering?'建立中…':'登入中…';
+  setAuthStatus(registering?'正在建立帳號，請勿重複送出。':'正在驗證帳號；返回課表可取消等待。');
+  try{
+    if(registering)await signup(name,username,email,password);else await login(email,password);
+    if(activeAuth===task){setAuthStatus('');app?.toast?.(registering?'帳號建立完成':'登入成功')}
+  }catch(error){
+    if(activeAuth===task&&task.epoch===authEpoch){
+      setAuthStatus(error.message||'目前無法登入，請再試一次。',true);
+      $(registering?'#regPassword':'#loginPassword')?.focus();
+    }
+  }finally{if(activeAuth===task)releaseAuthentication(task)}
+}
+$('#registerForm')?.addEventListener('submit',event=>{event.preventDefault();submitAuthentication(event.currentTarget,'register')});
+$('#loginForm')?.addEventListener('submit',event=>{event.preventDefault();submitAuthentication(event.currentTarget,'login')});
 $('#cloudFriendSearch')?.addEventListener('input',e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchPeople(e.target.value),260)});
 document.addEventListener('puplan:courses-changed',e=>queueSchedule(e.detail||[]));
 $$('[data-view="friends"]').forEach(b=>b.addEventListener('click',()=>{if(isSignedIn()&&!socialLoaded)loadSocial().catch(()=>{})}));
