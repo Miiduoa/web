@@ -1,9 +1,11 @@
 /* Direct manipulation remains scoped to the owner's weekly grid. */
 .direct-grid-entry{margin:0 0 16px;background:var(--surface);color:#304b36;border-color:#bdcbb4;max-width:100%;white-space:normal;text-align:left}
 .schedule-presentation-classic:not(.schedule-day-mode) .direct-grid-entry{display:none}
-.direct-tools{display:flex;align-items:center;gap:12px;margin:0 0 14px;min-height:44px;max-width:900px}
-.direct-tools p{margin:0;font-size:13px;line-height:1.7;color:var(--muted);flex:1;overflow-wrap:anywhere}
+.direct-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px;margin:0 0 14px;min-height:44px;max-width:900px}
+.direct-tools p{margin:0;font-size:13px;line-height:1.7;color:var(--muted);flex:1;overflow-wrap:anywhere;height:3.4em;overflow-y:auto;overscroll-behavior:contain}
 .direct-tools .btn{flex-shrink:0}
+#cancelPlacement[hidden]{display:inline-flex!important;visibility:hidden;pointer-events:none}
+#grid .cell.time small{font-size:10px;line-height:1.5}
 .schedule-day-mode .direct-tools{display:none}
 #grid{grid-auto-rows:84px;isolation:isolate}
 #grid [data-slot][data-occupied="false"]{cursor:crosshair;position:relative}
@@ -39,7 +41,7 @@ body:has(#directUndo:not([hidden])) .toast{bottom:calc(260px + env(safe-area-ins
   #schedule #grid .course{padding:8px 46px 7px 9px}
   #schedule #grid .course>b{font-size:12px}#schedule #grid .course>small{font-size:10px;line-height:1.5}
   #grid .course-move-handle{right:4px;top:4px}
-  .direct-tools{flex-wrap:wrap;gap:8px}.direct-tools p{flex-basis:100%}
+  .direct-tools{flex-wrap:wrap;gap:8px}.direct-tools p{height:5.1em}
   .direct-tools .btn{margin-left:auto}
   #moveConflictDialog{padding:20px}#moveConflictDialog h2{font-size:19px}
   #moveConflictDialog .modal-actions .btn{flex:1}

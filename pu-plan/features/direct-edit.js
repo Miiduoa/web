@@ -229,7 +229,9 @@ export function initDirectEdit() {
     if(task.kind==='create')openAt(plan.draft);else requestMove(task,plan);
   });
   document.addEventListener('pointercancel',event=>{if(gesture?.id===event.pointerId)cancelGesture('操作已中斷，原課表沒有變更。')});
-  grid.addEventListener('lostpointercapture',event=>{if(gesture?.id===event.pointerId)cancelGesture('操作已中斷，原課表沒有變更。')});
+  // Touch starts with implicit capture on the handle. Its capture hand-off
+  // bubbles a lost event; only loss from our grid can cancel an active drag.
+  grid.addEventListener('lostpointercapture',event=>{if(event.target===grid&&gesture?.id===event.pointerId)cancelGesture('操作已中斷，原課表沒有變更。')});
   // Capture before existing card click/keydown handlers to prevent post-drag editing.
   grid.addEventListener('click',event=>{
     if(performance.now()<suppressUntil && event.detail!==0){event.preventDefault();event.stopImmediatePropagation();return;}

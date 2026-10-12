@@ -95,7 +95,7 @@ with sync_playwright() as p:
         passed('undo is invalidated by newer data rather than restoring an old snapshot')
         seed();before=state();page.evaluate("""()=>{window.realSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='puplan_courses')throw new DOMException('full','QuotaExceededError');return window.realSetItem.call(this,k,v)}}""")
         handle().click();clickslot(2,5);assert state()==before;expect(page.locator('#directUndo')).not_to_be_visible()
-        page.evaluate('Storage.prototype.setItem=window.realSetItem')
+        page.evaluate('()=>{Storage.prototype.setItem=window.realSetItem;}')
         passed('storage failure does not claim success, lose data or offer a false undo')
         seed();start_cell=page.locator('#grid [data-slot="1:1"]');start_cell.focus();page.keyboard.press('ArrowRight');focused=page.evaluate('document.activeElement.dataset.slot');assert focused=='2:1'
         page.keyboard.press('Enter');expect(page.locator('#courseDialog')).to_be_visible();close_editor()
