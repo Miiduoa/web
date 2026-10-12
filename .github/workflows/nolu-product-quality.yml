@@ -39,6 +39,7 @@ jobs:
           python tests/product/browser.py
           python tests/product/usability.py
           python tests/product/experience.py
+          python tests/product/editor_feedback.py
       - name: Preserve screenshots and test results
         if: always()
         uses: actions/upload-artifact@v4

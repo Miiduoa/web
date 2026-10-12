@@ -110,20 +110,13 @@ export function initExperience() {
   decorateNavigation();
   const skip = document.createElement('a'); skip.className = 'skip-link'; skip.href = '#mainContent'; skip.textContent = '跳到主要內容';
   const main = $('.main'); main.id = 'mainContent'; main.tabIndex = -1; $('.shell').prepend(skip);
-  function syncEmpty() {
-    const empty=courses().length===0;
-    document.body.classList.toggle('schedule-is-empty', empty);
-    const guest=localStorage.getItem('puplan_guest')==='1'&&!localStorage.getItem('puplan_course_owner');
-    $('#workspaceMode').hidden=!guest;
-    $('#quickBackup').disabled=empty;
-  }
+  function syncEmpty() { document.body.classList.toggle('schedule-is-empty', courses().length === 0); }
   document.addEventListener('puplan:courses-changed', syncEmpty);
   document.addEventListener('puplan:profile-changed', syncEmpty); syncEmpty();
   // Remote renders intentionally do not dispatch a user-edit event.
   const count = $('#count');
   if (count) new MutationObserver(syncEmpty).observe(count, {childList:true, characterData:true, subtree:true});
   installBackup();
-  $('#quickBackup').onclick=()=>$('#downloadSchedule').click();
 }
 
 function installBackup() {

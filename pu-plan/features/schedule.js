@@ -1,5 +1,5 @@
 import {$,$$,DAYS,PERIODS,courses,scheduleMeta,write,uid,esc,time,toast,getSelectedDay,setSelectedDay} from '../core/state.js';
-import {courseKey} from '../core/import-plan.js';
+import {nextClass,dateLabel} from '../core/planning.js';
 import {scheduleGroups} from '../core/schedule-layout.js';
 
 function renderStats(){
@@ -8,8 +8,8 @@ function renderStats(){
   $('#today').textContent=today.length;$('#hours').textContent=occupied.size;$('#count').textContent=all.length;
   const hello=now.getHours()<12?'早安':now.getHours()<18?'下午好':'晚上好';
   $('#greet').textContent=!scheduled.length?`${hello}，從這週的課表開始。`:today.length?`${hello}，今天有 ${today.length} 門課。`:`${hello}，今天沒有排課。`;
-  if($('#scheduleDate'))$('#scheduleDate').textContent=new Intl.DateTimeFormat('zh-TW',{month:'long',day:'numeric',weekday:'long'}).format(now);
-  $('#summary').textContent=scheduled.length?'每週固定課表 · 點選課程，就能修改時間與教室。':'新增課程或匯入課表截圖，將時間整理在同一個地方。';
+  const next=nextClass(scheduled,now);
+  $('#summary').textContent=next?`${next.kind==='now'?'正在上課':'下一堂'}：${next.course.name} · ${dateLabel(next.date)} ${time(next.course)}${next.course.room?' · '+next.course.room:''}`:'新增課程或匯入課表截圖，將時間整理在同一個地方。';
 }
 function bindCourses(root){
   root.querySelectorAll('[data-course]').forEach(el=>{
@@ -81,7 +81,7 @@ if(!all.length){
   root.querySelector('[data-empty-import]').onclick=()=>$('#importSchedule').click();
   root.querySelector('[data-empty-add]').onclick=()=>openCourse();return;
 }
-root.innerHTML=DAYS.map((d,i)=>{const day=i+1,cs=all.filter(c=>c.day===day).sort((a,b)=>a.start-b.start);return `<section class="human-day${today===day?' today':''}${selected===day?' focus':''}" data-week-day="${day}"><header><div><b>${d[1]}</b><small>${today===day?'今天 · ':''}${cs.length} 門課</small></div><button type="button" class="day-add" data-add-day="${day}" aria-label="在${d[1]}新增課程">＋</button></header><div class="human-day-body">${cs.length?cs.map(c=>`<article class="human-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time class="human-course-time"><b>${time(c)}</b><small>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</small></time><div class="human-course-main"><b>${esc(c.name)}</b><p>${[c.teacher,c.room].filter(Boolean).map(esc).join(' · ')||'尚未填寫老師 / 教室'}</p></div></article>`).join(''):'<div class="human-free">這天沒有排課。</div>'}</div></section>`}).join('');bindCourses(root);root.querySelectorAll('[data-add-day]').forEach(button=>button.onclick=()=>{setSelectedDay(+button.dataset.addDay);openCourse()})}
+root.innerHTML=DAYS.map((d,i)=>{const day=i+1,cs=all.filter(c=>c.day===day).sort((a,b)=>a.start-b.start);return `<section class="human-day${today===day?' today':''}${selected===day?' focus':''}" data-week-day="${day}"><header><div><b>${d[1]}</b><small>${today===day?'今天 · ':''}${cs.length} 門課</small></div></header><div class="human-day-body">${cs.length?cs.map(c=>`<article class="human-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time class="human-course-time"><b>${time(c)}</b><small>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</small></time><div class="human-course-main"><b>${esc(c.name)}</b><p>${[c.teacher,c.room].filter(Boolean).map(esc).join(' · ')||'尚未填寫老師 / 教室'}</p></div></article>`).join(''):'<div class="human-free">這天沒有排課。</div>'}</div></section>`}).join('');bindCourses(root)}
 
 function renderMobile(){const root=$('#mobile');if(!root)return;const list=courses().filter(c=>c.day===getSelectedDay()&&c.day>=1).sort((a,b)=>a.start-b.start);root.innerHTML=list.length?list.map(c=>`<article class="mobile-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time>${time(c)}<br><span>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</span></time><div><b>${esc(c.name)}</b><p>${esc(c.teacher||'')} ${c.teacher&&c.room?'·':''} ${esc(c.room||'')}</p></div></article>`).join(''):'<div class="project-note">這天沒有排課。</div>';bindCourses(root)}
 
@@ -107,52 +107,32 @@ function syncScheduleVisibility(){
   }
 }
 
-export function applyScheduleMode(mode=localStorage.getItem('puplan_schedule_mode')||(matchMedia('(max-width:680px)').matches?'day':'week')){const next=mode==='day'?'day':'week';document.body.classList.toggle('schedule-day-mode',next==='day');$$('[data-schedule-mode]').forEach(b=>{b.classList.toggle('on',b.dataset.scheduleMode===next);b.setAttribute('aria-pressed',String(b.dataset.scheduleMode===next))});localStorage.setItem('puplan_schedule_mode',next);syncScheduleVisibility()}
+export function applyScheduleMode(mode=localStorage.getItem('puplan_schedule_mode')||'week'){const next=mode==='day'?'day':'week';document.body.classList.toggle('schedule-day-mode',next==='day');$$('[data-schedule-mode]').forEach(b=>{b.classList.toggle('on',b.dataset.scheduleMode===next);b.setAttribute('aria-pressed',String(b.dataset.scheduleMode===next))});localStorage.setItem('puplan_schedule_mode',next);syncScheduleVisibility()}
 
 export function applyPresentation(mode=localStorage.getItem('puplan_schedule_presentation')||'human'){const next=mode==='classic'?'classic':'human';document.body.classList.toggle('schedule-presentation-classic',next==='classic');document.body.classList.toggle('schedule-presentation-human',next==='human');$$('[data-presentation]').forEach(b=>{b.classList.toggle('on',b.dataset.presentation===next);b.setAttribute('aria-pressed',String(b.dataset.presentation===next))});localStorage.setItem('puplan_schedule_presentation',next);syncScheduleVisibility()}
 
 export function renderSchedule(){renderStats();renderTabs();renderGrid();renderHumanWeek();renderMobile();clearLegacyMobileWeek();renderWarnings();checkUndo();renderFloatingCourses();renderScheduleMeta();applyScheduleMode();applyPresentation();syncScheduleVisibility()}
 
-function clearCourseError(){const el=$('#courseError');el.hidden=true;el.textContent='';$('#courseForm').querySelectorAll('[aria-invalid]').forEach(field=>field.removeAttribute('aria-invalid'))}
+function clearCourseError(){const el=$('#courseError');el.hidden=true;el.textContent='';$('#courseName').removeAttribute('aria-invalid')}
 function courseError(message,field){const el=$('#courseError');el.textContent=message;el.hidden=false;if(field){field.setAttribute('aria-invalid','true');field.focus()}return false}
 function toggleCourseTimeFields(){
   const off=+$('#day').value===0;$('#start').disabled=off;$('#end').disabled=off;
   if(!off&&+$('#end').value<+$('#start').value)$('#end').value=$('#start').value;
   [...$('#end').options].forEach(option=>option.disabled=!off&&+option.value<+$('#start').value);
-  renderCourseFeedback();
 }
-
-function draftCourse(){return {id:$('#courseId').value,name:$('#courseName').value.trim(),day:+$('#day').value,start:+$('#day').value===0?0:+$('#start').value,end:+$('#day').value===0?0:+$('#end').value}}
-function renderCourseFeedback(){
-  const box=$('#courseFeedback');if(!box)return;
-  const draft=draftCourse(),others=courses().filter(course=>course.id!==draft.id);
-  const duplicate=draft.name&&others.find(course=>courseKey(course)===courseKey(draft));
-  const conflicts=draft.day>0?others.filter(course=>course.day===draft.day&&course.start<=draft.end&&course.end>=draft.start):[];
-  box.dataset.kind=duplicate?'duplicate':conflicts.length?'conflict':'clear';
-  box.replaceChildren();
-  const heading=document.createElement('b');
-  heading.textContent=draft.day===0?'時間未排定':`${DAYS[draft.day-1]?.[1]||''} · ${time(draft)}`;
-  const detail=document.createElement('span');
-  detail.textContent=duplicate?'已有相同課名與時段，請編輯原課程，不會重複新增。':conflicts.length?`與「${conflicts.map(course=>course.name).join('」、「')}」時間重疊；儲存前請再次確認。`:draft.day===0?'會保留在課表上方，等時間確定後再排入。':'目前沒有與其他課程重疊。';
-  box.append(heading,detail);
-}
-
 function persistCourses(next){
   try{write('puplan_courses',next)}catch{return courseError('這次尚未儲存：瀏覽器儲存空間不足或存取被阻擋。請保留目前內容，不要清除網站資料。')}
   document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:courses()}));return true;
 }
 
-export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;if(id&&!c)return toast('這門課已被移除或更新，請重新選擇。');$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;renderCourseFeedback();$('#courseDialog').showModal();$('#courseName').focus()}
+export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;if(id&&!c)return toast('這門課已被移除或更新，請重新選擇。');$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;$('#courseDialog').showModal()}
 
 export function initSchedule(){
-  const feedback=document.createElement('div');feedback.id='courseFeedback';feedback.className='course-feedback';feedback.setAttribute('role','status');
-  $('#courseError').before(feedback);
   $('#day').innerHTML='<option value="0">未排定 / 依公告</option>'+DAYS.map((d,i)=>`<option value="${i+1}">${d[1]}</option>`).join('');
   ['start','end'].forEach(id=>$('#'+id).innerHTML=PERIODS.map((p,i)=>`<option value="${i+1}">第 ${i+1} 節　${p[0]}–${p[1]}</option>`).join(''));
   $('#day').addEventListener('change',toggleCourseTimeFields);
   $('#start').addEventListener('change',toggleCourseTimeFields);
-  $('#courseForm').addEventListener('input',()=>{clearCourseError();renderCourseFeedback()});
-  $('#courseForm').addEventListener('change',renderCourseFeedback);
+  $('#courseForm').addEventListener('input',clearCourseError);
   $('#courseForm').onsubmit=e=>{
     e.preventDefault();clearCourseError();const all=courses(),oldId=$('#courseId').value,id=oldId||uid(),start=+$('#start').value,end=+$('#end').value,day=+$('#day').value,name=$('#courseName').value.trim();
     if(!name)return courseError('請輸入課程名稱，不能只填空白。',$('#courseName'));
@@ -162,13 +142,10 @@ export function initSchedule(){
     if(oldId&&index<0)return courseError('這門課已被其他更新移除，請關閉後重新確認課表。');
     if(index<0&&all.length>=80)return courseError('目前已達 80 門課的上限，請先整理課程，不會覆蓋既有資料。');
     const item={id,name,day,start:day===0?0:start,end:day===0?0:end,teacher:$('#teacher').value.trim(),room:$('#room').value.trim(),color:$('#color').value};
-    const duplicate=all.find(course=>course.id!==id&&courseKey(course)===courseKey(item));
-    if(duplicate)return courseError('已有相同課名與時段，請直接編輯原課程。這次沒有重複新增。',$('#courseName'));
     const hit=day===0?null:all.find(c=>c.id!==id&&c.day===day&&!(end<c.start||start>c.end));
     if(hit&&!confirm(`與「${hit.name}」衝堂，仍要儲存？`))return;
     index<0?all.push(item):all[index]=item;
     if(!persistCourses(all))return;
-    if(day>0){setSelectedDay(day);renderSchedule()}
     $('#courseDialog').close();toast(`${index<0?'課程已新增':'課程已更新'}，已儲存在此裝置`);
   };
   $('#deleteCourse').onclick=()=>{

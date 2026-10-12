@@ -6,6 +6,8 @@ import {smartAnalysis,renderSmartOverview,buildAIContext} from './features/analy
 import {changeView,initNavigation} from './features/navigation.js';
 import {initSettings} from './features/settings.js';
 import {initExperience} from './features/experience.js';
+import {initEditorFeedback} from './features/editor-feedback.js';
+import {initDailyUI} from './features/daily-ui.js';
 
 function renderAll(){renderSchedule();renderFriends();renderShare()}
 window.PUPLAN_AI={courses,friends,getSelectedFriend:()=>friends().find(x=>x.id===getSelectedFriend()),buildAIContext,smartAnalysis,esc,time,DAYS,PERIODS,toast};
@@ -20,7 +22,7 @@ window.PUPLAN_APP={
   setSelectedFriend:id=>{setSelectedFriend(id);renderFriends()}
 };
 
-initNavigation();initSchedule();initFriends();initSettings();initExperience();
+initNavigation();initSchedule();initFriends();initSettings();initExperience();initEditorFeedback();initDailyUI();
 $$('[data-smart]').forEach(b=>b.onclick=()=>smartAnalysis(b.dataset.smart));
 renderAll();
 

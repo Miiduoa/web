@@ -29,12 +29,6 @@
 .workspace-mode{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;line-height:1.6;color:#53614e;border-bottom:1px solid var(--line);padding:2px 0 8px}
 .workspace-mode button{border:0;background:transparent;color:#365c3b;font:inherit;font-weight:650;min-height:44px;padding:8px 0 8px 12px;white-space:nowrap;text-decoration:underline;text-underline-offset:4px}
 .workspace-mode button:disabled{opacity:.5;text-decoration:none}
-#schedule #humanWeek .human-day>header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding-block:8px}
-#schedule .day-add{display:grid;place-items:center;width:44px;height:44px;flex:0 0 44px;border:1px solid #d6ddce;border-radius:11px;background:#fffefa;color:#375535;font-size:22px;line-height:1}
-#schedule .day-add:hover{background:#e0e9d5}
-.course-feedback{display:grid;gap:5px;margin:18px 0 0;padding:14px 16px;border:1px solid #dce3d4;border-radius:12px;background:#f2f5ed;color:#3c553c;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
-.course-feedback b{font-size:14px}.course-feedback[data-kind="conflict"],.course-feedback[data-kind="duplicate"]{background:#fff6e6;border-color:#ddbd8b;color:#72511f}
-#courseDialog .modal-actions{position:sticky;bottom:-26px;background:var(--surface);padding-block:14px;margin-top:18px}
 @media(max-width:680px){
   #schedule .hero-side{background:transparent;border:0;gap:0;justify-content:flex-start}
   #schedule .stat{display:flex;align-items:baseline;gap:7px;padding:2px 18px 2px 0}
@@ -46,7 +40,6 @@
   #schedule .view-switch button,#schedule .presentation-switch button{flex:1;padding-inline:8px;font-size:13px}
   #schedule .today-shortcut{width:100%;text-align:right;min-height:44px;margin-top:-4px;padding-right:2px}
   #schedule .daytabs{gap:4px}#schedule .daytabs button{padding-inline:4px;font-size:12px}
-  #courseDialog .modal-actions{bottom:-22px}#courseDialog .editor-hint{margin-bottom:16px}
   .auth-poster .auth-copy h1{font-size:32px}.auth-copy p{font-size:13px}.entry-eyebrow{margin-bottom:10px}
 }
 @media(max-width:360px){.auth-poster .auth-copy h1{font-size:28px}.workspace-mode{font-size:11px}}
