@@ -1,5 +1,5 @@
 """Local HTTPS UI regression with production CSP and no external services."""
-import functools, http.server, json, ssl, subprocess, tempfile, threading, time, traceback
+import functools, http.server, json, re, ssl, subprocess, tempfile, threading, time, traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 ROOT=Path(__file__).resolve().parents[2]
@@ -34,10 +34,10 @@ with sync_playwright() as p:
                 page.goto(origin+'/pu-plan/');ready(page)
                 expect(page.locator('#guestMode')).to_be_visible()
                 assert page.locator('#guestMode').bounding_box()['y']<550
-                page.screenshot(path=str(OUT/f'{key}-entry.png'),full_page=True)
+                page.screenshot(path=str(OUT/f'{key}-entry.png'),full_page=True,timeout=30000)
                 checks.append('local-use entry is visible before registration fields')
                 page.locator('#guestMode').click()
-                page.screenshot(path=str(OUT/f'{key}-empty.png'),full_page=True)
+                page.screenshot(path=str(OUT/f'{key}-empty.png'),full_page=True,timeout=30000)
                 expect(page.locator('#workspaceMode')).to_be_visible()
                 expect(page.locator('#quickBackup')).to_be_disabled()
                 if width==390:assert page.evaluate("document.body.classList.contains('schedule-day-mode')")
@@ -57,7 +57,7 @@ with sync_playwright() as p:
                 expect(page.locator('#coursePreview')).to_contain_text('課表已有')
                 page.locator('#saveCourse').click();expect(page.locator('#courseError')).to_contain_text('重複')
                 assert page.evaluate('PUPLAN_APP.courses().length')==1
-                page.screenshot(path=str(OUT/f'{key}-duplicate.png'),full_page=True)
+                page.screenshot(path=str(OUT/f'{key}-duplicate.png'),full_page=True,timeout=30000)
                 page.once('dialog',lambda d:d.accept());page.locator('#courseDialog [data-close]').first.click()
                 checks.append('normalized duplicate cannot silently add a second course')
                 page.locator('[data-schedule-mode="week"]').click();page.locator('[data-day-add="2"]').click()
@@ -75,13 +75,13 @@ with sync_playwright() as p:
                 checks.append('all four primary screens fit 320,390,768,1440px')
                 page.set_viewport_size({'width':width,'height':900});page.evaluate("PUPLAN_APP.changeView('schedule')")
                 if width==390:page.locator('[data-schedule-mode="day"]').click()
-                page.wait_for_function("!document.querySelector('#toast').classList.contains('on')")
-                page.screenshot(path=str(OUT/f'{key}-schedule.png'),full_page=True)
+                expect(page.locator('#toast')).not_to_have_class(re.compile(r'\bon\b'),timeout=10000)
+                page.screenshot(path=str(OUT/f'{key}-schedule.png'),full_page=True,timeout=30000)
                 assert not errors,errors
                 checks.append('no uncaught JavaScript exceptions')
                 results.append({'engine':engine,'width':width,'passed':checks,'error':None})
             except Exception:
-                page.screenshot(path=str(OUT/f'{key}-failure.png'),full_page=True)
+                page.screenshot(path=str(OUT/f'{key}-failure.png'),full_page=True,timeout=30000)
                 results.append({'engine':engine,'width':width,'passed':checks,'error':traceback.format_exc(),'console':console,'failed_requests':failed,'page_errors':errors,'html':page.content()[:15000]})
             finally:context.close()
         browser.close()
