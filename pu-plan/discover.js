@@ -80,10 +80,23 @@ async function openPreference(username,post){
   d.showModal();
 }
 function installFeedMode(){
-  const host=document.querySelector('#communityBody .feed-layout > div');if(!host||host.querySelector('.feed-mode-bar'))return;
-  const bar=document.createElement('div');bar.className='feed-mode-bar';bar.innerHTML='<button data-feed-mode="for_you">推薦</button><button data-feed-mode="latest">最新</button>';host.prepend(bar);
-  const mode=localStorage.getItem('nolu_feed_mode')||'for_you';
-  bar.querySelectorAll('[data-feed-mode]').forEach(b=>{b.classList.toggle('on',b.dataset.feedMode===mode);b.onclick=()=>{localStorage.setItem('nolu_feed_mode',b.dataset.feedMode);window.PUPLAN_COMMUNITY?.reloadFeed?.()}});
+  const host=document.querySelector('#communityBody .feed-layout > div');
+  const list=host?.querySelector('#feedList');
+  if(!list||host.querySelector('.feed-mode-bar'))return;
+  const bar=document.createElement('div');bar.className='feed-mode-bar';
+  bar.setAttribute('role','group');bar.setAttribute('aria-label','動態排序');
+  bar.innerHTML='<button type="button" data-feed-mode="for_you">推薦</button><button type="button" data-feed-mode="latest">最新</button>';
+  // Sorting belongs to the feed, below the composer, without replacing its draft.
+  list.before(bar);
+  const select=mode=>bar.querySelectorAll('[data-feed-mode]').forEach(button=>{
+    const selected=button.dataset.feedMode===mode;
+    button.classList.toggle('on',selected);button.setAttribute('aria-pressed',String(selected));
+  });
+  select(localStorage.getItem('nolu_feed_mode')==='latest'?'latest':'for_you');
+  bar.querySelectorAll('[data-feed-mode]').forEach(button=>button.onclick=()=>{
+    localStorage.setItem('nolu_feed_mode',button.dataset.feedMode);
+    select(button.dataset.feedMode);window.PUPLAN_COMMUNITY?.reloadFeed?.();
+  });
 }
 function enhance(){
   installFeedMode();

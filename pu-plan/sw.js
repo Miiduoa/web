@@ -1,4 +1,4 @@
-const CACHE='nolu-shell-20261012-mobileweek1';
+const CACHE='nolu-shell-20261012-community1';
 const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
