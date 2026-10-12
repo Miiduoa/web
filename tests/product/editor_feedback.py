@@ -52,6 +52,25 @@ with sync_playwright() as p:
         expect(page.locator('#courseName')).to_be_focused()
         expect(page.locator('#courseTimeSummary')).to_contain_text('星期二')
         passed('weekday add selects the correct day and focuses the course name')
+        expect(page.locator('#start option:checked')).to_have_text('3 · 10:10')
+        expect(page.locator('#end option:checked')).to_have_text('4 · 12:00')
+        assert page.evaluate("""()=>['start','end'].every((id,boundary)=>
+          [...document.querySelector('#'+id).options].every((option,index)=>
+            option.textContent === `${index+1} · ${PUPLAN_APP.PERIODS[index][boundary]}`))""")
+        passed('compact period choices display the actual start and end boundaries')
+        prompts = dialogs['count']
+        close()
+        assert dialogs['count'] == prompts
+        assert page.evaluate("async()=> (await import('./core/state.js')).getSelectedDay()") == 1
+        page.locator('[data-schedule-mode="day"]').click()
+        expect(page.locator('#tabs [data-day="1"]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('#humanWeek [data-week-day="1"]')).to_be_visible()
+        page.locator('#mobileAdd').click()
+        expect(page.locator('#day')).to_have_value('1')
+        close()
+        page.locator('[data-schedule-mode="week"]').click()
+        page.locator('#humanWeek [data-day-add="2"]').click()
+        passed('cancelling contextual entry preserves weekday state, visible tabs and subsequent defaults')
         page.locator('#courseName').fill('Ｗｅｂ  Development')
         page.locator('#day').select_option('1')
         page.locator('#start').select_option('1')
