@@ -1,5 +1,5 @@
 """Local HTTPS UI regression with production CSP and no external services."""
-import functools, http.server, json, re, ssl, subprocess, tempfile, threading, time, traceback
+import functools, http.server, json, ssl, subprocess, tempfile, threading, time, traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 ROOT=Path(__file__).resolve().parents[2]
@@ -75,7 +75,7 @@ with sync_playwright() as p:
                 checks.append('all four primary screens fit 320,390,768,1440px')
                 page.set_viewport_size({'width':width,'height':900});page.evaluate("PUPLAN_APP.changeView('schedule')")
                 if width==390:page.locator('[data-schedule-mode="day"]').click()
-                expect(page.locator('#toast')).not_to_have_class(re.compile(r'\bon\b'),timeout=10000)
+                expect(page.locator('#toast')).not_to_be_visible(timeout=10000)
                 page.screenshot(path=str(OUT/f'{key}-schedule.png'),full_page=True,timeout=30000)
                 assert not errors,errors
                 checks.append('no uncaught JavaScript exceptions')
