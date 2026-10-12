@@ -1,0 +1,28 @@
+/* Course entry uses the existing palette; time and consequences precede saving. */
+#courseDialog{max-height:min(calc(100dvh - 24px),calc(var(--editor-viewport,100dvh) - 24px));scroll-padding-block:76px}
+#courseDialog .modal-head{align-items:center;gap:16px}
+#courseDialog .modal-head .x{width:44px;height:44px;min-width:44px;flex-shrink:0}
+#courseDialog .modal-actions{position:sticky;bottom:0;z-index:2;background:var(--surface);padding-block:14px 2px;isolation:isolate}
+#courseDialog .modal-actions:before{content:"";position:absolute;inset:-8px -8px;z-index:-1;background:var(--surface);border-radius:12px}
+.course-preview{margin-top:20px;padding:16px 18px;border:1px solid #cdd9cb;border-radius:14px;background:#f1f5ec;overflow-wrap:anywhere}
+.course-preview>b{display:block;font-size:15px;line-height:1.6;font-variant-numeric:tabular-nums;color:var(--ink)}
+.course-preview>small{display:block;font-size:12px;line-height:1.8;color:var(--muted);margin-top:4px}
+#courseChecks p{font-size:13px;line-height:1.7;margin:12px 0 0}
+#courseChecks ul{margin:8px 0 0;padding-left:20px;font-size:13px;line-height:1.8}
+#courseChecks li+li{margin-top:4px}
+.course-preview[data-state="warning"]{border-color:#d7b699;background:#fff7eb}
+.course-preview[data-state="duplicate"],.course-preview[data-state="invalid"]{border-color:#d6aaa1;background:#fff2ed}
+.course-preview[data-state="duplicate"] #courseChecks,.course-preview[data-state="invalid"] #courseChecks{color:#802c22}
+#humanWeek .human-day>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#humanWeek .day-add{min-height:44px;min-width:70px;padding:8px 10px;border:1px solid #cdd4c5;border-radius:10px;background:var(--surface);color:#304b36;font:inherit;font-size:13px;font-weight:650;white-space:nowrap}
+#humanWeek .day-add:hover{background:#e4ecd9;border-color:#8b9d7d}
+#humanWeek .day-add:focus-visible,#importDrop:focus-visible{outline:3px solid #496a53;outline-offset:3px}
+.day-empty-add{justify-self:start;margin-top:2px}
+@media(max-width:680px){
+  .course-preview{padding:14px;margin-top:16px}
+  .course-preview>b{font-size:14px}
+  #courseDialog .modal-actions{gap:8px;flex-wrap:wrap}
+  #courseDialog .modal-actions .btn{min-height:46px}
+  #courseDialog .form-error{font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+}
+@media(max-height:560px){#courseDialog form{padding-top:14px;padding-bottom:14px}#courseDialog .editor-hint{margin-bottom:14px}}
