@@ -18,7 +18,7 @@ with sync_playwright() as p:
     browser=getattr(p,ENGINE).launch()
     ctx=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=1,locale='zh-TW',timezone_id='Asia/Taipei',service_workers='block',ignore_https_errors=True)
     ctx.route('**/*',lambda route:route.continue_() if route.request.url.startswith(ORIGIN+'/') else route.abort())
-    page=ctx.new_page();page.set_default_timeout(8000);page.on('pageerror',lambda error:errors.append(str(error)))
+    page=ctx.new_page();page.add_init_script("localStorage.setItem('nolu_week_scale_v1','detail')");page.set_default_timeout(8000);page.on('pageerror',lambda error:errors.append(str(error)))
     def state():return page.evaluate('JSON.stringify(PUPLAN_APP.courses())')
     def slot(day,period):return page.locator(f'#grid [data-slot="{day}:{period}"]')
     def handle():return page.locator('#grid [data-move-course="db"]')
@@ -26,7 +26,7 @@ with sync_playwright() as p:
         b=locator.bounding_box();assert b is not None
         return {'x':b['x']+b['width']/2,'y':b['y']+b['height']/2}
     def frame():
-        page.evaluate("()=>{const grid=document.querySelector('#grid');grid.closest('.table-wrap').scrollLeft=0;window.scrollBy(0,grid.getBoundingClientRect().top-115)}")
+        page.evaluate("()=>{const grid=document.querySelector('#grid');grid.closest('.table-wrap').scrollLeft=0;grid.closest('.table-wrap').scrollTop=0;window.scrollBy(0,grid.getBoundingClientRect().top-115)}")
         page.wait_for_timeout(100)
     def seed():
         page.evaluate('(data)=>PUPLAN_APP.setCoursesFromUser(data)',DATA)
@@ -61,8 +61,8 @@ with sync_playwright() as p:
                 touch('touchCancel' if cancel else 'touchEnd')
                 page.wait_for_timeout(150)
             seed();before=state();body=page.locator('#grid [data-course="db"]').bounding_box();a={'x':body['x']+35,'y':body['y']+body['height']*.65}
-            old_scroll=page.evaluate('scrollY');swipe(a,{'x':a['x'],'y':a['y']-170})
-            assert state()==before;expect(page.locator('#courseDialog')).not_to_be_visible();assert page.evaluate('scrollY')>old_scroll+30
+            old_scroll=page.evaluate("scrollY+document.querySelector('.table-wrap').scrollTop");swipe(a,{'x':a['x'],'y':a['y']-170})
+            assert state()==before;expect(page.locator('#courseDialog')).not_to_be_visible();assert page.evaluate("scrollY+document.querySelector('.table-wrap').scrollTop")>old_scroll+30
             passed('real touch swipe on course body scrolls vertically without moving the course or opening its editor')
             seed();before=state();a=center(slot(2,5));swipe(a,{'x':90,'y':a['y']})
             assert state()==before;assert page.locator('.table-wrap').evaluate('el=>el.scrollLeft')>30;expect(page.locator('#courseDialog')).not_to_be_visible()

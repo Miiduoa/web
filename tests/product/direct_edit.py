@@ -20,7 +20,7 @@ with sync_playwright() as p:
     browser=getattr(p,ENGINE).launch(**options)
     ctx=browser.new_context(viewport={'width':1440,'height':1000},locale='zh-TW',timezone_id='Asia/Taipei',service_workers='block',ignore_https_errors=True)
     ctx.route('**/*',lambda route:route.continue_() if route.request.url.startswith(ORIGIN+'/') else route.abort())
-    page=ctx.new_page();page.set_default_timeout(8000);page.on('pageerror',lambda error:errors.append(str(error)))
+    page=ctx.new_page();page.add_init_script("localStorage.setItem('nolu_week_scale_v1','detail')");page.set_default_timeout(8000);page.on('pageerror',lambda error:errors.append(str(error)))
     def state(): return page.evaluate('JSON.stringify(PUPLAN_APP.courses())')
     def course(): return page.evaluate("PUPLAN_APP.courses().find(c=>c.id==='db')")
     def seed(data=DATA):

@@ -99,6 +99,10 @@ export function initDirectEdit() {
   function slotAt(x,y) {
     const box = wrap.getBoundingClientRect();
     if (x < box.left || x >= box.right || y < Math.max(0,box.top) || y >= Math.min(innerHeight,box.bottom)) return null;
+    const hit=document.elementFromPoint(x,y);if(hit&&!wrap.contains(hit))return null;
+    // Pinned labels cover older rows/columns: never drop through those labels.
+    const topLabel=grid.querySelector('.cell.head'), timeLabel=grid.querySelector('.cell.time');
+    if(getComputedStyle(topLabel).position==='sticky' && (y<topLabel.getBoundingClientRect().bottom || x<timeLabel.getBoundingClientRect().right))return null;
     for (const node of grid.querySelectorAll('[data-slot]')) {
       const r = node.getBoundingClientRect();
       if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return cellValue(node);
@@ -110,7 +114,10 @@ export function initDirectEdit() {
     const first = cellFor(range.day,range.start), last = cellFor(range.day,range.end);
     if (!first || !last) return clearPreview();
     const a=first.getBoundingClientRect(), b=last.getBoundingClientRect(), w=wrap.getBoundingClientRect();
-    const left=Math.max(a.left,w.left), right=Math.min(a.right,w.right), top=Math.max(a.top,w.top,0), bottom=Math.min(b.bottom,w.bottom,innerHeight);
+    const pinned=getComputedStyle(grid.querySelector('.cell.head')).position==='sticky';
+    const visibleLeft=pinned?grid.querySelector('.cell.time').getBoundingClientRect().right:w.left;
+    const visibleTop=pinned?grid.querySelector('.cell.head').getBoundingClientRect().bottom:w.top;
+    const left=Math.max(a.left,visibleLeft), right=Math.min(a.right,w.right), top=Math.max(a.top,visibleTop,0), bottom=Math.min(b.bottom,w.bottom,innerHeight);
     preview.hidden = right <= left || bottom <= top;
     preview.style.left=`${left+3}px`; preview.style.top=`${top+3}px`; preview.style.width=`${Math.max(0,right-left-6)}px`; preview.style.height=`${Math.max(0,bottom-top-6)}px`;
     preview.dataset.warning=String(warning); preview.querySelector('b').textContent = name;
@@ -192,7 +199,9 @@ export function initDirectEdit() {
     if(y>=Math.max(b.top,0)&&y<Math.min(b.bottom,innerHeight)){
       const dx=x>b.right-edge&&x<b.right+8?10:x<b.left+edge&&x>b.left-8?-10:0;
       if(dx)wrap.scrollLeft+=dx;
-      const dy=y>innerHeight-72?12:y<72?-12:0;if(dy)window.scrollBy(0,dy);
+      const insideScroll=wrap.scrollHeight>wrap.clientHeight+1;
+      const dy=insideScroll?(y>Math.min(b.bottom,innerHeight)-32?12:y<Math.max(b.top,0)+72?-12:0):(y>innerHeight-72?12:y<72?-12:0);
+      if(dy){if(insideScroll)wrap.scrollTop+=dy;else window.scrollBy(0,dy);}
     }
     showProposal(gesture,slotAt(x,y));frame=requestAnimationFrame(autoScroll);
   }
@@ -200,6 +209,7 @@ export function initDirectEdit() {
     if(gesture&&event.pointerId!==gesture.id){cancelGesture('已取消多點觸控操作，原課表沒有變更。');return;}
     suppressUntil=0;
     if(!available()||event.button!==0||!event.isPrimary||picked)return;
+    if(classic.dataset.weekDensity==='overview' && matchMedia('(max-width:680px)').matches)return;
     const handle=event.target.closest('[data-move-course]'),node=event.target.closest('.course[data-course]'),cell=event.target.closest('[data-slot]');
     const courseId=handle?.dataset.moveCourse||node?.dataset.course;
     if(courseId && event.pointerType!=='mouse' && !handle)return;
@@ -270,5 +280,6 @@ export function initDirectEdit() {
   document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelGesture()});
   document.addEventListener('puplan:view-changed',()=>cancelGesture());
   document.addEventListener('click',event=>{if(event.target.closest('[data-presentation],[data-schedule-mode],#accountChip'))cancelGesture()},true);
-  document.addEventListener('pointerdown',event=>{if(picked&&!grid.contains(event.target)&&event.target!==cancel)cancelGesture()},true);
+  document.addEventListener('pointerdown',event=>{if(picked&&!grid.contains(event.target)&&event.target!==cancel&&!event.target.closest('[data-week-jump]'))cancelGesture()},true);
+  return Object.freeze({pick:pickCourse,cancel:()=>cancelGesture(gesture||picked?'已取消移動，原課表沒有變更。':'')});
 }

@@ -8,6 +8,7 @@ import {initSettings} from './features/settings.js';
 import {initExperience} from './features/experience.js';
 import {initDirectEdit} from './features/direct-edit.js';
 import {initEditorFeedback} from './features/editor-feedback.js';
+import {initMobileWeek} from './features/mobile-week.js';
 import {initDailyUI} from './features/daily-ui.js';
 
 function renderAll(){renderSchedule();renderFriends();renderShare()}
@@ -23,7 +24,7 @@ window.PUPLAN_APP={
   setSelectedFriend:id=>{setSelectedFriend(id);renderFriends()}
 };
 
-initNavigation();initSchedule();initFriends();initSettings();initExperience();initEditorFeedback();initDirectEdit();initDailyUI();
+initNavigation();initSchedule();initFriends();initSettings();initExperience();initEditorFeedback();const directEditor=initDirectEdit();initDailyUI();initMobileWeek(directEditor);
 $$('[data-smart]').forEach(b=>b.onclick=()=>smartAnalysis(b.dataset.smart));
 renderAll();
 
