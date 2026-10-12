@@ -38,7 +38,7 @@
   #schedule #classicSchedule[data-week-density="overview"] #grid .course>b{font-size:12px;line-height:1.5;-webkit-line-clamp:4;word-break:normal;overflow-wrap:anywhere;letter-spacing:0}
   #schedule #classicSchedule[data-week-density="overview"] #grid .course[data-week-span="1"]>b{-webkit-line-clamp:2}
   #schedule #classicSchedule[data-week-density="overview"] #grid .course>small,#schedule #classicSchedule[data-week-density="overview"] #grid .course-move-handle{display:none}
-  #schedule #classicSchedule[data-week-density="overview"] #grid [data-slot]:after{font-size:20px;content:'＋'}
+  #schedule #classicSchedule[data-week-density="overview"] #grid [data-slot][data-occupied="false"]:hover:after,#schedule #classicSchedule[data-week-density="overview"] #grid [data-slot]:focus-visible:after{font-size:20px;content:'＋'}
   #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict{padding:5px 3px;border-radius:6px}
   #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict b{font-size:12px;line-height:1.5}
   #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict span,#schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict small{display:none}

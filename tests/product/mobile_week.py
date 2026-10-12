@@ -75,7 +75,7 @@ with sync_playwright() as playwright:
         page.locator('[data-week-scale="overview"]').tap()
     def frame():
         page.locator('#weekScale').scroll_into_view_if_needed()
-        page.evaluate("()=>{const wrap=document.querySelector('#grid').closest('.table-wrap');wrap.scrollTop=0;wrap.scrollLeft=0;window.scrollBy(0,document.querySelector('#weekScale').getBoundingClientRect().top-10)}")
+        page.evaluate("()=>{const wrap=document.querySelector('#grid').closest('.table-wrap');wrap.scrollTo({top:0,left:0,behavior:'instant'});const bar=document.querySelector('.topbar').getBoundingClientRect();window.scrollTo({top:Math.max(0,scrollY+document.querySelector('#weekScale').getBoundingClientRect().top-bar.height-10),behavior:'instant'})}")
     def close():
         page.locator('#courseDialog [data-close]').first.tap()
     def pick():
@@ -115,6 +115,8 @@ with sync_playwright() as playwright:
             assert state() == before
         passed('five weekdays fit 320/375/390/430/680px without horizontal scrolling, with >=44px course targets and >=12px titles')
         page.set_viewport_size({'width':390,'height':844});frame()
+        expect(page.locator('#toast.on:not([hidden])')).to_have_count(0,timeout=6000)
+        frame()
         page.screenshot(path=str(OUT/f'mobile-week-{ENGINE}-overview.png'))
         course().tap();expect(page.locator('#teacher')).to_have_value('林老師');expect(page.locator('#room')).to_have_value('主顧324');close()
         passed('tapping a compact course opens the complete existing editor including teacher and room')
@@ -162,10 +164,23 @@ with sync_playwright() as playwright:
             for delta in range(15,136,15):
                 session.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[{'x':x,'y':y-delta}]});page.wait_for_timeout(25)
             session.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]})
+            # Wait for native fling scrolling to finish before starting a separate tap.
+            # A tap during a fling stops scrolling rather than activating the control.
+            last_position=None; stable=0
+            for _ in range(40):
+                page.wait_for_timeout(100)
+                position=page.evaluate("[scrollY,document.querySelector('#grid').closest('.table-wrap').scrollTop]")
+                stable=stable+1 if position==last_position else 0
+                last_position=position
+                if stable>=3: break
+            assert stable>=3, 'Native touch scrolling did not settle'
             expect(page.locator('#courseDialog')).not_to_be_visible();assert state()==before
             assert page.locator('#grid').evaluate("el=>el.closest('.table-wrap').scrollTop")>0
             passed('real Chromium touch swipe over a course scrolls the weekly grid without opening or moving it')
-        page.locator('[data-week-scale="detail"]').tap();page.reload()
+        page.locator('[data-week-scale="detail"]').tap()
+        expect(page.locator('[data-week-scale="detail"]')).to_have_attribute('aria-pressed','true')
+        assert page.evaluate("localStorage.getItem('nolu_week_scale_v1')")=='detail'
+        page.reload()
         expect(page.locator('[data-week-scale="detail"]')).to_have_attribute('aria-pressed','true')
         assert state()==before
         passed('scale preference and the same guest courses survive reload')
@@ -185,6 +200,7 @@ with sync_playwright() as playwright:
         passed('no uncaught exceptions or failed application modules')
     except Exception:
         errors.append(traceback.format_exc())
+        diagnostics.append(page.evaluate("JSON.stringify({scale:localStorage.getItem('nolu_week_scale_v1'),selected:document.querySelector('#classicSchedule')?.dataset.weekDensity,scrollY,viewport:innerWidth})"))
         page.screenshot(path=str(OUT/f'mobile-week-{ENGINE}-failure.png'),full_page=True)
     finally:
         (OUT/f'mobile-week-{ENGINE}.json').write_text(json.dumps({'checks':checks,'errors':errors,'diagnostics':diagnostics},ensure_ascii=False,indent=2))
