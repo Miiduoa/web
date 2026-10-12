@@ -75,7 +75,8 @@ with sync_playwright() as p:
                 checks.append('all four primary screens fit 320,390,768,1440px')
                 page.set_viewport_size({'width':width,'height':900});page.evaluate("PUPLAN_APP.changeView('schedule')")
                 if width==390:page.locator('[data-schedule-mode="day"]').click()
-                expect(page.locator('#toast')).not_to_be_visible(timeout=10000)
+                # Opacity-only toasts still have a box; other versions explicitly hide it.
+                expect(page.locator('#toast.on:not([hidden]):not(.hidden)')).to_have_count(0,timeout=10000)
                 page.screenshot(path=str(OUT/f'{key}-schedule.png'),full_page=True,timeout=30000)
                 assert not errors,errors
                 checks.append('no uncaught JavaScript exceptions')
