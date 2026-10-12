@@ -36,6 +36,7 @@
   #schedule .stat b{font-size:16px;line-height:20px}#schedule .stat span{font-size:12px;line-height:20px}
   #schedule .hero{gap:0;margin:6px 0 8px}
   #schedule .hero-main{padding:0}
+  body:not(.schedule-is-empty) #schedule .hero-main h2{display:none}
   #schedule .schedule-date{margin:0 0 4px;font-size:12px;line-height:1.5}
   #schedule #classPulse{padding:10px 14px;margin-bottom:8px}
   #schedule .schedule-toolbar{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:10px}
