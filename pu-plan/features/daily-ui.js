@@ -6,6 +6,9 @@ export function initDailyUI(){
   if(!localStorage.getItem('puplan_schedule_mode')&&matchMedia('(max-width:680px)').matches){
     localStorage.setItem('puplan_schedule_mode','day');
   }
+  // Keep the optional grid editor available without pushing today's classes down.
+  const gridEntry=$('.direct-grid-entry');
+  if(gridEntry)$('#humanWeek').after(gridEntry);
   const setText=(element,value)=>{if(element&&element.textContent!==value)element.textContent=value};
   function syncOverview(){
     const all=courses();

@@ -6,6 +6,7 @@ import {smartAnalysis,renderSmartOverview,buildAIContext} from './features/analy
 import {changeView,initNavigation} from './features/navigation.js';
 import {initSettings} from './features/settings.js';
 import {initExperience} from './features/experience.js';
+import {initDirectEdit} from './features/direct-edit.js';
 import {initEditorFeedback} from './features/editor-feedback.js';
 import {initDailyUI} from './features/daily-ui.js';
 
@@ -22,7 +23,7 @@ window.PUPLAN_APP={
   setSelectedFriend:id=>{setSelectedFriend(id);renderFriends()}
 };
 
-initNavigation();initSchedule();initFriends();initSettings();initExperience();initEditorFeedback();initDailyUI();
+initNavigation();initSchedule();initFriends();initSettings();initExperience();initEditorFeedback();initDirectEdit();initDailyUI();
 $$('[data-smart]').forEach(b=>b.onclick=()=>smartAnalysis(b.dataset.smart));
 renderAll();
 
