@@ -75,6 +75,7 @@ with sync_playwright() as p:
                 checks.append('all four primary screens fit 320,390,768,1440px')
                 page.set_viewport_size({'width':width,'height':900});page.evaluate("PUPLAN_APP.changeView('schedule')")
                 if width==390:page.locator('[data-schedule-mode="day"]').click()
+                page.wait_for_function("!document.querySelector('#toast').classList.contains('on')")
                 page.screenshot(path=str(OUT/f'{key}-schedule.png'),full_page=True)
                 assert not errors,errors
                 checks.append('no uncaught JavaScript exceptions')

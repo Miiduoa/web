@@ -46,6 +46,7 @@ with sync_playwright() as p:
         expect(page.locator('#classPulse')).to_be_attached(timeout=15000)
         expect(page.locator('.bottom [data-community-open]')).to_be_attached(timeout=15000)
         seed()
+        page.locator('[data-schedule-mode="week"]').click()
         expect(page.locator('#humanWeek [data-day-add]')).to_have_count(5)
         page.locator('#humanWeek [data-day-add="2"]').click()
         expect(page.locator('#day')).to_have_value('2')

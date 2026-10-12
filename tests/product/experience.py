@@ -127,6 +127,7 @@ with sync_playwright() as p:
         overlaps = [COURSES[0], {**COURSES[1], 'start': 3, 'end': 5}]
         seed(page, overlaps)
         expect(page.locator('#scheduleWarnings')).to_contain_text('1 組')
+        page.locator('[data-schedule-mode="week"]').click()
         page.locator('[data-presentation="classic"]').click()
         expect(page.locator('#tabs')).to_be_hidden()
         expect(page.locator('#grid [data-conflict]')).to_have_count(1)
@@ -173,6 +174,7 @@ with sync_playwright() as p:
             seed(page)
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'), f'overflow at {width}'
             shot(page, f'schedule-{width}')
+            page.locator('[data-schedule-mode="week"]').click()
             page.locator('[data-presentation="classic"]').click()
             expect(page.locator('#tabs')).to_be_hidden()
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'), f'grid overflow at {width}'
