@@ -1,14 +1,14 @@
 export function authView({hidden=false}={}){return `
-<div class="auth-gate${hidden?' off':''}" id="authGate">
+<div class="auth-gate${hidden?' off':''}" id="authGate" role="dialog" aria-modal="true" aria-labelledby="authHeading" tabindex="-1">
   <section class="auth-poster" aria-label="nolu">
     <div class="auth-brand"><img src="nolu-icon.svg" alt=""><strong>nolu</strong></div>
-    <div class="auth-copy"><span class="entry-eyebrow">課表・朋友・剛剛好的空檔</span><h1>把時間整理好，<br>把空檔留給生活。</h1><p>下一堂在哪裡、今天什麼時候有空，<br class="entry-break">打開課表就知道。</p></div>
+    <div class="auth-copy"><span class="entry-eyebrow">課表・朋友・剛剛好的空檔</span><h1 id="authHeading">把時間整理好，<br>把空檔留給生活。</h1><p>下一堂在哪裡、今天什麼時候有空，<br class="entry-break">打開課表就知道。</p></div>
     <div class="entry-guide"><div><span>01</span><b>放進你的課表</b><p>手動新增，或匯入學校課表截圖。</p></div><div><span>02</span><b>看清楚今天</b><p>查看下一堂與上課地點，隨時調整。</p></div><div><span>03</span><b>有空再碰面</b><p>登入加好友，找彼此的共同空堂。</p></div></div>
   </section>
   <section class="auth-card" aria-label="開始使用">
     <div class="entry-local"><button class="guest" id="guestMode" type="button">先使用課表，不登入 <span aria-hidden="true">→</span></button><p>訪客課表只保存在這個瀏覽器，可另存備份。</p></div>
     <div class="entry-divider"><span>登入後使用好友與跨裝置功能</span></div>
-    <aside class="guest-workspace-notice" id="guestWorkspaceNotice" hidden><b>先留一份你的訪客課表</b><p>登入後會切換至帳號課表，不會自動合併。建議先備份，之後可在「我的」匯入。</p><button type="button" id="backupBeforeLogin">下載訪客課表備份</button></aside>
+    <aside class="guest-workspace-notice" id="guestWorkspaceNotice" hidden><b>先留一份你的訪客課表</b><p id="guestWorkspaceText">登入後會切換至帳號課表，不會自動合併。建議先備份，之後可在「我的」匯入。</p><button class="btn" type="button" id="guestWorkspaceBackup">下載訪客課表備份</button></aside>
     <div class="auth-tabs"><button class="on" data-auth-tab="register" type="button">註冊</button><button data-auth-tab="login" type="button">登入</button></div>
     <form id="registerForm" class="auth-form">
       <h2>建立你的帳號</h2>
