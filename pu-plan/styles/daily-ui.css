@@ -31,11 +31,13 @@
 .workspace-mode button:disabled{opacity:.5;text-decoration:none}
 @media(max-width:680px){
   #schedule .workspace-mode{padding-block:0}
-  #schedule .hero-side{display:none}
-  #schedule .hero{gap:0;margin:6px 0 10px}
+  #schedule .hero-side{display:flex;align-self:stretch;justify-content:flex-start;gap:16px;margin-top:4px;padding:0;border:0;background:transparent}
+  #schedule .stat{display:flex;align-items:baseline;gap:6px;min-width:0;padding:0;border:0}
+  #schedule .stat b{font-size:16px;line-height:20px}#schedule .stat span{font-size:12px;line-height:20px}
+  #schedule .hero{gap:0;margin:6px 0 8px}
   #schedule .hero-main{padding:0}
   #schedule .schedule-date{margin:0 0 4px;font-size:12px;line-height:1.5}
-  #schedule #classPulse{padding:10px 14px;margin-bottom:10px}
+  #schedule #classPulse{padding:10px 14px;margin-bottom:8px}
   #schedule .schedule-toolbar{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:10px}
   #schedule .view-switch,#schedule .presentation-switch{flex:1;display:flex;min-width:0;width:auto}
   #schedule .view-switch button,#schedule .presentation-switch button{flex:1;padding-inline:6px;font-size:12px;min-height:44px}
