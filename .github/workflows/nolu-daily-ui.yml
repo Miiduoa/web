@@ -1,0 +1,44 @@
+name: nolu daily UI
+on:
+  pull_request:
+    branches: [main]
+    paths: ['pu-plan/**', 'tests/product/**', '.github/workflows/nolu-daily-ui.yml']
+  push:
+    branches: [main]
+    paths: ['pu-plan/**', 'tests/product/**', '.github/workflows/nolu-daily-ui.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: daily-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Preserve inspectable source
+        run: |
+          mkdir -p product-test-results
+          tar -czf product-test-results/source-preview.tar.gz pu-plan tests/product .github/tests .github/workflows package.json package-lock.json
+      - name: Install browsers
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium webkit
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Check isolated daily workflows
+        run: python tests/product/daily_ui.py
+      - name: Preserve screenshots and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nolu-daily-ui
+          path: product-test-results/
+          retention-days: 7
+          if-no-files-found: error

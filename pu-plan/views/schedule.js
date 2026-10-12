@@ -1,7 +1,8 @@
 export function scheduleView(){return `
 <section class="view on" id="schedule">
+  <div class="workspace-mode" id="workspaceMode" hidden><span>訪客課表 · 只存在這個瀏覽器</span><button type="button" id="quickBackup">備份課表</button></div>
   <div class="hero">
-    <article class="hero-main"><h2 id="greet">今天要上什麼？</h2><p id="summary"></p><div class="quote">點一下課程就能直接修改。</div></article>
+    <article class="hero-main"><p class="schedule-date" id="scheduleDate"></p><h2 id="greet">今天要上什麼？</h2><p id="summary"></p><div class="quote">點一下課程就能直接修改。</div></article>
     <aside class="hero-side"><div class="stat"><b id="today">0</b><span>今天</span></div><div class="stat"><b id="hours">0</b><span>本週節數</span></div><div class="stat"><b id="count">0</b><span>課程</span></div></aside>
   </div>
   <div class="floating-courses" id="floatingCourses"></div>
