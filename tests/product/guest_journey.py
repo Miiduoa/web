@@ -50,7 +50,27 @@ with sync_playwright() as playwright:
         for width in [390, 1440]:
             key = f'{engine}-{width}'
             context = browser.new_context(viewport={'width': width, 'height': 900}, locale='zh-TW', timezone_id='Asia/Taipei', service_workers='block', ignore_https_errors=True)
-            context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(ORIGIN + '/') else route.abort())
+            network = {'mode': 'block', 'calls': 0, 'pending': []}
+            def isolate(route):
+                request = route.request
+                if request.url.startswith(ORIGIN + '/'):
+                    return route.continue_()
+                try:
+                    data = request.post_data_json or {}
+                except Exception:
+                    data = {}
+                headers = {'Content-Type':'application/json','Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'POST,OPTIONS'}
+                if request.method == 'OPTIONS':
+                    return route.fulfill(status=204, headers=headers)
+                if data.get('action') == 'login':
+                    network['calls'] += 1
+                    if network['mode'] == 'reject':
+                        return route.fulfill(status=400, headers=headers, body=json.dumps({'message':'測試：帳密不正確'}))
+                    if network['mode'] == 'hold':
+                        network['pending'].append(route)
+                        return
+                route.abort()
+            context.route('**/*', isolate)
             page = context.new_page()
             page.set_default_timeout(12000)
             errors = []
@@ -72,11 +92,10 @@ with sync_playwright() as playwright:
                 page.locator('#end').select_option('2')
                 page.locator('#teacher').fill('林老師')
                 page.locator('#room').fill('主顧 324')
-                expect(page.locator('#courseTimePreview')).to_contain_text('08:10–10:00')
-                expect(page.locator('#courseTimePreview')).to_contain_text('目前沒有衝堂')
+                expect(page.locator('#coursePreview')).to_contain_text('08:10–10:00')
+                expect(page.locator('#coursePreview')).to_contain_text('目前課表沒有重疊課程')
                 page.locator('#saveCourse').click()
                 expect(page.locator('#count')).to_have_text('1')
-                # Guest semester data must survive the same journey as courses.
                 page.evaluate("PUPLAN_APP.setScheduleMetaFromUser({year:'115',semester:'1',school:'測試學校'})")
                 before = workspace(page)
                 passed.append('add course through the guest UI')
@@ -103,7 +122,6 @@ with sync_playwright() as playwright:
                 page.locator('#accountChip').click()
                 expect(page.locator('#guestWorkspaceNotice')).to_be_visible()
                 expect(page.locator('#guestMode')).to_have_text('返回我的課表')
-                # Focus remains inside sign-in, including reverse traversal.
                 first = page.locator('#guestWorkspaceBackup')
                 first.focus()
                 page.keyboard.press('Shift+Tab')
@@ -118,18 +136,8 @@ with sync_playwright() as playwright:
                 page.locator('#accountChip').click()
                 page.locator('#loginEmail').fill('guest-test@example.invalid')
                 page.locator('#loginPassword').fill('fixture-password')
-                # Fake responses stay within this disposable browser; no production login.
-                page.evaluate("""() => {
-                  window.fixtureFetch=window.fetch; window.fixtureAuthCalls=0;
-                  window.fetch=(url,options={})=>{
-                    let data;try{data=JSON.parse(options.body||'{}')}catch{}
-                    if(data?.action==='login'){
-                      window.fixtureAuthCalls++;
-                      return Promise.resolve(new Response(JSON.stringify({message:'測試：帳密不正確'}),{status:400,headers:{'Content-Type':'application/json'}}));
-                    }
-                    return window.fixtureFetch(url,options);
-                  };
-                }""")
+                # Exercise the real transport stack; only the network response is a fixture.
+                network['mode']='reject'
                 page.once('dialog', lambda dialog: dialog.accept())
                 page.locator('#loginForm .auth-submit').click()
                 expect(page.locator('#authStatus')).to_contain_text('測試：帳密不正確')
@@ -137,33 +145,33 @@ with sync_playwright() as playwright:
                 expect(page.locator('#loginPassword')).to_have_value('fixture-password')
                 assert workspace(page) == before
                 passed.append('failed login releases controls immediately without erasing guest work')
-                page.evaluate("""() => {
-                  window.fixtureAuthCalls=0;
-                  window.fetch=(url,options={})=>{
-                    let data;try{data=JSON.parse(options.body||'{}')}catch{}
-                    if(data?.action==='login'){
-                      window.fixtureAuthCalls++;
-                      return new Promise(resolve=>window.releaseFixtureAuth=()=>resolve(new Response(JSON.stringify({token:'discarded-fixture',profile:{id:'11111111-1111-4111-8111-111111111111',display_name:'Do not apply'}}),{status:200,headers:{'Content-Type':'application/json'}})));
-                    }
-                    return window.fixtureFetch(url,options);
-                  };
-                }""")
+                network['mode']='hold'
+                network['calls']=0
                 page.once('dialog', lambda dialog: dialog.accept())
                 page.locator('#loginForm .auth-submit').click()
                 expect(page.locator('#loginForm .auth-submit')).to_be_disabled()
                 page.locator('#loginForm').dispatch_event('submit')
-                assert page.evaluate('window.fixtureAuthCalls') == 1, 'Duplicate login request'
+                for _ in range(30):
+                    if network['pending']:
+                        break
+                    page.wait_for_timeout(50)
+                assert network['calls'] == 1, 'Duplicate login request'
+                assert network['pending'], 'No pending network request was captured'
                 page.locator('#guestMode').click()
-                page.evaluate('window.releaseFixtureAuth()')
+                for pending in network['pending']:
+                    pending.fulfill(status=200, headers={'Content-Type':'application/json','Access-Control-Allow-Origin':ORIGIN}, body=json.dumps({'token':'fixture.signature','portable_token':'fixture.payload.signature','profile':{'id':'11111111-1111-4111-8111-111111111111','display_name':'Do not apply'},'courses':[]}))
+                network['pending'].clear()
+                network['mode']='block'
                 page.wait_for_timeout(150)
-                assert page.evaluate("localStorage.getItem('puplan_session')") is None
+                assert page.evaluate("['puplan_session','puplan_session_primary_v1','puplan_session_standby_v1','puplan_portable_session_v1','puplan_course_owner'].every(key=>localStorage.getItem(key)===null)"), 'A late response stored account credentials or ownership'
+                page.reload()
+                ready(page)
                 assert workspace(page) == before
                 expect(page.locator('#authGate')).not_to_be_visible()
                 passed.append('cancelling a pending login ignores its late response and blocks duplicate requests')
                 page.locator('#humanWeek [data-course]').first.click()
-                expect(page.locator('#courseTimePreview')).to_contain_text('目前沒有衝堂')
+                expect(page.locator('#coursePreview')).to_contain_text('目前課表沒有重疊課程')
                 page.locator('#courseDialog [data-close]').first.click()
-                # Layout thresholds measure the actual first course, not just the shell.
                 page.evaluate('window.scrollTo(0,0)')
                 course_y = page.locator('#humanWeek [data-course]').first.bounding_box()['y']
                 if width == 390:

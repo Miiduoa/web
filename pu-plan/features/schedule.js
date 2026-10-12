@@ -59,7 +59,7 @@ export function renderGrid(target='#grid',data=courses(),editable=true){
   });
   for(const group of scheduleGroups(data)){
     const {day,start,end,courses:items}=group;
-    const content=items.length===1||!editable?items.map(c=>`<article class="course ${c.color||'violet'}" data-course="${esc(c.id)}"><b>${esc(c.name)}</b><small>${[c.teacher,c.room].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}<span>${time(c)}</span></small></article>`).join(''):
+    const content=items.length===1||!editable?items.map(c=>`<article class="course ${c.color||'violet'}" data-course="${esc(c.id)}"><b>${esc(c.name)}</b><small>${esc(c.teacher||'未填老師')}<br>${esc(c.room||'未填教室')}<br>${time(c)}</small></article>`).join(''):
       `<button type="button" class="grid-conflict" data-conflict="${esc(items[0].id)}" aria-label="${DAYS[day-1][1]}，${items.length} 門課重疊，查看並調整"><b>${items.length} 門課重疊</b><span>${items.map(c=>esc(c.name)).join(' / ')}</span><small>查看與調整 →</small></button>`;
     html+=`<div class="course-slot${items.length>1?' has-conflict':''}" style="grid-column:${day+1};grid-row:${start+1}/span ${end-start+1}">${content}</div>`;
   }
@@ -81,7 +81,7 @@ if(!all.length){
   root.querySelector('[data-empty-import]').onclick=()=>$('#importSchedule').click();
   root.querySelector('[data-empty-add]').onclick=()=>openCourse();return;
 }
-root.innerHTML=DAYS.map((d,i)=>{const day=i+1,cs=all.filter(c=>c.day===day).sort((a,b)=>a.start-b.start);return `<section class="human-day${today===day?' today':''}${selected===day?' focus':''}" data-week-day="${day}"><header><div><b>${d[1]}</b><small>${today===day?'今天 · ':''}${cs.length} 門課</small></div></header><div class="human-day-body">${cs.length?cs.map(c=>`<article class="human-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time class="human-course-time"><b>${time(c)}</b><small>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</small></time><div class="human-course-main"><b>${esc(c.name)}</b><p>${[c.teacher,c.room].filter(Boolean).map(esc).join(' · ')}</p></div></article>`).join(''):'<div class="human-free">這天沒有排課。</div>'}</div></section>`}).join('');bindCourses(root)}
+root.innerHTML=DAYS.map((d,i)=>{const day=i+1,cs=all.filter(c=>c.day===day).sort((a,b)=>a.start-b.start);return `<section class="human-day${today===day?' today':''}${selected===day?' focus':''}" data-week-day="${day}"><header><div><b>${d[1]}</b><small>${today===day?'今天 · ':''}${cs.length} 門課</small></div></header><div class="human-day-body">${cs.length?cs.map(c=>`<article class="human-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time class="human-course-time"><b>${time(c)}</b><small>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</small></time><div class="human-course-main"><b>${esc(c.name)}</b><p>${[c.teacher,c.room].filter(Boolean).map(esc).join(' · ')||'尚未填寫老師 / 教室'}</p></div></article>`).join(''):'<div class="human-free">這天沒有排課。</div>'}</div></section>`}).join('');bindCourses(root)}
 
 function renderMobile(){const root=$('#mobile');if(!root)return;const list=courses().filter(c=>c.day===getSelectedDay()&&c.day>=1).sort((a,b)=>a.start-b.start);root.innerHTML=list.length?list.map(c=>`<article class="mobile-course ${c.color||'gray'}" data-course="${esc(c.id)}"><time>${time(c)}<br><span>第 ${c.start}${c.end>c.start?'–'+c.end:''} 節</span></time><div><b>${esc(c.name)}</b><p>${esc(c.teacher||'')} ${c.teacher&&c.room?'·':''} ${esc(c.room||'')}</p></div></article>`).join(''):'<div class="project-note">這天沒有排課。</div>';bindCourses(root)}
 
@@ -120,27 +120,18 @@ function toggleCourseTimeFields(){
   if(!off&&+$('#end').value<+$('#start').value)$('#end').value=$('#start').value;
   [...$('#end').options].forEach(option=>option.disabled=!off&&+option.value<+$('#start').value);
 }
-function renderCourseTimePreview(){
-  const preview=$('#courseTimePreview');if(!preview)return;
-  const day=+$('#day').value,start=+$('#start').value,end=+$('#end').value,id=$('#courseId').value;
-  const conflicts=day>0?courses().filter(course=>course.id!==id&&course.day===day&&course.start<=end&&course.end>=start):[];
-  preview.dataset.conflict=String(conflicts.length>0);
-  preview.textContent=day===0?'未排定時間：課程會保留在「待定」，不占用課表時段。':
-    `${DAYS[day-1]?.[1]||''} · ${PERIODS[start-1]?.[0]||''}–${PERIODS[end-1]?.[1]||''} · ${end-start+1} 節${conflicts.length?`\n與「${conflicts.map(course=>course.name).join('、')}」時間重疊，儲存前請確認。`:'，目前沒有衝堂。'}`;
-}
 function persistCourses(next){
   try{write('puplan_courses',next)}catch{return courseError('這次尚未儲存：瀏覽器儲存空間不足或存取被阻擋。請保留目前內容，不要清除網站資料。')}
   document.dispatchEvent(new CustomEvent('puplan:courses-changed',{detail:courses()}));return true;
 }
 
-export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;if(id&&!c)return toast('這門課已被移除或更新，請重新選擇。');$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;renderCourseTimePreview();$('#courseDialog').showModal()}
+export function openCourse(id){clearCourseError();const c=id?courses().find(x=>x.id===id):null;if(id&&!c)return toast('這門課已被移除或更新，請重新選擇。');$('#courseTitle').textContent=c?'編輯課程':'新增課程';$('#courseId').value=c?.id||'';$('#courseName').value=c?.name||'';$('#day').value=c?.day??getSelectedDay();$('#start').value=c?.start>0?c.start:3;$('#end').value=c?.end>0?c.end:4;toggleCourseTimeFields();$('#teacher').value=c?.teacher||'';$('#room').value=c?.room||'';$('#color').value=c?.color||['violet','blue','mint','orange','pink','lime','gray'][courses().length%7];$('#deleteCourse').hidden=!c;$('#courseDialog').showModal()}
 
 export function initSchedule(){
   $('#day').innerHTML='<option value="0">未排定 / 依公告</option>'+DAYS.map((d,i)=>`<option value="${i+1}">${d[1]}</option>`).join('');
   ['start','end'].forEach(id=>$('#'+id).innerHTML=PERIODS.map((p,i)=>`<option value="${i+1}">第 ${i+1} 節　${p[0]}–${p[1]}</option>`).join(''));
   $('#day').addEventListener('change',toggleCourseTimeFields);
   $('#start').addEventListener('change',toggleCourseTimeFields);
-  for(const id of ['day','start','end'])$('#'+id).addEventListener('change',renderCourseTimePreview);
   $('#courseForm').addEventListener('input',clearCourseError);
   $('#courseForm').onsubmit=e=>{
     e.preventDefault();clearCourseError();const all=courses(),oldId=$('#courseId').value,id=oldId||uid(),start=+$('#start').value,end=+$('#end').value,day=+$('#day').value,name=$('#courseName').value.trim();

@@ -14,3 +14,4 @@ for(const key of ['puplan_course_owner','puplan_session','puplan_session_primary
  test(`guest resume quarantines an account ${key} introduced after startup`,()=>{const state=boot(guest);state.localStorage.setItem(key,uid);state.guest();assert.equal(state.localStorage.getItem('puplan_courses'),null);assert.equal(state.localStorage.getItem(key),null)});
 }
 test('a tracked signed-in profile invalidates the old guest scope',()=>{const state=boot(guest);state.listeners['puplan:profile-changed']({detail:{id:uid}});assert.equal(state.window.NOLU_GUEST_PRIVACY.canResumeGuest(),false);state.guest();assert.equal(state.localStorage.getItem('puplan_courses'),null)});
+test('routing preference alone is not an account credential',()=>{const state=boot({...guest,nolu_preferred_cloud_v1:'primary'});assert.equal(state.window.NOLU_GUEST_PRIVACY.canResumeGuest(),true);state.guest();assert.equal(state.localStorage.getItem('puplan_courses'),guest.puplan_courses)});

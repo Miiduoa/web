@@ -43,10 +43,10 @@ async function safeLogout(){
   }
 }
 
-function openLogin(){
+function openLogin(opener=document.activeElement){
   loggingOut=false;
+  if(gate.classList.contains('off'))returnFocus=opener?.currentTarget||opener;
   cloud.showGate?.('login');
-  setTimeout(()=>$('#loginEmail')?.focus(),80);
 }
 
 function syncAuthUI(){
@@ -72,7 +72,7 @@ $('#accountChip')?.addEventListener('click',e=>{
   if(cloud.isSignedIn?.())return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  openLogin();
+  openLogin(e.currentTarget);
 },true);
 
 const gate=$('#authGate');
@@ -85,11 +85,12 @@ function syncGuestEntry(){
   $('#guestWorkspaceNotice').hidden=!count;
   if(count)$('#guestWorkspaceText').textContent=`這裡有 ${count} 門訪客課程。登入後會顯示帳號課表，不會自動合併這份內容。`;
   if(open&&!gateWasOpen){
-    returnFocus=document.activeElement;
+    if(!returnFocus)returnFocus=document.activeElement;
     queueMicrotask(()=>gate.querySelector('.auth-form:not(.hidden) input:not(:disabled)')?.focus({preventScroll:true}));
   }else if(!open&&gateWasOpen){
-    const target=returnFocus?.isConnected&&!gate.contains(returnFocus)?returnFocus:$('#title');
+    const target=returnFocus?.isConnected&&!gate.contains(returnFocus)&&returnFocus.matches?.('button,a,input,select,textarea,[tabindex]')?returnFocus:$('#title');
     if(target){if(target===$('#title'))target.tabIndex=-1;target.focus({preventScroll:true})}
+    returnFocus=null;
   }
   gateWasOpen=open;
 }

@@ -10,6 +10,7 @@ const app=window.PUPLAN_APP;
 const trace=(type,details={})=>window.NOLU_AUTH_TRACE?.record?.(type,details);
 let token=localStorage.getItem('puplan_session')||'', profile=null;
 let authEpoch=0,activeAuth=null;
+window.NOLU_AUTH_ATTEMPT=Object.freeze({get epoch(){return authEpoch}});
 let preferredApi=Math.max(0,Math.min(APIS.length-1,Number(sessionStorage.getItem('puplan_api_index')||0)||0));
 let socialData={relationships:[],profiles:[],friends:[],meetups:[]}, searchTimer=null, syncTimer=null, socialLoading=null, socialLoaded=false, socialSummary={};
 
@@ -33,14 +34,17 @@ async function fetchWithTimeout(url,options={},timeout=6500){
 async function api(action,payload={},auth=true){
   const headers={'Content-Type':'application/json'};if(auth&&token)headers.Authorization=`Bearer ${token}`;
   const body=JSON.stringify({action,...payload});
+  const requestEpoch=['login','signup'].includes(action)?authEpoch:undefined;
   const order=[preferredApi,...APIS.map((_,i)=>i).filter(i=>i!==preferredApi)];
   let lastFailure=null;
   for(let n=0;n<order.length;n++){
+    if(requestEpoch!==undefined)assertCurrentAuthentication(requestEpoch);
     const index=order[n],url=APIS[index];
     let res;
-    try{res=await fetchWithTimeout(url,{method:'POST',headers,body},6500)}
+    try{res=await fetchWithTimeout(url,{method:'POST',headers,body,__noluAuthEpoch:requestEpoch},6500)}
     catch(err){lastFailure=err;continue}
     const data=await res.json().catch(()=>({}));
+    if(requestEpoch!==undefined)assertCurrentAuthentication(requestEpoch);
     if(res.status>=500&&n<order.length-1){lastFailure=cloudError(data.message||`雲端服務錯誤 (${res.status})`,{status:res.status});continue}
     preferredApi=index;sessionStorage.setItem('puplan_api_index',String(index));
     if(!res.ok){
@@ -114,10 +118,10 @@ async function bootstrap(){
 async function login(email,password){
   trace('auth-login-start',{stage:'password'});
   try{
-    const epoch=authEpoch;const data=await api('login',{email,password},false);assertCurrentAuthentication(epoch);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-login-success',{status:'verified'});return data
+    const epoch=authEpoch,startingGuest=localStorage.getItem('puplan_guest')==='1';const data=await api('login',{email,password},false);assertCurrentAuthentication(epoch);if(startingGuest)purgeAccountCache();token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-login-success',{status:'verified'});return data
   }catch(e){trace('auth-login-failure',{httpStatus:Number(e?.status)||0,connectivity:e?.connectivity===true,outcome:e?.connectivity?'connectivity':'rejected'});throw e}
 }
-async function signup(display_name,username,email,password){const epoch=authEpoch;const data=await api('signup',{display_name,username,email,password},false);assertCurrentAuthentication(epoch);token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-signup-success',{status:'verified'});return data}
+async function signup(display_name,username,email,password){const epoch=authEpoch,startingGuest=localStorage.getItem('puplan_guest')==='1';const data=await api('signup',{display_name,username,email,password},false);assertCurrentAuthentication(epoch);if(startingGuest)purgeAccountCache();token=data.token;localStorage.setItem('puplan_session',token);localStorage.removeItem('puplan_guest');applyCoreBundle(data);hideGate();trace('auth-signup-success',{status:'verified'});return data}
 async function logout(){trace('auth-logout',{reason:'user'});clearSession(true,'logout');purgeAccountCache();localStorage.removeItem('puplan_guest');showGate('login')}
 async function updateProfile(display_name,username,opts={}){
   username=normalizeUsername(username);if(!display_name?.trim())return app?.toast?.('請輸入顯示名稱');if(!/^[a-z0-9_.]{2,24}$/.test(username))return app?.toast?.('@帳號需 2–24 字，只能英文、數字、底線、句點');

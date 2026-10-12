@@ -109,7 +109,7 @@ function canResumeGuest(){
   return localStorage.getItem(GUEST_KEY)==='1'
     &&localStorage.getItem(GUEST_SCOPE_MARKER)==='1'
     &&!trackedAccountUid&&!localStorage.getItem('puplan_course_owner')
-    &&![SESSION_KEY,...CLOUD_SESSION_KEYS].some(key=>localStorage.getItem(key));
+    &&![SESSION_KEY,...CLOUD_SESSION_KEYS.filter(key=>key!=='nolu_preferred_cloud_v1')].some(key=>localStorage.getItem(key));
 }
 // This only identifies a local guest workspace; it never authenticates an account.
 globalThis.window.NOLU_GUEST_PRIVACY=Object.freeze({canResumeGuest});

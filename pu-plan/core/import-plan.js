@@ -1,6 +1,6 @@
 import {cleanCourse} from './state.js';
+import {courseKey as key} from './course-feedback.js';
 
-const key = c => `${c.day}|${c.start}|${c.end}|${c.name.normalize('NFKC').toLowerCase().replace(/\s+/g, '')}`;
 export function planImport(current, drafts, mode = 'merge') {
   if (!Array.isArray(current) || !Array.isArray(drafts)) throw new Error('課表格式不正確。');
   if (!['merge', 'replace'].includes(mode)) throw new Error('請選擇合併或取代課表。');
