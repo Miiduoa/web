@@ -1,4 +1,4 @@
-import {$, DAYS, PERIODS, courses, time, getSelectedDay, setSelectedDay} from '../core/state.js';
+import {$, DAYS, PERIODS, courses, time, getSelectedDay} from '../core/state.js';
 import {reviewCourse} from '../core/course-feedback.js';
 import {openCourse} from './schedule.js';
 
@@ -75,7 +75,13 @@ export function initEditorFeedback() {
       event.preventDefault(); if (!event.repeat) image.click();
     });
   }
-  function addForDay(day) { setSelectedDay(day); openCourse(); }
+  function addForDay(day) {
+    // Prefill only the editor. Cancelling must not silently change the weekday
+    // stored behind the currently displayed tabs and single-day content.
+    openCourse();
+    $('#day').value = String(day);
+    $('#day').dispatchEvent(new Event('change', {bubbles: true}));
+  }
   const week = $('#humanWeek');
   function decorateWeek() {
     for (const section of week?.querySelectorAll('[data-week-day]') || []) {
