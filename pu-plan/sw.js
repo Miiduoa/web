@@ -1,7 +1,8 @@
-const CACHE='nolu-shell-20261012-journey1';
+const CACHE='nolu-shell-20261012-mobileweek1';
 const GENERATION=CACHE.slice('nolu-shell-'.length);
 const ROOT=new URL('./',self.registration.scope).href;
 const PATHS=[
+  './features/mobile-week.js','./styles/mobile-week.css',
   './features/direct-edit.js','./core/direct-placement.js','./styles/direct-edit.css',
   './','./index.html','./manifest.webmanifest','./nolu-icon.svg','./nolu-mesh-jwks.json',
   './main.js','./auth-trace.js','./social-auth-guard.js','./media-input-guard.js','./origin-gateway.js','./media-failback-guard.js','./login-transport-patience.js','./login-failover-budget.js','./app.js','./guest-privacy.js','./account-boundary.js','./session-recovery.js','./durable-store.js','./durable-bridge.js','./transport-bridge.js','./resilience.js','./offline-session-rescue.js','./cloud.js','./cloud-replication.js','./provider-config.js','./provider-mesh.js','./outage-mirror-bridge.js','./provider-status.js','./auth.js','./social-ui.js','./import.js','./semesters.js','./community.js','./discover.js','./pwa.js','./admin-failover.js','./admin.js','./admin-mobile.js','./privacy.js',

@@ -1,0 +1,50 @@
+/* One weekly grid at two reading scales. Wider screens keep their existing layout. */
+.week-mobile-controls{display:none}
+#weekMoveFromEditor{display:none}
+@media(max-width:680px){
+  body.schedule-presentation-classic:not(.schedule-day-mode) #schedule #tabs{display:none!important}
+  body.schedule-presentation-classic:not(.schedule-day-mode) #schedule .hero-main h2{font-size:18px;line-height:1.4;letter-spacing:0;margin-bottom:2px}
+  body.schedule-presentation-classic:not(.schedule-day-mode) #classicSchedule .week-mobile-controls{display:block;margin:0 0 8px;scroll-margin-top:12px}
+  #weekScale{display:flex;border:1px solid #cbd3c3;background:#eef1e9;border-radius:12px;padding:3px;gap:4px}
+  #weekScale button{flex:1;min-height:44px;min-width:0;border:0;border-radius:9px;background:transparent;color:#53614d;font:inherit;font-size:14px;font-weight:650}
+  #weekScale button[aria-pressed="true"]{background:#fff;color:#263c2a;box-shadow:0 1px 4px #24331c1a}
+  #weekMobileHint{margin:8px 2px;color:var(--muted);font-size:12px;line-height:1.65}
+  #weekDayJump{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:8px 0}
+  #weekDayJump[hidden]{display:none}
+  #weekDayJump button{min-height:44px;padding:4px;border:1px solid #d8dccf;border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px}
+  #weekDayJump button[aria-current]{border-color:#526c45;background:#e9f0df}
+  #weekScale button:focus-visible,#weekDayJump button:focus-visible,#weekMoveFromEditor:focus-visible{outline:3px solid #496a53;outline-offset:2px}
+  #classicSchedule[data-week-density] .grid-help{display:none}
+  /* Announcements remain in the accessibility tree; do not reserve six lines while idle. */
+  #classicSchedule[data-week-density]:not(:has(.direct-picking,.direct-dragging)) .direct-tools{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);margin:0;padding:0;min-height:0}
+  #classicSchedule[data-week-density]:has(.direct-picking,.direct-dragging) .direct-tools{position:fixed;z-index:65;left:10px;right:10px;bottom:calc(82px + env(safe-area-inset-bottom));grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:0;max-width:none;padding:10px 12px;border:1px solid #becbb1;border-radius:12px;background:#f4f7ed;box-shadow:0 4px 24px #20301826}
+  #classicSchedule[data-week-density] .direct-tools p{height:auto;max-height:6.8em;font-size:12px}
+  #classicSchedule[data-week-density] #cancelPlacement{min-height:44px;padding:8px}
+  #schedule:has([data-presentation="classic"].on):has([data-schedule-mode="week"].on) #classicSchedule[data-week-density] .table-wrap{width:100%;max-height:62dvh;overflow:auto;border-radius:12px;scrollbar-width:thin;scroll-padding:48px 4px 4px 40px;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y pinch-zoom}
+  #schedule #classicSchedule[data-week-density] #grid{grid-template-rows:42px;grid-auto-rows:60px}
+  #schedule #classicSchedule[data-week-density="overview"] #grid{min-width:0;width:100%;grid-template-columns:36px repeat(5,minmax(0,1fr))}
+  #schedule #classicSchedule[data-week-density="detail"] #grid{min-width:796px;grid-template-columns:36px repeat(5,152px);grid-auto-rows:84px}
+  #schedule #classicSchedule[data-week-density] #grid .cell.head{position:sticky;top:0;z-index:6;padding:4px;box-shadow:0 1px 0 #d8d2c6}
+  #schedule #classicSchedule[data-week-density] #grid .cell.head:first-child{left:0;z-index:8}
+  #schedule #classicSchedule[data-week-density] #grid .cell.head b{font-size:12px;line-height:1.5;white-space:nowrap}
+  #schedule #classicSchedule[data-week-density] #grid .cell.head small{display:none}
+  #schedule #classicSchedule[data-week-density] #grid .cell.head.week-today b{border-bottom:2px solid #547647;padding-bottom:2px}
+  #schedule #classicSchedule[data-week-density] #grid .cell.time{position:sticky;left:0;z-index:5;padding:2px;box-shadow:1px 0 0 #d8d2c6}
+  #schedule #classicSchedule[data-week-density] #grid .cell.time b{font-size:12px;line-height:1.4}
+  #schedule #classicSchedule[data-week-density] #grid .cell.time small{font-size:9px;line-height:1.5;margin-top:2px;letter-spacing:-.2px}
+  #schedule #classicSchedule[data-week-density] #grid .cell.time small span:last-child{display:none}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .course-slot{padding:2px 1px}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .course{padding:5px 3px;border-radius:6px!important;touch-action:pan-x pan-y pinch-zoom}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .course>b{font-size:12px;line-height:1.5;-webkit-line-clamp:4;word-break:normal;overflow-wrap:anywhere;letter-spacing:0}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .course[data-week-span="1"]>b{-webkit-line-clamp:2}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .course>small,#schedule #classicSchedule[data-week-density="overview"] #grid .course-move-handle{display:none}
+  #schedule #classicSchedule[data-week-density="overview"] #grid [data-slot]:after{font-size:20px;content:'＋'}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict{padding:5px 3px;border-radius:6px}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict b{font-size:12px;line-height:1.5}
+  #schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict span,#schedule #classicSchedule[data-week-density="overview"] #grid .grid-conflict small{display:none}
+  #schedule #classicSchedule[data-week-density] #grid .course:focus-visible{outline:3px solid #496a53;outline-offset:-3px}
+  #courseDialog #weekMoveFromEditor:not([hidden]){display:block;min-height:44px;width:100%;white-space:normal;margin:0 0 14px;background:#eff4e7;color:#304b36;border-color:#becbb1}
+  /* While placing, keep the destination visible instead of covering it with add controls. */
+  body:has(#grid.direct-picking,#grid.direct-dragging) #mobileAdd{visibility:hidden}
+}
+@media(prefers-reduced-motion:reduce){#classicSchedule .table-wrap{scroll-behavior:auto}}
