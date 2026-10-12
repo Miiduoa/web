@@ -1,5 +1,5 @@
 """Real pointer journeys on the application; external APIs and real accounts are blocked."""
-import functools, http.server, json, os, ssl, subprocess, tempfile, threading
+import functools, http.server, json, os, ssl, subprocess, tempfile, threading, time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +44,10 @@ with sync_playwright() as p:
     try:
         page.clock.set_fixed_time('2026-10-12T07:00:00+08:00')
         page.goto(ORIGIN+'/pu-plan/')
-        page.wait_for_function('Boolean(window.PUPLAN_AUTH && window.NOLU_PLANNER)')
+        for _ in range(150):
+            if page.evaluate('Boolean(window.PUPLAN_AUTH && window.NOLU_PLANNER)'): break
+            time.sleep(.1)
+        else: raise AssertionError('Application did not initialize')
         page.locator('#guestMode').click();page.locator('.direct-grid-entry').click()
         expect(page.locator('#grid')).to_be_visible();expect(page.locator('[data-presentation="classic"]')).to_have_attribute('aria-pressed','true')
         clickslot(2,5);expect(page.locator('#day')).to_have_value('2');expect(page.locator('#start')).to_have_value('5');expect(page.locator('#end')).to_have_value('5')
@@ -94,7 +97,7 @@ with sync_playwright() as p:
         handle().click();clickslot(2,5);assert state()==before;expect(page.locator('#directUndo')).not_to_be_visible()
         page.evaluate('Storage.prototype.setItem=window.realSetItem')
         passed('storage failure does not claim success, lose data or offer a false undo')
-        seed();page.locator('#grid [data-slot][tabindex="0"]').focus();page.keyboard.press('ArrowRight');focused=page.evaluate('document.activeElement.dataset.slot');assert focused.startswith('2:')
+        seed();start_cell=page.locator('#grid [data-slot="1:1"]');start_cell.focus();page.keyboard.press('ArrowRight');focused=page.evaluate('document.activeElement.dataset.slot');assert focused=='2:1'
         page.keyboard.press('Enter');expect(page.locator('#courseDialog')).to_be_visible();close_editor()
         handle().focus();page.keyboard.press('Enter');expect(page.locator('#cancelPlacement')).to_be_visible();page.keyboard.press('Escape')
         passed('keyboard users can choose blank periods and move controls, with a non-drag editor alternative')
