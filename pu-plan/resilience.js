@@ -19,6 +19,7 @@ const NO_STANDBY_ACTIONS=new Set(['signup','recover_password','change_password',
 const state={mode:'online',tier:'primary',activeApi:'',lastOnlineAt:0,lastError:'',version:VERSION,endpoints:{}};
 let requestSequence=0,newestOfflineSequence=0;
 
+function cancelledAuth(options={}){return Number.isInteger(options.__noluAuthEpoch)&&options.__noluAuthEpoch!==window.NOLU_AUTH_ATTEMPT?.epoch}
 function now(){return Date.now()}
 function safeJson(raw,fallback=null){try{return JSON.parse(raw)}catch{return fallback}}
 function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}}
@@ -140,9 +141,9 @@ function storeResponseTokens(data,api){
     document.dispatchEvent(new CustomEvent('nolu:session-rotated',{detail:{api,tier}}));
   }
 }
-async function captureSuccess(res,body,api,sequence){
-  if(!res?.ok)return;state.activeApi=api;if(api===STANDBY)setPreferredCloud('standby');if(sequence>=newestOfflineSequence)setMode('online',api);
-  try{const data=await res.clone().json();storeResponseTokens(data,api);const uid=data?.profile?.id||currentUid();if(data?.profile?.id){localStorage.setItem('puplan_course_owner',String(data.profile.id));snapshot(String(data.profile.id),data.profile)}if(uid&&body?.action)clearMatchingPending(uid,body.action,body)}catch{}
+async function captureSuccess(res,body,api,sequence,options={}){
+  if(!res?.ok||cancelledAuth(options))return;state.activeApi=api;if(api===STANDBY)setPreferredCloud('standby');if(sequence>=newestOfflineSequence)setMode('online',api);
+  try{const data=await res.clone().json();if(cancelledAuth(options))return;storeResponseTokens(data,api);const uid=data?.profile?.id||currentUid();if(data?.profile?.id){localStorage.setItem('puplan_course_owner',String(data.profile.id));snapshot(String(data.profile.id),data.profile)}if(uid&&body?.action)clearMatchingPending(uid,body.action,body)}catch{}
 }
 
 window.fetch=async function noluResilientFetch(input,options={}){
@@ -150,14 +151,14 @@ window.fetch=async function noluResilientFetch(input,options={}){
   const sequence=++requestSequence,body=requestBody(options),action=String(body?.action||'');let lastError=null,lastResponse=null,tierAuth401=null;
   const candidates=apiCandidates(String(url),{action});if(!candidates.length){state.lastError='all cloud circuits are temporarily open';const local=offlineResponse(action,body,sequence);if(local)return local;throw new TypeError('Nolu cloud temporarily unavailable')}
   for(const api of candidates){
-    if(options?.signal?.aborted)break;
+    if(options?.signal?.aborted||cancelledAuth(options))break;
     if(hasAuthorization(options)&&!authTokenFor(api))continue;
     try{
-      const res=await timedFetch(api,options,1800);lastResponse=res;
+      const res=await timedFetch(api,options,1800);if(cancelledAuth(options))throw new DOMException('Authentication cancelled','AbortError');lastResponse=res;
       if((api===PRIMARY||api===STANDBY)&&res.status===401&&hasAuthorization(options)){tierAuth401=res;lastError=new Error('tier-local authorization unavailable');continue}
-      if(res.status<500){markSuccess(api);await captureSuccess(res,body,api,sequence);return res}
+      if(res.status<500){markSuccess(api);await captureSuccess(res,body,api,sequence,options);return res}
       lastError=new Error(`HTTP ${res.status}`);markFailure(api,lastError);
-    }catch(e){lastError=e;markFailure(api,e)}
+    }catch(e){if(cancelledAuth(options))throw e;lastError=e;markFailure(api,e)}
   }
   state.lastError=String(lastError||'cloud unavailable');const local=offlineResponse(action,body,sequence);if(local)return local;
   if(tierAuth401&&hasAuthorization(options))return new Response(JSON.stringify({error:'TIER_AUTH_UNCERTAIN',message:'雲端暫時無法驗證這個裝置的登入狀態，已保留本機資料'}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});

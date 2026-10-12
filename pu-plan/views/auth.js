@@ -1,10 +1,11 @@
 export function authView({hidden=false}={}){return `
-<div class="auth-gate${hidden?' off':''}" id="authGate">
+<div class="auth-gate${hidden?' off':''}" id="authGate" role="dialog" aria-modal="true" aria-labelledby="authHeading" tabindex="-1">
   <section class="auth-poster" aria-label="nolu">
     <div class="auth-brand"><img src="nolu-icon.svg" alt=""><strong>nolu</strong></div>
-    <div class="auth-copy"><h1>有空，就碰面。</h1><p>課表、朋友、動態和聊天，都放在同一個地方。</p></div>
+    <div class="auth-copy"><h1 id="authHeading">有空，就碰面。</h1><p>課表、朋友、動態和聊天，都放在同一個地方。</p></div>
   </section>
   <section class="auth-card">
+    <aside class="guest-workspace-notice" id="guestWorkspaceNotice" hidden><b>登入前，先保留你的課表</b><p id="guestWorkspaceText"></p><button class="btn" type="button" id="guestWorkspaceBackup">下載這份課表</button></aside>
     <div class="auth-tabs"><button class="on" data-auth-tab="register" type="button">註冊</button><button data-auth-tab="login" type="button">登入</button></div>
     <form id="registerForm" class="auth-form">
       <h2>建立帳號</h2>
@@ -21,6 +22,7 @@ export function authView({hidden=false}={}){return `
       <button class="btn primary auth-submit">登入</button>
     </form>
     <button class="guest" id="guestMode" type="button">先逛逛，不登入</button>
+    <p class="guest-storage-hint">訪客課表只存於這個瀏覽器，不會跨裝置同步。</p>
     <div class="auth-status" id="authStatus" aria-live="polite"></div>
   </section>
 </div>`}

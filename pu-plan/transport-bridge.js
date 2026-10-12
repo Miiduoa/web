@@ -12,6 +12,7 @@ const PRIMARY_SESSION_KEY='puplan_session_primary_v1';
 const STANDBY_SESSION_KEY='puplan_session_standby_v1';
 const state={active:'',lastError:'',lastSuccessAt:0,endpoints:{}};
 
+function cancelledAuth(options={}){return Number.isInteger(options.__noluAuthEpoch)&&options.__noluAuthEpoch!==window.NOLU_AUTH_ATTEMPT?.epoch}
 function health(endpoint){if(!state.endpoints[endpoint])state.endpoints[endpoint]={failures:0,openUntil:0,lastFailureAt:0,lastSuccessAt:0,lastError:''};return state.endpoints[endpoint]}
 function isOpen(endpoint,at=Date.now()){return health(endpoint).openUntil>at}
 function success(endpoint){const h=health(endpoint);h.failures=0;h.openUntil=0;h.lastSuccessAt=Date.now();h.lastError='';state.active=endpoint;state.lastSuccessAt=h.lastSuccessAt;state.lastError=''}
@@ -30,9 +31,10 @@ function ordered(action=''){
   const prefer=localStorage.getItem('nolu_preferred_cloud_v1')==='standby';const cloud=prefer?[STANDBY,PRIMARY]:[PRIMARY,STANDBY];
   return [...cloud,V6,CORE,LEGACY].filter((endpoint,index,array)=>array.indexOf(endpoint)===index&&!(endpoint===STANDBY&&['signup','recover_password','change_password','rotate_recovery_code','search_people','send_request','accept_request','decline_request','remove_friend','create_meetup','respond_meetup','cancel_meetup','social'].includes(action)));
 }
-function storeTokens(response,endpoint){
-  if(!response?.ok)return Promise.resolve();
+function storeTokens(response,endpoint,options={}){
+  if(!response?.ok||cancelledAuth(options))return Promise.resolve();
   return response.clone().json().then(data=>{
+    if(cancelledAuth(options))return;
     const portable=typeof data?.portable_token==='string'?data.portable_token:'';
     if(portable&&portable.split('.').length===3)localStorage.setItem(PORTABLE_KEY,portable);
     const session=typeof data?.token==='string'&&data.token.split('.').length===2?data.token:'';
@@ -49,14 +51,14 @@ window.fetch=async function noluLegacyFailover(input,options={}){
   const action=String(bodyOf(options)?.action||'');let lastResponse=null,lastError=null,tierAuth401=false;
   const candidates=ordered(action).filter(endpoint=>!isOpen(endpoint));if(!candidates.length)throw new TypeError('Nolu transport temporarily unavailable');
   for(const endpoint of candidates){
-    if(options.signal?.aborted)break;
+    if(options.signal?.aborted||cancelledAuth(options))break;
     if(hasAuth(options)&&!authTokenFor(endpoint))continue;
     try{
-      const response=await timed(endpoint,options);lastResponse=response;
+      const response=await timed(endpoint,options);if(cancelledAuth(options))throw new DOMException('Authentication cancelled','AbortError');lastResponse=response;
       if((endpoint===PRIMARY||endpoint===STANDBY)&&response.status===401&&hasAuth(options)){tierAuth401=true;lastError=new Error('tier-local authorization unavailable');continue}
-      if(response.status<500){success(endpoint);if(endpoint===STANDBY)localStorage.setItem('nolu_preferred_cloud_v1','standby');await storeTokens(response,endpoint);return response}
+      if(response.status<500){success(endpoint);if(endpoint===STANDBY)localStorage.setItem('nolu_preferred_cloud_v1','standby');await storeTokens(response,endpoint,options);return response}
       lastError=new Error(`HTTP ${response.status}`);failure(endpoint,lastError);
-    }catch(error){lastError=error;failure(endpoint,error)}
+    }catch(error){if(cancelledAuth(options))throw error;lastError=error;failure(endpoint,error)}
   }
   if(tierAuth401&&hasAuth(options))return new Response(JSON.stringify({error:'TIER_AUTH_UNCERTAIN',message:'雲端暫時無法驗證這個裝置的登入狀態'}),{status:503,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
   if(lastResponse)return lastResponse;throw lastError||new TypeError('Nolu transport unavailable');

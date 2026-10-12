@@ -105,13 +105,22 @@ function sessionInfo(raw='',{allowRecentlyExpired=false}={}){
 }
 function sessionUid(raw=''){return sessionInfo(raw,{allowRecentlyExpired:true})?.uid||''}
 
+function canResumeGuest(){
+  return localStorage.getItem(GUEST_KEY)==='1'
+    &&localStorage.getItem(GUEST_SCOPE_MARKER)==='1'
+    &&!trackedAccountUid&&!localStorage.getItem('puplan_course_owner')
+    &&![SESSION_KEY,...CLOUD_SESSION_KEYS.filter(key=>key!=='nolu_preferred_cloud_v1')].some(key=>localStorage.getItem(key));
+}
+// This only identifies a local guest workspace; it never authenticates an account.
+globalThis.window.NOLU_GUEST_PRIVACY=Object.freeze({canResumeGuest});
+
 const rawSession=localStorage.getItem(SESSION_KEY)||'';
 const hasSession=!!rawSession;
 const isGuest=localStorage.getItem(GUEST_KEY)==='1';
 const owner=localStorage.getItem('puplan_course_owner')||'';
 
 if(isGuest){
-  if(localStorage.getItem(GUEST_SCOPE_MARKER)!=='1'||owner||hasSession){
+  if(!canResumeGuest()){
     clearPrivateAccountState(owner||sessionUid(rawSession),{purgeDurable:true});
     localStorage.setItem(GUEST_KEY,'1');
     localStorage.setItem(GUEST_SCOPE_MARKER,'1');
@@ -137,6 +146,7 @@ if(isGuest){
 
 document.addEventListener('click',event=>{
   if(!event.target?.closest?.('#guestMode'))return;
+  if(canResumeGuest())return;
   const uid=localStorage.getItem('puplan_course_owner')||trackedAccountUid||sessionUid(localStorage.getItem(SESSION_KEY)||'');
   clearPrivateAccountState(uid,{purgeDurable:true});
   localStorage.setItem(GUEST_KEY,'1');
@@ -147,7 +157,7 @@ document.addEventListener('click',event=>{
 document.addEventListener('puplan:profile-changed',event=>{
   if(event.detail){
     const uid=String(event.detail?.id||'');
-    if(UUID.test(uid))trackedAccountUid=uid;
+    if(UUID.test(uid)){trackedAccountUid=uid;localStorage.removeItem(GUEST_SCOPE_MARKER)}
     return;
   }
   if(localStorage.getItem(SESSION_KEY)||localStorage.getItem(GUEST_KEY)==='1')return;
