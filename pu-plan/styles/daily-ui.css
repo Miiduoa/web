@@ -30,16 +30,18 @@
 .workspace-mode button{border:0;background:transparent;color:#365c3b;font:inherit;font-weight:650;min-height:44px;padding:8px 0 8px 12px;white-space:nowrap;text-decoration:underline;text-underline-offset:4px}
 .workspace-mode button:disabled{opacity:.5;text-decoration:none}
 @media(max-width:680px){
-  #schedule .hero-side{background:transparent;border:0;gap:0;justify-content:flex-start}
-  #schedule .stat{display:flex;align-items:baseline;gap:7px;padding:2px 18px 2px 0}
-  #schedule .stat b{font-size:19px}#schedule .stat span{font-size:12px}
-  #schedule .hero{gap:6px;margin-bottom:16px}
-  #schedule #classPulse{padding:16px 18px;margin-bottom:18px}
-  #schedule .schedule-toolbar{gap:8px}
-  #schedule .view-switch,#schedule .presentation-switch{flex:1;display:flex;min-width:0}
-  #schedule .view-switch button,#schedule .presentation-switch button{flex:1;padding-inline:8px;font-size:13px}
-  #schedule .today-shortcut{width:100%;text-align:right;min-height:44px;margin-top:-4px;padding-right:2px}
-  #schedule .daytabs{gap:4px}#schedule .daytabs button{padding-inline:4px;font-size:12px}
+  #schedule .workspace-mode{padding-block:0}
+  #schedule .hero-side{display:none}
+  #schedule .hero{gap:0;margin:6px 0 10px}
+  #schedule .hero-main{padding:0}
+  #schedule .schedule-date{margin:0 0 4px;font-size:12px;line-height:1.5}
+  #schedule #classPulse{padding:10px 14px;margin-bottom:10px}
+  #schedule .schedule-toolbar{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:10px}
+  #schedule .view-switch,#schedule .presentation-switch{flex:1;display:flex;min-width:0;width:auto}
+  #schedule .view-switch button,#schedule .presentation-switch button{flex:1;padding-inline:6px;font-size:12px;min-height:44px}
+  #schedule .today-shortcut{flex:0 0 auto;width:auto;min-height:44px;margin:0;padding-inline:6px;font-size:12px}
+  #schedule .daytabs{gap:4px}#schedule .daytabs button{padding-inline:4px;font-size:12px;min-height:44px}
+  #schedule #humanWeek .human-day>header{padding:4px 12px}
   .auth-poster .auth-copy h1{font-size:32px}.auth-copy p{font-size:13px}.entry-eyebrow{margin-bottom:10px}
 }
-@media(max-width:360px){.auth-poster .auth-copy h1{font-size:28px}.workspace-mode{font-size:11px}}
+@media(max-width:360px){.auth-poster .auth-copy h1{font-size:28px}.workspace-mode{font-size:11px}#schedule .schedule-toolbar{gap:4px}#schedule .view-switch button,#schedule .presentation-switch button{padding-inline:4px}#schedule .today-shortcut{padding-inline:3px}}
