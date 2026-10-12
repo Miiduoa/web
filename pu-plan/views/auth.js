@@ -8,6 +8,7 @@ export function authView({hidden=false}={}){return `
   <section class="auth-card" aria-label="開始使用">
     <div class="entry-local"><button class="guest" id="guestMode" type="button">先使用課表，不登入 <span aria-hidden="true">→</span></button><p>訪客課表只保存在這個瀏覽器，可另存備份。</p></div>
     <div class="entry-divider"><span>登入後使用好友與跨裝置功能</span></div>
+    <aside class="guest-workspace-notice" id="guestWorkspaceNotice" hidden><b>先留一份你的訪客課表</b><p>登入後會切換至帳號課表，不會自動合併。建議先備份，之後可在「我的」匯入。</p><button type="button" id="backupBeforeLogin">下載訪客課表備份</button></aside>
     <div class="auth-tabs"><button class="on" data-auth-tab="register" type="button">註冊</button><button data-auth-tab="login" type="button">登入</button></div>
     <form id="registerForm" class="auth-form">
       <h2>建立你的帳號</h2>

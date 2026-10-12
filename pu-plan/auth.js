@@ -43,11 +43,10 @@ async function safeLogout(){
   }
 }
 
-function openLogin(){
+function openLogin(opener=document.activeElement){
   loggingOut=false;
-  localStorage.removeItem('puplan_guest');
+  if(gate.classList.contains('off'))returnFocus=opener?.currentTarget||opener;
   cloud.showGate?.('login');
-  setTimeout(()=>$('#loginEmail')?.focus(),80);
 }
 
 function syncAuthUI(){
@@ -73,25 +72,43 @@ $('#accountChip')?.addEventListener('click',e=>{
   if(cloud.isSignedIn?.())return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  openLogin();
+  openLogin(e.currentTarget);
 },true);
 
-for(const form of [$('#loginForm'),$('#registerForm')]){
-  if(!form)continue;
-  form.addEventListener('submit',()=>{
-    const submit=form.querySelector('[type="submit"],button:not([type])');
-    if(!submit)return;
-    submit.disabled=true;
-    const original=submit.textContent;
-    submit.dataset.authOriginal=original||'';
-    setTimeout(()=>{
-      if(!cloud.isSignedIn?.()&&document.body.contains(submit)){
-        submit.disabled=false;
-        if(submit.dataset.authOriginal)submit.textContent=submit.dataset.authOriginal;
-      }
-    },15000);
-  },true);
+const gate=$('#authGate');
+let gateWasOpen=false,returnFocus=null;
+function syncGuestEntry(){
+  const open=!gate.classList.contains('off');
+  const resume=window.NOLU_GUEST_PRIVACY?.canResumeGuest?.()===true;
+  const count=resume?window.PUPLAN_APP?.courses?.().length||0:0;
+  $('#guestMode').textContent=resume?'返回我的課表':'先用訪客課表，不登入';
+  $('#guestWorkspaceNotice').hidden=!count;
+  if(count)$('#guestWorkspaceText').textContent=`這裡有 ${count} 門訪客課程。登入後會顯示帳號課表，不會自動合併這份內容。`;
+  if(open&&!gateWasOpen){
+    if(!returnFocus)returnFocus=document.activeElement;
+    queueMicrotask(()=>gate.querySelector('.auth-form:not(.hidden) input:not(:disabled)')?.focus({preventScroll:true}));
+  }else if(!open&&gateWasOpen){
+    const target=returnFocus?.isConnected&&!gate.contains(returnFocus)&&returnFocus.matches?.('button,a,input,select,textarea,[tabindex]')?returnFocus:$('#title');
+    if(target){if(target===$('#title'))target.tabIndex=-1;target.focus({preventScroll:true})}
+    returnFocus=null;
+  }
+  gateWasOpen=open;
 }
+$('#guestWorkspaceBackup').addEventListener('click',()=>$('#downloadSchedule')?.click());
+gate.addEventListener('keydown',event=>{
+  if(gate.classList.contains('off')||event.isComposing)return;
+  if(event.key==='Escape'&&window.NOLU_GUEST_PRIVACY?.canResumeGuest?.()){
+    event.preventDefault();$('#guestMode').click();return;
+  }
+  if(event.key!=='Tab')return;
+  const controls=[...gate.querySelectorAll('button,input,a[href],[tabindex="0"]')].filter(element=>!element.disabled&&element.getClientRects().length);
+  if(!controls.length){event.preventDefault();gate.focus();return}
+  const first=controls[0],last=controls.at(-1),active=document.activeElement;
+  if(event.shiftKey&&(active===first||!controls.includes(active))){event.preventDefault();last.focus()}
+  else if(!event.shiftKey&&(active===last||!controls.includes(active))){event.preventDefault();first.focus()}
+});
+new MutationObserver(syncGuestEntry).observe(gate,{attributes:true,attributeFilter:['class']});
+syncGuestEntry();
 
 document.addEventListener('puplan:profile-changed',()=>setTimeout(syncAuthUI,0));
 syncAuthUI();
