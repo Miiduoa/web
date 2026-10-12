@@ -1,4 +1,4 @@
-import {$, DAYS, courses, time, getSelectedDay, setSelectedDay} from '../core/state.js';
+import {$, DAYS, PERIODS, courses, time, getSelectedDay, setSelectedDay} from '../core/state.js';
 import {reviewCourse} from '../core/course-feedback.js';
 import {openCourse} from './schedule.js';
 
@@ -7,6 +7,14 @@ const text = (node, value) => { if (node.textContent !== value) node.textContent
 export function initEditorFeedback() {
   const dialog = $('#courseDialog'), form = $('#courseForm');
   if (!dialog || !form || $('#coursePreview')) return;
+  // The field labels already identify the period. Keep the selected option short
+  // enough for a narrow phone and show the end boundary, not its start time.
+  for (const [id, boundary] of [['start', 0], ['end', 1]]) {
+    for (const option of $('#'+id).options) {
+      const period = PERIODS[Number(option.value) - 1];
+      if (period) option.textContent = `${option.value} · ${period[boundary]}`;
+    }
+  }
   const preview = document.createElement('section');
   preview.id = 'coursePreview'; preview.className = 'course-preview';
   preview.setAttribute('aria-label', '上課時段預覽');
