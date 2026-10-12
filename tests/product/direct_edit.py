@@ -1,5 +1,5 @@
 """Real pointer journeys on the application; external APIs and real accounts are blocked."""
-import functools, http.server, json, os, ssl, subprocess, tempfile, threading, time
+import functools, http.server, json, os, ssl, subprocess, tempfile, threading, time, traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,7 +40,7 @@ with sync_playwright() as p:
     def close_editor(dirty=False):
         if dirty:page.once('dialog',lambda d:d.accept())
         page.locator('#courseDialog [data-close]').first.click()
-    def shot(name):page.screenshot(path=str(OUT/f'direct-{ENGINE}-{name}.png'),full_page=True)
+    def shot(name):page.screenshot(path=str(OUT/f'direct-{ENGINE}-{name}.png'),full_page='preview' not in name)
     try:
         page.clock.set_fixed_time('2026-10-12T07:00:00+08:00')
         page.goto(ORIGIN+'/pu-plan/')
@@ -115,6 +115,7 @@ with sync_playwright() as p:
         passed('320/390/768/1440px layouts avoid page overflow and retain a 44px move target')
         assert not errors,errors;passed('no uncaught JavaScript exceptions in desktop mouse and keyboard journeys')
     except Exception:
+        (OUT/f'direct-{ENGINE}-error.txt').write_text(traceback.format_exc()+'\n'+page.locator('#directStatus').inner_text()+'\n'+state())
         shot('failure');raise
     finally:
         (OUT/f'direct-{ENGINE}-checks.json').write_text(json.dumps({'passed':checks,'page_errors':errors,'scope':'isolated HTTPS browser, production APIs blocked; no real account data'},ensure_ascii=False,indent=2))

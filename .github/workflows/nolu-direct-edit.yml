@@ -37,6 +37,11 @@ jobs:
         env:
           NOLU_BROWSER: ${{ matrix.browser }}
         run: python tests/product/direct_edit.py
+      - name: Exercise mobile touch interactions
+        if: ${{ !cancelled() }}
+        env:
+          NOLU_BROWSER: ${{ matrix.browser }}
+        run: python tests/product/direct_touch.py
       - name: Preserve exact source, screenshots and check records
         if: always()
         run: |
