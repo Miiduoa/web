@@ -9,24 +9,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Inspect assignment editor
+      - name: Examine new post form without submitting
         run: |
           python -m pip install -q playwright
           python - <<'PY'
           import asyncio
           from playwright.async_api import async_playwright
           async def main():
-              async with async_playwright() as p:
-                  browser=await p.chromium.launch(executable_path='/usr/bin/google-chrome',args=['--no-sandbox'])
-                  page=await browser.new_page(viewport={'width':1440,'height':900})
-                  await page.goto('https://padlet.com/ypchang7/week-5-improving-delivery-handling-q-a-s024hdczqmywo85a6upl',wait_until='domcontentloaded',timeout=45000)
-                  await page.wait_for_timeout(4000)
-                  print('POST_BUTTONS:',await page.locator('button').evaluate_all("(els)=>els.filter(e=>(e.innerText||'').includes('Post')).map(e=>e.outerHTML.slice(0,600))"))
-                  print('POST_TEXT:',await page.get_by_text('Post',exact=True).count())
-                  t=page.get_by_text('📌 Assignment (Upload here)',exact=True)
-                  await t.scroll_into_view_if_needed()
-                  print('SECTION:',await t.evaluate('(el)=>el.parentElement.parentElement.parentElement.outerHTML.slice(0,4000)'))
-                  print('AFTER_SCROLL_POST_BUTTONS:',await page.locator('button').evaluate_all("(els)=>els.filter(e=>(e.innerText||'').includes('Post')).map(e=>e.outerHTML.slice(0,600))"))
-                  await browser.close()
+            async with async_playwright() as p:
+              browser=await p.chromium.launch(executable_path='/usr/bin/google-chrome',args=['--no-sandbox'])
+              page=await browser.new_page(viewport={'width':1440,'height':900})
+              await page.goto('https://padlet.com/ypchang7/week-5-improving-delivery-handling-q-a-s024hdczqmywo85a6upl',wait_until='domcontentloaded',timeout=45000)
+              await page.wait_for_timeout(3500)
+              await page.get_by_text('📌 Assignment (Upload here)',exact=True).scroll_into_view_if_needed()
+              await page.get_by_text('Post',exact=True).click(timeout=10000)
+              await page.wait_for_timeout(2500)
+              print('BODY_LAST:',(await page.locator('body').inner_text())[-4500:])
+              print('EDITORS:',await page.locator('input,textarea,[contenteditable]').evaluate_all("(els)=>els.map(e=>e.outerHTML.slice(0,1000))"))
+              print('DIALOGS:',await page.locator('[role=dialog]').evaluate_all("(els)=>els.map(e=>e.outerHTML.slice(0,1200))"))
+              print('VISIBLE_BUTTONS:',await page.locator('button').evaluate_all("(els)=>els.filter(e=>e.getBoundingClientRect().width>0).slice(-35).map(e=>({label:e.getAttribute('aria-label'),title:e.title,text:e.innerText.slice(0,60),testid:e.getAttribute('data-testid')}))"))
+              await browser.close()
           asyncio.run(main())
           PY
