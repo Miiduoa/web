@@ -1,69 +1,32 @@
 name: Temporary Padlet Submission Check
 on:
   push:
-    branches:
-      - automation/padlet-week5-20261014
+    branches: [automation/padlet-week5-20261014]
 permissions:
   contents: read
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 5
     steps:
-      - name: Inspect assignment composer and synthesize narration
-        shell: bash
+      - name: Inspect assignment editor
         run: |
-          python -m pip install -q playwright gtts mutagen
+          python -m pip install -q playwright
           python - <<'PY'
           import asyncio
-          from pathlib import Path
           from playwright.async_api import async_playwright
-          from gtts import gTTS
-          script="""Hello everyone. Today, I'd like to talk about how technology can make campus life easier.
-
-          First, a campus app can help students manage their time. It can show class schedules, classroom changes, and assignment deadlines in one place. For example, a reminder before a deadline can help students avoid missing important work.
-
-          Second, technology can make campus services more convenient. Students could check bus arrival times or find available study spaces on their phones. This could save time and reduce unnecessary waiting.
-
-          However, a useful system should be simple and safe. It should protect personal information and be easy for everyone to use. Students should also have another way to get help if the app is not working.
-
-          One question you might ask is: What feature should a campus app include first?
-
-          I think deadline reminders should come first, because they are useful for many students. For example, a reminder one day before an assignment is due gives students time to finish and check their work.
-
-          In short, good technology should solve everyday problems. Thank you for listening."""
-          try:
-              gTTS(script,lang='en',slow=False).save('/tmp/speech.mp3')
-              from mutagen.mp3 import MP3
-              print("AUDIO_BYTES",Path('/tmp/speech.mp3').stat().st_size,"DURATION",MP3('/tmp/speech.mp3').info.length)
-          except Exception as ex:
-              print("AUDIO_GENERATION_ERROR",repr(ex))
-          url='https://padlet.com/ypchang7/week-5-improving-delivery-handling-q-a-s024hdczqmywo85a6upl'
           async def main():
               async with async_playwright() as p:
-                  browser=await p.chromium.launch(headless=True,executable_path='/usr/bin/google-chrome',args=['--no-sandbox'])
-                  page=await browser.new_page(viewport={'width':1360,'height':900})
-                  try:
-                      await page.goto(url,timeout=45000,wait_until='domcontentloaded')
-                      await page.wait_for_timeout(6000)
-                      print("BODY HAS TITLE ALREADY", "411211325 顧晉瑋｜Week 5 Speaking Practice" in await page.locator('body').inner_text())
-                      t=page.get_by_text('📌 Assignment (Upload here)',exact=True)
-                      print("ASSIGNMENT TITLE COUNT",await t.count())
-                      if await t.count():
-                          await t.first.scroll_into_view_if_needed()
-                          html=await t.first.evaluate("(el) => el.parentElement.parentElement.outerHTML")
-                          print("ASSIGNMENT_PARENT_HTML",html[:10000])
-                      post=page.get_by_role('button',name='Post',exact=True)
-                      print("POST_BUTTON_COUNT",await post.count())
-                      if await post.count():
-                          await post.first.click(timeout=10000)
-                          await page.wait_for_timeout(2000)
-                      print("AFTER_POST_BODY_LAST", (await page.locator('body').inner_text())[-8000:])
-                      print("AFTER_POST_INPUTS",await page.locator('input').evaluate_all("(els) => els.map(e => ({outer:e.outerHTML.slice(0,900)}))"))
-                      print("AFTER_POST_CONTENTEDITABLE",await page.locator('[contenteditable]').evaluate_all("(els) => els.map(e => e.outerHTML.slice(0,900))"))
-                      print("AFTER_POST_DIALOGS",await page.get_by_role('dialog').count())
-                  except Exception as ex:
-                      print("BROWSER_ERROR",repr(ex))
-                  finally: await browser.close()
+                  browser=await p.chromium.launch(executable_path='/usr/bin/google-chrome',args=['--no-sandbox'])
+                  page=await browser.new_page(viewport={'width':1440,'height':900})
+                  await page.goto('https://padlet.com/ypchang7/week-5-improving-delivery-handling-q-a-s024hdczqmywo85a6upl',wait_until='domcontentloaded',timeout=45000)
+                  await page.wait_for_timeout(4000)
+                  print('POST_BUTTONS:',await page.locator('button').evaluate_all("(els)=>els.filter(e=>(e.innerText||'').includes('Post')).map(e=>e.outerHTML.slice(0,600))"))
+                  print('POST_TEXT:',await page.get_by_text('Post',exact=True).count())
+                  t=page.get_by_text('📌 Assignment (Upload here)',exact=True)
+                  await t.scroll_into_view_if_needed()
+                  print('SECTION:',await t.evaluate('(el)=>el.parentElement.parentElement.parentElement.outerHTML.slice(0,4000)'))
+                  print('AFTER_SCROLL_POST_BUTTONS:',await page.locator('button').evaluate_all("(els)=>els.filter(e=>(e.innerText||'').includes('Post')).map(e=>e.outerHTML.slice(0,600))"))
+                  await browser.close()
           asyncio.run(main())
           PY
